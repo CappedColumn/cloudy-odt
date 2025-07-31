@@ -1,0 +1,76 @@
+
+&PARAMETERS
+
+! Domain Set-Up
+N = 2000        ! Number of Grid Cells
+Lmin = 6
+Lprob = 18
+tmax = 1500.    ! Maximum Simulation Time (seconds)
+Tdiff = 12.
+Tref = 20.85    ! Bottom boundary condition (i.e. warm)
+pres = 1.00e5
+H = 1.
+
+volume_scaling = 10 ! i.e. 50 -> 50 cm3 Domain Volume
+
+max_accept_prob = 0.1
+
+same_random = .false. ! Use the same random number generator seed, for testing primarily
+
+! Input/Output
+simulation_name = "CODT_SIM"
+output_directory = "/directory/to/write/path/"
+
+! Read/write Parameters
+write_timer = 1.0 ! Write domain data every X seconds
+write_buffer = 100 ! Buffer size, n iterations to write to netCDF
+write_eddies = .false.
+
+do_turbulence = .true.
+do_microphysics = .true. ! triggers aerosol-droplet processes
+
+do_special_effects = .false. ! Controls special effect namelist below
+
+/
+
+&MICROPHYSICS
+
+! --- Droplet Injection Parameters ---
+
+init_drop_each_gridpoint = .false.           ! Decreases spin-up time
+expected_Ndrops_per_gridpoint = 1.0       ! Set initial size of particle array to prevent reallocation
+
+! Must be greater than 1
+initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
+
+inj_data_path = "input/injection_data.txt"
+bin_data_path = "input/bin_data.txt"
+
+! --- Droplet Writeout Parameters ---
+
+write_trajectories = .false.
+trajectory_start = 4900.  ! Start time in seconds
+trajectory_end = 5401.    ! End time in seconds
+trajectory_timer = 1.0 ! How frequently to write particle data
+
+/
+
+
+&SPECIALEFFECTS
+
+! Sidewalls
+do_sidewalls = .false.
+area_sw  = 4 ! Area of sidewalls (m2)
+area_bot = 2 ! Area of bottom (m2)
+C_sw = 0.42 ! sidewall eddy velocity coefficient (velocity_sw = C_sw * velocity_bot)
+sw_nudging_time = 0.85 ! run nudging every X seconds (probably not a common divisor of the scalar field writeout timer)
+T_sw = 14.85 ! Sidewall Temperature (C)
+RH_sw = 1.0 ! Sidewall Relative Humidity (fraction)
+P_sw = 7 ! Sidewall tuning parameter
+
+
+! Stochastic Fallout - Droplet "Perceived" Height
+do_random_fallout = .false.
+random_fallout_rate = 0.05
+
+/

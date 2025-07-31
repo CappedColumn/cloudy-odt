@@ -1,0 +1,21 @@
+Aerosol Name:
+NaCl
+Aerosol N-Ions (#):
+2
+Aerosol Molar Mass (kg/mol):
+58.4428e-3
+Aerosol Density (kg/m3):
+2.163e3
+N Injection Times (seconds):
+1
+0.
+Injection Rate (#/m3/s):
+Must be N injection Times long
+5.5e5
+N Bin Edges (nanometers):
+3
+60 70 4930
+Relative Frequencies (%):
+Must be N bin Edges - 1 columns
+with N injection Times rows
+1.0 1.0

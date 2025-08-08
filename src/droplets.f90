@@ -77,6 +77,7 @@ module droplets
     real(dp), allocatable :: injection_times(:), injection_rates(:) ! allocated in read_injection_data()
     real(dp), allocatable :: aerosol_size_edges(:), aerosol_bin_freq(:,:) ! allocated in read_injection_data()
     real(dp), allocatable :: aerosol_radii(:) ! allocated in read_injection_data()
+    integer(i4), allocatable :: aerosol_partition(:)
     real(dp) :: last_injection_time
     real(dp) :: injection_dt
     integer(i4) :: n_injected, inj_time_idx
@@ -773,15 +774,13 @@ contains
     subroutine initialize_microphysics(filename)
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
-        integer     :: ierr, nml_unit
+        integer     :: ierr, nml_unit, i
         character(100) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
         logical :: init_drop_each_gridpoint = .true.
         real(dp) :: expected_Ndrops_per_gridpoint = 1
         character(100):: inj_data_path, bin_data_path ! Not allocatable since namelist-specified variable
-
-        integer(i4) :: i
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_path, &
         bin_data_path, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
@@ -935,7 +934,7 @@ contains
 
         character(10) :: name
         integer :: n_ions
-        integer :: n_times, n_edges
+        integer :: n_times, n_edges, n_aer_partition
         real(dp) :: molar_mass, density
 
         ! Open the injection data file
@@ -972,6 +971,9 @@ contains
         allocate(aerosol_size_edges(n_edges))
         read(file_unit, *, iostat=ierr) aerosol_size_edges
         if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop; end if
+        read(file_unit, *) ! Aerosol Category
+        allocate(aerosol_partition(n_edges - 1))
+        read(file_unit, *) aerosol_partition
         read(file_unit, *) ! Bin Frequencies:
         read(file_unit, *)
         read(file_unit, *)

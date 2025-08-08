@@ -777,7 +777,7 @@ contains
     subroutine initialize_microphysics(filename)
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
-        integer     :: ierr, nml_unit, i
+        integer     :: ierr, nml_unit, i, n_aer_category
         character(100) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
@@ -844,6 +844,12 @@ contains
         ! setup variable in netCDF
         call netcdf_add_DSD(ncid, particle_bins)
 
+        ! Make multiple DSD variables for each aerosol category if applicable
+        n_aer_category = maxval(aerosol_partition)
+        if ( n_aer_category > 1 ) then
+            call netcdf_add_aerDSD(ncid, n_aer_category)
+        end if
+
         ! Set up starting injection rate
         call initialize_injection(injection_rates)
 
@@ -890,6 +896,34 @@ contains
         call nc_verify( nf90_put_var(lncid, r_varid, r_bins), "nf90_put_var: radius")
 
     end subroutine netcdf_add_DSD
+
+    subroutine netcdf_add_aerDSD(lncid, n_DSDs)
+
+        integer, intent(in) :: lncid, n_DSDs
+        integer :: i
+        character(100) :: name, strint
+
+        integer :: t_dimid, r_dimid, dsd_varid, nbins, dimids(2)
+
+        ! Get dimension IDs
+        call nc_verify( nf90_inq_dimid(lncid, "time", t_dimid))
+        call nc_verify( nf90_inq_dimid(lncid, "radius", r_dimid))
+
+        ! Open netcdf in definition mode, and create a DSD for each aerosol partition
+        dimids = (/ r_dimid, t_dimid /)
+        call nc_verify( nf90_redef(lncid), "nf90_redef: DSD_aerr" )
+        do i = 1, n_DSDs
+            write(strint,*) i
+            name = "DSD_" // adjustl(strint)
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD_aer" )
+            name = "Droplet Size Distribution - " // adjustl(strint)
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
+
+        end do
+        call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD_aer")
+
+    end subroutine netcdf_add_aerDSD
 
     subroutine read_binning_data(location, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations

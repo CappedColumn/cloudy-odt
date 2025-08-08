@@ -44,6 +44,7 @@ module droplets
         type(aerosol) :: solute_type = aerosol()    ! Type of aerosol particle
         real(dp) :: solute_gross_mass = 0.0      ! Gross mass of the solute in the particle (kg)
         real(dp) :: solute_radius = 0.0        ! Radius of the dry-solute in the particle (m)
+        integer(i4) :: aerosol_category = 1
 
         logical :: activated = .false.
         logical :: fellout = .false.
@@ -516,7 +517,8 @@ contains
         this%fellout = .false.
 
         ! Determine solute properties (sampled from injection_data.txt) and initial radius
-        this%solute_radius = sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii)
+        !this%solute_radius = sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii)
+        call sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii, this%solute_radius, this%aerosol_category)
         this%solute_gross_mass = ( pi_43 * this%solute_type%solute_density ) * this%solute_radius**3
         this%radius = initial_wet_radius * this%solute_radius
 
@@ -528,10 +530,12 @@ contains
 
     end subroutine particle_initialize
 
-    function sample_radius(bin_freq, radii) result(radius)
+    subroutine sample_radius(bin_freq, radii, radius, aer_partition)
         ! Selects an aerosol size from distribution specified in injection_data.txt
         real(dp), intent(in) :: bin_freq(:), radii(:)
-        real(dp) :: random_num, radius
+        real(dp), intent(out) :: radius
+        integer(i4), intent(out) :: aer_partition
+        real(dp) :: random_num
         integer :: idx
 
         ! Generate a random number between 0 and 1
@@ -542,11 +546,10 @@ contains
             idx = idx + 1
         end do
 
-        !write(*,*) random_num, idx, bin_freq(idx), radii(idx)
-
         radius = radii(idx) * m_per_nm
+        aer_partition = aerosol_partition(idx)
 
-    end function sample_radius
+    end subroutine sample_radius
 
     !-----------------------------------------------------------
 

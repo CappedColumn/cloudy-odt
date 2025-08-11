@@ -9,7 +9,7 @@ module writeout
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)
     real(dp), allocatable :: buffer_SS(:,:), buffer_W(:,:), buffer_time(:), buffer_stats(:,:)
-    integer(i4), allocatable :: buffer_DSD(:,:)
+    integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
     ! Buffer arrays for writting eddy data
     integer(i4) :: buffer_eddy_size = 50000 ! Will write to disk every 50000 eddies
@@ -23,7 +23,7 @@ module writeout
 contains
 
     subroutine write_data()
-        
+
         write(*,*) 'Writing time: ', time
         call calculate_droplet_statistics(particles, statistics)
         call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
@@ -61,11 +61,11 @@ contains
 
     end subroutine initialize_buffers
     
-    subroutine initialize_particle_buffers(N_bins)
+    subroutine initialize_particle_buffers(n_cat, n_bins)
 
-        integer(i4), intent(in) :: N_bins
+        integer(i4), intent(in) :: n_cat, n_bins
 
-        allocate(buffer_DSD(N_bins, buffer_size))
+        allocate(buffer_DSD(n_cat, n_bins, buffer_size))
         buffer_DSD = 0
 
     end subroutine initialize_particle_buffers
@@ -74,7 +74,7 @@ contains
         ! Writes the profile arrays into the profile buffers, will flush
         ! the buffer to write netCDF if buffer is full
         real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:), lW(:), lstats(:)
-        integer(i4), intent(in) :: lDSD(:)
+        integer(i4), intent(in) :: lDSD(:,:)
 
         ! Write profile data into buffers
         if (buffer_count < buffer_size) then
@@ -86,7 +86,7 @@ contains
             buffer_SS(:, buffer_count) = lSS
             buffer_W(:, buffer_count) = lW
             buffer_stats(:, buffer_count) = lstats
-            buffer_DSD(:, buffer_count) = lDSD
+            buffer_DSD(:, :, buffer_count) = lDSD
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
@@ -135,7 +135,7 @@ contains
                                         buffer_Tv(:, 1:buffer_count), &
                                         buffer_SS(:, 1:buffer_count), &
                                         buffer_W(:, 1:buffer_count), &
-                                        buffer_DSD(:, 1:buffer_count), &
+                                        buffer_DSD(:, :, 1:buffer_count), &
                                         buffer_stats(:, 1:buffer_count))
         buffer_count = 0
 
@@ -300,7 +300,7 @@ contains
     subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lw, lDSD, lstats)
         integer(i4), intent(in) :: lncid
         real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lw(:,:), lstats(:,:)
-        integer(i4), intent(in) :: lDSD(:,:)
+        integer(i4), intent(in) :: lDSD(:,:,:)
 
         integer :: varids(7) ! time, T, WV, Tv, SS, w, DSD are coordinates
         integer :: statids(5) 

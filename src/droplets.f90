@@ -66,8 +66,8 @@ module droplets
     integer(i4) :: total_n_particles = 0
     integer(i4) :: total_n_fellout = 0
     real(dp), allocatable :: particle_bin_edges(:), particle_bins(:)
-    integer(i4), allocatable :: size_distribution(:)
-    integer(i4) :: n_DSD_bins
+    integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
+    integer(i4) :: n_DSD_bins, n_aer_category
 
     ! Arrays to hold all particles and aerosol types
     type(particle), allocatable :: particles(:) ! allocated in initialize_microphysics()
@@ -777,7 +777,7 @@ contains
     subroutine initialize_microphysics(filename)
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
-        integer     :: ierr, nml_unit, i, n_aer_category
+        integer     :: ierr, nml_unit, i
         character(100) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
@@ -832,10 +832,10 @@ contains
         call read_injection_data(trim(inj_data_path))
 
         ! Bring in binning data
-        call read_binning_data(trim(bin_data_path), particle_bin_edges, size_distribution)
+        n_aer_category = maxval(aerosol_partition)
+        call read_binning_data(trim(bin_data_path), n_aer_category, particle_bin_edges, size_distribution)
         
         ! Calculate mid-point radii of DSD
-        n_DSD_bins = size(size_distribution)
         allocate(particle_bins(n_DSD_bins))
         do i = 1, n_DSD_bins
             particle_bins(i) = 0.5*(particle_bin_edges(i) + particle_bin_edges(i+1))
@@ -845,7 +845,6 @@ contains
         call netcdf_add_DSD(ncid, particle_bins)
 
         ! Make multiple DSD variables for each aerosol category if applicable
-        n_aer_category = maxval(aerosol_partition)
         if ( n_aer_category > 1 ) then
             call netcdf_add_aerDSD(ncid, n_aer_category)
         end if
@@ -925,11 +924,12 @@ contains
 
     end subroutine netcdf_add_aerDSD
 
-    subroutine read_binning_data(location, bin_edges, DSD)
+    subroutine read_binning_data(location, n_cat, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations
         character(*), intent(in) :: location
+        integer, intent(in) :: n_cat
         real(dp), allocatable, intent(out) :: bin_edges(:)
-        integer, allocatable, intent(out) :: DSD(:)
+        integer, allocatable, intent(out) :: DSD(:,:)
         integer :: i, ierr, file_unit
         character(100) :: io_emsg
         logical :: file_exists
@@ -948,7 +948,9 @@ contains
 
         read(file_unit, *) ! N Bin-Edges
         read(file_unit, *) n_bin_edges
-        allocate(DSD(n_bin_edges-1))
+        n_DSD_bins = n_bin_edges - 1
+        if ( n_cat > 1 ) n_cat = n_cat + 1 ! Account for total and categorical DSDs
+        allocate(DSD(n_cat, n_DSD_bins))
         DSD = 0
         
         ! Allocate and read in bin edge values
@@ -1117,16 +1119,43 @@ contains
         ! no need to set histogram size as already determined in bin_data and read_binning_data
         type(particle), intent(in) :: droplets(:)
         real(dp), intent(in) :: bin_edges(:)
-        integer(i4), intent(out) :: histogram(:)
+        integer(i4), intent(out) :: histogram(:,:)
         real(dp) :: radii(current_n_particles)
-        integer(i4) :: i
+        real(dp), allocatable :: cat_radii(:)
+        logical :: include_cat(current_n_particles)
+        integer(i4) :: i, j, n_particles
 
+
+        ! First calculate the total DSD for all drops
         ! Create array to feed binning function
         do concurrent (i = 1:current_n_particles)
             radii(i) = droplets(i)%radius * um_per_m ! microns and diameter bins
         end do
 
-        histogram(:) = bin_data(bin_edges, radii)
+        histogram(1,:) = bin_data(bin_edges, radii)
+
+        ! Then cycle through each aerosol category and create a DSD for that
+        if ( n_aer_category > 1 ) then
+            do j = 2, n_aer_category
+                n_particles = 0
+                include_cat = .false.
+
+                ! Determine which droplets belong to which category
+                do i = 1, current_n_particles
+                    if ( droplets(i)%aerosol_category == j ) then
+                        include_cat(i) = .true.
+                        n_particles = n_particles + 1
+                    end if
+                end do
+
+                ! Create array of those droplet radii and bin them
+                allocate(cat_radii(n_particles))
+                cat_radii(:) = pack(radii, include_cat)
+                histogram(j,:) = bin_data(bin_edges, cat_radii)
+                deallocate(cat_radii)
+
+            end do
+        end if
 
     end subroutine bin_droplet_radii
 

@@ -2,7 +2,7 @@ module writeout
     use globals
     use netcdf
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
-                        size_distribution
+                        size_distribution, n_aer_category
     implicit none
 
     ! Buffer variables and arrays for writing to netCDF
@@ -302,15 +302,15 @@ contains
         real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lw(:,:), lstats(:,:)
         integer(i4), intent(in) :: lDSD(:,:,:)
 
-        integer :: varids(7) ! time, T, WV, Tv, SS, w, DSD are coordinates
-        integer :: statids(5) 
+        integer :: varids(6), DSDid, i ! time, T, WV, Tv, SS, w, DSD are coordinates
+        integer :: statids(5), time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
-        integer :: z_len, bin_len, time_len
+        character(100) :: varname, strint
     
         ! netCDF profile variables are (time, height) dimensions
         time_len = size(ltime,1)
         z_len = size(lT,1)
-        bin_len = size(lDSD,1)
+        bin_len = size(lDSD,2)
         if (size(lT,2) /= time_len) then
             write(*,'(a)') "Error: Time and profile arrays are not the same length."
             stop
@@ -327,10 +327,6 @@ contains
         call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
         call nc_verify( nf90_inq_varid(lncid, "W", varids(6)) )
         
-        if ( do_microphysics ) then
-            call nc_verify( nf90_inq_varid(lncid, "DSD", varids(7) ))
-        end if
-
         call nc_verify( nf90_inq_varid(ncid, "Np", statids(1)) )
         call nc_verify( nf90_inq_varid(ncid, "Nact", statids(2)) )
         call nc_verify( nf90_inq_varid(ncid, "Nun", statids(3)) )
@@ -346,8 +342,22 @@ contains
         call nc_verify( nf90_put_var(ncid, varids(6), lw, start=start_dim, count=count_dim) )
         
         if ( do_microphysics ) then
+
+            ! Write total DSD
+            call nc_verify( nf90_inq_varid(lncid, "DSD", DSDid ))
             count_dim = (/ bin_len, time_len /)
-            call nc_verify( nf90_put_var(ncid, varids(7), lDSD, start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(ncid, DSDid, lDSD(1,:,:), start=start_dim, count=count_dim) )
+
+            ! Write the subcategory DSDs
+            if ( n_aer_category > 1 ) then
+                do i = 2, n_aer_category
+                    write(strint,*) i
+                    varname = "DSD_" // adjustl(strint)
+                    call nc_verify( nf90_inq_varid(lncid, trim(varname), DSDid ))
+                    call nc_verify( nf90_put_var(ncid, DSDid, lDSD(i,:,:), start=start_dim, count=count_dim) )
+                end do
+            end if
+
         end if
 
         call nc_verify( nf90_put_var(ncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )

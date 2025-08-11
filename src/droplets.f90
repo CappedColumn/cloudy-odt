@@ -927,7 +927,7 @@ contains
     subroutine read_binning_data(location, n_cat, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations
         character(*), intent(in) :: location
-        integer, intent(in) :: n_cat
+        integer, intent(in), value :: n_cat
         real(dp), allocatable, intent(out) :: bin_edges(:)
         integer, allocatable, intent(out) :: DSD(:,:)
         integer :: i, ierr, file_unit

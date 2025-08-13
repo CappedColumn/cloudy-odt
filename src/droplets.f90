@@ -1136,22 +1136,22 @@ contains
 
         ! Then cycle through each aerosol category and create a DSD for that
         if ( n_aer_category > 1 ) then
-            do j = 2, n_aer_category
+            do j = 1, n_aer_category
                 n_particles = 0
                 include_cat = .false.
 
                 ! Determine which droplets belong to which category
-                do i = 1, current_n_particles
+                do concurrent (i = 1:current_n_particles)
                     if ( droplets(i)%aerosol_category == j ) then
                         include_cat(i) = .true.
-                        n_particles = n_particles + 1
                     end if
                 end do
+                n_particles = count(include_cat)
 
                 ! Create array of those droplet radii and bin them
                 allocate(cat_radii(n_particles))
                 cat_radii(:) = pack(radii, include_cat)
-                histogram(j,:) = bin_data(bin_edges, cat_radii)
+                histogram(j+1,:) = bin_data(bin_edges, cat_radii)
                 deallocate(cat_radii)
 
             end do

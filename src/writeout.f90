@@ -65,7 +65,12 @@ contains
 
         integer(i4), intent(in) :: n_cat, n_bins
 
-        allocate(buffer_DSD(n_cat, n_bins, buffer_size))
+        if ( n_cat > 1 ) then
+            ! Account for subcategorical DSDs
+            allocate(buffer_DSD(n_cat+1, n_bins, buffer_size))
+        else
+            allocate(buffer_DSD(1, n_bins, buffer_size))
+        end if
         buffer_DSD = 0
 
     end subroutine initialize_particle_buffers
@@ -350,11 +355,11 @@ contains
 
             ! Write the subcategory DSDs
             if ( n_aer_category > 1 ) then
-                do i = 2, n_aer_category
+                do i = 1, n_aer_category
                     write(strint,*) i
                     varname = "DSD_" // adjustl(strint)
                     call nc_verify( nf90_inq_varid(lncid, trim(varname), DSDid ))
-                    call nc_verify( nf90_put_var(ncid, DSDid, lDSD(i,:,:), start=start_dim, count=count_dim) )
+                    call nc_verify( nf90_put_var(ncid, DSDid, lDSD(i+1,:,:), start=start_dim, count=count_dim) )
                 end do
             end if
 

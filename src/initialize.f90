@@ -152,6 +152,7 @@ contains
         ! NOTE THIS ONLY HAS POSITIVE PERTURBATIONS - NONDIMENSIONAL???
         !W = W + random_array(W)*2.e-10
 
+        call initialize_linear_array(z)
         call initialize_velocity_arrays(W)
         call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
         call update_supersat(Tdim, WVdim, SS, pres)
@@ -193,14 +194,12 @@ contains
         integer :: k
 
         ! Set nondimensional arrays to have a ghost point at top/bottom
-        n_ghost = n_array+1
-        allocate(A(0:n_ghost))
+        allocate(A(N+1))
         A = 0.
 
-        ! Bottom Ghost - 0
-        ! Top Ghost - 1
-        do concurrent (k = 0, n_ghost)
-            A(k) = 1.*k/(n_ghost)
+        ! Initialize nondim with lenear profile
+        do concurrent (k = 1:N+1)
+            A(k) = 1.*k/(N+1)
         end do
 
     end subroutine allocate_nondim_array
@@ -215,6 +214,17 @@ contains
 
     end subroutine allocate_zero_arrays
 
+    subroutine initialize_linear_array(array)
+
+        real(dp), intent(out) :: array(:)
+        integer :: k
+
+        do concurrent (k = 1:N)
+            array(k) = 1.*k/N
+        end do
+
+    end subroutine initialize_linear_array
+
     subroutine initialize_velocity_arrays(lw)
         ! Initializes velcoity arrays with some noise. This prevents a numerical issue from
         ! occuring when calculating the kinetic energy (i.e. KE != 0)
@@ -222,7 +232,6 @@ contains
         real(dp) :: rand_num
         integer(i4) :: k
 
-        lw(0) = 0.
         do k = 1, N
             call random_number(rand_num)
             lw(k) = 2.e-10 * (rand_num - 0.5)

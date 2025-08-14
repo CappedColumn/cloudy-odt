@@ -70,7 +70,14 @@ contains
             allocate(buffer_DSD(n_cat+1, n_bins, buffer_size))
         else
             allocate(buffer_DSD(1, n_bins, buffer_size))
+        ! Calculate number of DSDs (n_cat + 1 for multiple categories, 1 otherwise)
+        integer(i4) :: n_DSDs
+        if ( n_cat > 1 ) then
+            n_DSDs = n_cat + 1
+        else
+            n_DSDs = 1
         end if
+        allocate(buffer_DSD(n_DSDs, n_bins, buffer_size))
         buffer_DSD = 0
 
     end subroutine initialize_particle_buffers

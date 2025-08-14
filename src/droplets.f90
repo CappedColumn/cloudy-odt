@@ -517,7 +517,6 @@ contains
         this%fellout = .false.
 
         ! Determine solute properties (sampled from injection_data.txt) and initial radius
-        !this%solute_radius = sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii)
         call sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii, this%solute_radius, this%aerosol_category)
         this%solute_gross_mass = ( pi_43 * this%solute_type%solute_density ) * this%solute_radius**3
         this%radius = initial_wet_radius * this%solute_radius

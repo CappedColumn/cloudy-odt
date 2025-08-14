@@ -4,8 +4,9 @@ module initialize
     use ODT, only: calc_eddy_length_cdf, diffusion
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
-    initialize_eddy_buffer, add_to_profile_buffer, flush_buffer, close_netcdf
-    use droplets, only: initialize_microphysics, n_DSD_bins, size_distribution, write_trajectories, close_droplets
+                initialize_eddy_buffer, add_to_profile_buffer, flush_buffer, close_netcdf
+    use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
+                write_trajectories, close_droplets
     use write_particle, only: initialize_write_particle, close_particle_files
     implicit none
 
@@ -30,7 +31,7 @@ contains
         
         if ( do_microphysics ) then
             call initialize_microphysics(filename)
-            call initialize_particle_buffers(n_DSD_bins)
+            call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
             if ( write_trajectories ) call initialize_write_particle(output_directory)
         end if

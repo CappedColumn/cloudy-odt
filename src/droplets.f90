@@ -44,6 +44,7 @@ module droplets
         type(aerosol) :: solute_type = aerosol()    ! Type of aerosol particle
         real(dp) :: solute_gross_mass = 0.0      ! Gross mass of the solute in the particle (kg)
         real(dp) :: solute_radius = 0.0        ! Radius of the dry-solute in the particle (m)
+        integer(i4) :: aerosol_category = 1
 
         logical :: activated = .false.
         logical :: fellout = .false.
@@ -65,8 +66,8 @@ module droplets
     integer(i4) :: total_n_particles = 0
     integer(i4) :: total_n_fellout = 0
     real(dp), allocatable :: particle_bin_edges(:), particle_bins(:)
-    integer(i4), allocatable :: size_distribution(:)
-    integer(i4) :: n_DSD_bins
+    integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
+    integer(i4) :: n_DSD_bins, n_aer_category
 
     ! Arrays to hold all particles and aerosol types
     type(particle), allocatable :: particles(:) ! allocated in initialize_microphysics()
@@ -77,6 +78,7 @@ module droplets
     real(dp), allocatable :: injection_times(:), injection_rates(:) ! allocated in read_injection_data()
     real(dp), allocatable :: aerosol_size_edges(:), aerosol_bin_freq(:,:) ! allocated in read_injection_data()
     real(dp), allocatable :: aerosol_radii(:) ! allocated in read_injection_data()
+    integer(i4), allocatable :: aerosol_partition(:)
     real(dp) :: last_injection_time
     real(dp) :: injection_dt
     integer(i4) :: n_injected, inj_time_idx
@@ -515,7 +517,7 @@ contains
         this%fellout = .false.
 
         ! Determine solute properties (sampled from injection_data.txt) and initial radius
-        this%solute_radius = sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii)
+        call sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii, this%solute_radius, this%aerosol_category)
         this%solute_gross_mass = ( pi_43 * this%solute_type%solute_density ) * this%solute_radius**3
         this%radius = initial_wet_radius * this%solute_radius
 
@@ -527,10 +529,12 @@ contains
 
     end subroutine particle_initialize
 
-    function sample_radius(bin_freq, radii) result(radius)
+    subroutine sample_radius(bin_freq, radii, radius, aer_partition)
         ! Selects an aerosol size from distribution specified in injection_data.txt
         real(dp), intent(in) :: bin_freq(:), radii(:)
-        real(dp) :: random_num, radius
+        real(dp), intent(out) :: radius
+        integer(i4), intent(out) :: aer_partition
+        real(dp) :: random_num
         integer :: idx
 
         ! Generate a random number between 0 and 1
@@ -541,11 +545,10 @@ contains
             idx = idx + 1
         end do
 
-        !write(*,*) random_num, idx, bin_freq(idx), radii(idx)
-
         radius = radii(idx) * m_per_nm
+        aer_partition = aerosol_partition(idx)
 
-    end function sample_radius
+    end subroutine sample_radius
 
     !-----------------------------------------------------------
 
@@ -773,15 +776,13 @@ contains
     subroutine initialize_microphysics(filename)
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
-        integer     :: ierr, nml_unit
+        integer     :: ierr, nml_unit, i
         character(100) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
         logical :: init_drop_each_gridpoint = .true.
         real(dp) :: expected_Ndrops_per_gridpoint = 1
         character(100):: inj_data_path, bin_data_path ! Not allocatable since namelist-specified variable
-
-        integer(i4) :: i
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_path, &
         bin_data_path, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
@@ -830,10 +831,10 @@ contains
         call read_injection_data(trim(inj_data_path))
 
         ! Bring in binning data
-        call read_binning_data(trim(bin_data_path), particle_bin_edges, size_distribution)
+        n_aer_category = maxval(aerosol_partition)
+        call read_binning_data(trim(bin_data_path), n_aer_category, particle_bin_edges, size_distribution)
         
         ! Calculate mid-point radii of DSD
-        n_DSD_bins = size(size_distribution)
         allocate(particle_bins(n_DSD_bins))
         do i = 1, n_DSD_bins
             particle_bins(i) = 0.5*(particle_bin_edges(i) + particle_bin_edges(i+1))
@@ -841,6 +842,11 @@ contains
 
         ! setup variable in netCDF
         call netcdf_add_DSD(ncid, particle_bins)
+
+        ! Make multiple DSD variables for each aerosol category if applicable
+        if ( n_aer_category > 1 ) then
+            call netcdf_add_aerDSD(ncid, n_aer_category)
+        end if
 
         ! Set up starting injection rate
         call initialize_injection(injection_rates)
@@ -889,11 +895,40 @@ contains
 
     end subroutine netcdf_add_DSD
 
-    subroutine read_binning_data(location, bin_edges, DSD)
+    subroutine netcdf_add_aerDSD(lncid, n_DSDs)
+
+        integer, intent(in) :: lncid, n_DSDs
+        integer :: i
+        character(100) :: name, strint
+
+        integer :: t_dimid, r_dimid, dsd_varid, nbins, dimids(2)
+
+        ! Get dimension IDs
+        call nc_verify( nf90_inq_dimid(lncid, "time", t_dimid))
+        call nc_verify( nf90_inq_dimid(lncid, "radius", r_dimid))
+
+        ! Open netcdf in definition mode, and create a DSD for each aerosol partition
+        dimids = (/ r_dimid, t_dimid /)
+        call nc_verify( nf90_redef(lncid), "nf90_redef: DSD_aerr" )
+        do i = 1, n_DSDs
+            write(strint,*) i
+            name = "DSD_" // adjustl(strint)
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD_aer" )
+            name = "Droplet Size Distribution - " // adjustl(strint)
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
+
+        end do
+        call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD_aer")
+
+    end subroutine netcdf_add_aerDSD
+
+    subroutine read_binning_data(location, n_cat, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations
         character(*), intent(in) :: location
+        integer, intent(in), value :: n_cat
         real(dp), allocatable, intent(out) :: bin_edges(:)
-        integer, allocatable, intent(out) :: DSD(:)
+        integer, allocatable, intent(out) :: DSD(:,:)
         integer :: i, ierr, file_unit
         character(100) :: io_emsg
         logical :: file_exists
@@ -912,7 +947,9 @@ contains
 
         read(file_unit, *) ! N Bin-Edges
         read(file_unit, *) n_bin_edges
-        allocate(DSD(n_bin_edges-1))
+        n_DSD_bins = n_bin_edges - 1
+        if ( n_cat > 1 ) n_cat = n_cat + 1 ! Account for total and categorical DSDs
+        allocate(DSD(n_cat, n_DSD_bins))
         DSD = 0
         
         ! Allocate and read in bin edge values
@@ -935,7 +972,7 @@ contains
 
         character(10) :: name
         integer :: n_ions
-        integer :: n_times, n_edges
+        integer :: n_times, n_edges, n_aer_partition
         real(dp) :: molar_mass, density
 
         ! Open the injection data file
@@ -972,6 +1009,9 @@ contains
         allocate(aerosol_size_edges(n_edges))
         read(file_unit, *, iostat=ierr) aerosol_size_edges
         if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop; end if
+        read(file_unit, *) ! Aerosol Category
+        allocate(aerosol_partition(n_edges - 1))
+        read(file_unit, *) aerosol_partition
         read(file_unit, *) ! Bin Frequencies:
         read(file_unit, *)
         read(file_unit, *)
@@ -1078,16 +1118,43 @@ contains
         ! no need to set histogram size as already determined in bin_data and read_binning_data
         type(particle), intent(in) :: droplets(:)
         real(dp), intent(in) :: bin_edges(:)
-        integer(i4), intent(out) :: histogram(:)
+        integer(i4), intent(out) :: histogram(:,:)
         real(dp) :: radii(current_n_particles)
-        integer(i4) :: i
+        real(dp), allocatable :: cat_radii(:)
+        logical :: include_cat(current_n_particles)
+        integer(i4) :: i, j, n_particles
 
+
+        ! First calculate the total DSD for all drops
         ! Create array to feed binning function
         do concurrent (i = 1:current_n_particles)
             radii(i) = droplets(i)%radius * um_per_m ! microns and diameter bins
         end do
 
-        histogram(:) = bin_data(bin_edges, radii)
+        histogram(1,:) = bin_data(bin_edges, radii)
+
+        ! Then cycle through each aerosol category and create a DSD for that
+        if ( n_aer_category > 1 ) then
+            do j = 1, n_aer_category
+                n_particles = 0
+                include_cat = .false.
+
+                ! Determine which droplets belong to which category
+                do concurrent (i = 1:current_n_particles)
+                    if ( droplets(i)%aerosol_category == j ) then
+                        include_cat(i) = .true.
+                    end if
+                end do
+                n_particles = count(include_cat)
+
+                ! Create array of those droplet radii and bin them
+                allocate(cat_radii(n_particles))
+                cat_radii(:) = pack(radii, include_cat)
+                histogram(j+1,:) = bin_data(bin_edges, cat_radii)
+                deallocate(cat_radii)
+
+            end do
+        end if
 
     end subroutine bin_droplet_radii
 

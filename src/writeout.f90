@@ -2,14 +2,14 @@ module writeout
     use globals
     use netcdf
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
-                        size_distribution
+                        size_distribution, n_aer_category
     implicit none
 
     ! Buffer variables and arrays for writing to netCDF
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)
     real(dp), allocatable :: buffer_SS(:,:), buffer_W(:,:), buffer_time(:), buffer_stats(:,:)
-    integer(i4), allocatable :: buffer_DSD(:,:)
+    integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
     ! Buffer arrays for writting eddy data
     integer(i4) :: buffer_eddy_size = 50000 ! Will write to disk every 50000 eddies
@@ -23,7 +23,7 @@ module writeout
 contains
 
     subroutine write_data()
-        
+
         write(*,*) 'Writing time: ', time
         call calculate_droplet_statistics(particles, statistics)
         call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
@@ -61,11 +61,23 @@ contains
 
     end subroutine initialize_buffers
     
-    subroutine initialize_particle_buffers(N_bins)
+    subroutine initialize_particle_buffers(n_cat, n_bins)
 
-        integer(i4), intent(in) :: N_bins
+        integer(i4), intent(in) :: n_cat, n_bins
 
-        allocate(buffer_DSD(N_bins, buffer_size))
+        if ( n_cat > 1 ) then
+            ! Account for subcategorical DSDs
+            allocate(buffer_DSD(n_cat+1, n_bins, buffer_size))
+        else
+            allocate(buffer_DSD(1, n_bins, buffer_size))
+        ! Calculate number of DSDs (n_cat + 1 for multiple categories, 1 otherwise)
+        integer(i4) :: n_DSDs
+        if ( n_cat > 1 ) then
+            n_DSDs = n_cat + 1
+        else
+            n_DSDs = 1
+        end if
+        allocate(buffer_DSD(n_DSDs, n_bins, buffer_size))
         buffer_DSD = 0
 
     end subroutine initialize_particle_buffers
@@ -74,7 +86,7 @@ contains
         ! Writes the profile arrays into the profile buffers, will flush
         ! the buffer to write netCDF if buffer is full
         real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:), lW(:), lstats(:)
-        integer(i4), intent(in) :: lDSD(:)
+        integer(i4), intent(in) :: lDSD(:,:)
 
         ! Write profile data into buffers
         if (buffer_count < buffer_size) then
@@ -86,7 +98,7 @@ contains
             buffer_SS(:, buffer_count) = lSS
             buffer_W(:, buffer_count) = lW
             buffer_stats(:, buffer_count) = lstats
-            buffer_DSD(:, buffer_count) = lDSD
+            buffer_DSD(:, :, buffer_count) = lDSD
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
@@ -135,7 +147,7 @@ contains
                                         buffer_Tv(:, 1:buffer_count), &
                                         buffer_SS(:, 1:buffer_count), &
                                         buffer_W(:, 1:buffer_count), &
-                                        buffer_DSD(:, 1:buffer_count), &
+                                        buffer_DSD(:, :, 1:buffer_count), &
                                         buffer_stats(:, 1:buffer_count))
         buffer_count = 0
 
@@ -300,17 +312,17 @@ contains
     subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lw, lDSD, lstats)
         integer(i4), intent(in) :: lncid
         real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lw(:,:), lstats(:,:)
-        integer(i4), intent(in) :: lDSD(:,:)
+        integer(i4), intent(in) :: lDSD(:,:,:)
 
-        integer :: varids(7) ! time, T, WV, Tv, SS, w, DSD are coordinates
-        integer :: statids(5) 
+        integer :: varids(6), DSDid, i ! time, T, WV, Tv, SS, w, DSD are coordinates
+        integer :: statids(5), time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
-        integer :: z_len, bin_len, time_len
+        character(100) :: varname, strint
     
         ! netCDF profile variables are (time, height) dimensions
         time_len = size(ltime,1)
         z_len = size(lT,1)
-        bin_len = size(lDSD,1)
+        bin_len = size(lDSD,2)
         if (size(lT,2) /= time_len) then
             write(*,'(a)') "Error: Time and profile arrays are not the same length."
             stop
@@ -327,10 +339,6 @@ contains
         call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
         call nc_verify( nf90_inq_varid(lncid, "W", varids(6)) )
         
-        if ( do_microphysics ) then
-            call nc_verify( nf90_inq_varid(lncid, "DSD", varids(7) ))
-        end if
-
         call nc_verify( nf90_inq_varid(ncid, "Np", statids(1)) )
         call nc_verify( nf90_inq_varid(ncid, "Nact", statids(2)) )
         call nc_verify( nf90_inq_varid(ncid, "Nun", statids(3)) )
@@ -346,8 +354,22 @@ contains
         call nc_verify( nf90_put_var(ncid, varids(6), lw, start=start_dim, count=count_dim) )
         
         if ( do_microphysics ) then
+
+            ! Write total DSD
+            call nc_verify( nf90_inq_varid(lncid, "DSD", DSDid ))
             count_dim = (/ bin_len, time_len /)
-            call nc_verify( nf90_put_var(ncid, varids(7), lDSD, start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(ncid, DSDid, lDSD(1,:,:), start=start_dim, count=count_dim) )
+
+            ! Write the subcategory DSDs
+            if ( n_aer_category > 1 ) then
+                do i = 1, n_aer_category
+                    write(strint,*) i
+                    varname = "DSD_" // adjustl(strint)
+                    call nc_verify( nf90_inq_varid(lncid, trim(varname), DSDid ))
+                    call nc_verify( nf90_put_var(ncid, DSDid, lDSD(i+1,:,:), start=start_dim, count=count_dim) )
+                end do
+            end if
+
         end if
 
         call nc_verify( nf90_put_var(ncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )

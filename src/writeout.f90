@@ -64,14 +64,10 @@ contains
     subroutine initialize_particle_buffers(n_cat, n_bins)
 
         integer(i4), intent(in) :: n_cat, n_bins
-
-        if ( n_cat > 1 ) then
-            ! Account for subcategorical DSDs
-            allocate(buffer_DSD(n_cat+1, n_bins, buffer_size))
-        else
-            allocate(buffer_DSD(1, n_bins, buffer_size))
-        ! Calculate number of DSDs (n_cat + 1 for multiple categories, 1 otherwise)
         integer(i4) :: n_DSDs
+
+        ! Calculate number of DSDs (n_cat + 1 for multiple categories, 1 otherwise)
+        
         if ( n_cat > 1 ) then
             n_DSDs = n_cat + 1
         else

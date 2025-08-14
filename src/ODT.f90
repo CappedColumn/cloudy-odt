@@ -14,7 +14,8 @@ contains
     subroutine diffusion()
         ! Interface for main.f90. Diffuses the non-dim scalar fields, and updates the dimensional
         ! fields, as well as supersaturation.
-        call viscosity()
+
+        call diffuse_scalar(W, Ndnu)
         call diffuse_scalar(T, Pr)
         call diffuse_scalar(WV, Sc)
         call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
@@ -354,61 +355,31 @@ contains
 
     end subroutine addK
 
-    subroutine viscosity()
-        integer(i4) :: j
-        real(dp) :: l(N), d(N), r(N), xw(N)
-        real(dp) :: De
-
-        De = 0.5 * delta_time_nd * N * N
-
-        l(1) = 0.
-        d(1) = 1. + (2. * De)
-        r(1) = -De
-        do concurrent (j = 2:N-1)
-            l(j) = -De
-            d(j) = 1. + (2. * De)
-            r(j) = -De
-        end do
-        d(N) = 1.
-        l(N) = 0.
-        r(N) = 0.
-
-        xw(1) = ((1.-(2.*De))*w(1)) + (De*w(2))
-        do j = 2, N-1
-            xw(j) = ((1.-(2.*De))*w(j)) + (De*(w(j+1)+w(j-1)))
-        end do
-        xw(N) = w(N)
-
-        call tridiagonal(l, d, r, xw, w)
-
-    end subroutine viscosity
-
-
     subroutine diffuse_scalar(sclr, dim_num)
         real(dp), intent(in) :: dim_num
         real(dp), intent(inout) :: sclr(:)
-        real(dp) :: De, l(N), d(N), r(N), xsc(N)
+        real(dp) :: De, l(N+1), d(N+1), r(N+1), xsc(N+1)
         integer(i4) :: k
 
-        De = (delta_time_nd*N*N)/(2.*dim_num)
+        De = (delta_time_nd*(N+1)*(N+1))/(2.*dim_num)
 
         l(1) = 0.
         d(1) = 1. + (2.*De)
         r(1) = -De
-        do k = 2, N-1
+        do k = 2, N
             l(k) = -De
             d(k) = 1. + (2.*De)
             r(k) = -De
         end do
-        l(N) = 0.
-        d(N) = 1.
-        r(N) = 0.
+        l(N+1) = 0.
+        d(N+1) = 1.
+        r(N+1) = 0.
 
         xsc(1) = ((1.-(2.*De))*sclr(1)) + (De*sclr(2))
-        do k = 2, N-1
+        do k = 2, N
             xsc(k) = ((1.-(2.*De))*sclr(k)) + (De*(sclr(k+1) + sclr(k-1)))
         end do
-        xsc(N) = sclr(N)
+        xsc(N+1) = sclr(N+1)
 
         call tridiagonal(l, d, r, xsc, sclr)
 
@@ -423,14 +394,14 @@ contains
 
         b = d(1)
         ui(1) = xui(1)/b
-        do k = 2, N
+        do k = 2, N+1
             rdx(k) = r(k-1)/b
             b = d(k) - (l(k)*rdx(k))
             if (b .eq. 0.) write(*,*) 'Tridiagonal: Failure'
             ui(k) = (xui(k) - (l(k)*ui(k-1)))/b
         end do
 
-        do k = N-1, 1, -1
+        do k = N, 1, -1
             ui(k) = ui(k) - (rdx(k+1)*ui(k+1))
         end do
 

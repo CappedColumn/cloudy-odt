@@ -11,7 +11,7 @@ module initialize
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
     
-    private :: allocate_zero_arrays, initialize_velocity_arrays, initialize_scalar_arrays, initialize_params
+    private :: allocate_zero_arrays, initialize_velocity_arrays, initialize_params
     public :: initialize_simulation
     
 contains
@@ -137,10 +137,10 @@ contains
         ! Allocate scalar/vector fields
         write(*,*) 'Allocating arrays...'
         call allocate_zero_arrays(z, N)
-        call allocate_zero_arrays(W, N)
-        call allocate_zero_arrays(T, N)
-        call allocate_zero_arrays(WV, N)
-        call allocate_zero_arrays(Tv, N)
+        call allocate_nondim_array(W, N)
+        call allocate_nondim_array(T, N)
+        call allocate_nondim_array(WV, N)
+        call allocate_nondim_array(Tv, N)
         call allocate_zero_arrays(Tdim, N)
         call allocate_zero_arrays(WVdim, N)
         call allocate_zero_arrays(Tvdim, N)
@@ -152,7 +152,7 @@ contains
         ! NOTE THIS ONLY HAS POSITIVE PERTURBATIONS - NONDIMENSIONAL???
         !W = W + random_array(W)*2.e-10
 
-        call initialize_scalar_arrays(T, WV)
+        call initialize_linear_array(z)
         call initialize_velocity_arrays(W)
         call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
         call update_supersat(Tdim, WVdim, SS, pres)
@@ -188,16 +188,42 @@ contains
 
     end subroutine initialize_params
 
+    subroutine allocate_nondim_array(A, n_array)
+        integer(i4), intent(in) ::n_array
+        real(dp), intent(inout), allocatable :: A(:)
+        integer :: k
 
+        ! Set nondimensional arrays to have a ghost point at top/bottom
+        allocate(A(N+1))
+        A = 0.
+
+        ! Initialize nondim with lenear profile
+        do concurrent (k = 1:N+1)
+            A(k) = 1.*k/(N+1)
+        end do
+
+    end subroutine allocate_nondim_array
 
     subroutine allocate_zero_arrays(A, n_array)
         integer(i4), intent(in) ::n_array
         real(dp), intent(inout), allocatable :: A(:)
 
+        ! Dimensional arrays do not have ghost points
         allocate(A(n_array))
         A = 0.
 
     end subroutine allocate_zero_arrays
+
+    subroutine initialize_linear_array(array)
+
+        real(dp), intent(out) :: array(:)
+        integer :: k
+
+        do concurrent (k = 1:N)
+            array(k) = 1.*k/N
+        end do
+
+    end subroutine initialize_linear_array
 
     subroutine initialize_velocity_arrays(lw)
         ! Initializes velcoity arrays with some noise. This prevents a numerical issue from
@@ -206,26 +232,12 @@ contains
         real(dp) :: rand_num
         integer(i4) :: k
 
-        do k = 1, N-1
+        do k = 1, N
             call random_number(rand_num)
             lw(k) = 2.e-10 * (rand_num - 0.5)
         end do
+        lw(N+1) = 0.
 
     end subroutine initialize_velocity_arrays
-
-
-    subroutine initialize_scalar_arrays(lT, lWV)
-        real(dp), intent(out) :: lT(:), lWV(:)
-        integer(i4) :: k
-        real(dp) :: lin_prof
-
-        ! Non-Dimensional Values
-        do concurrent (k = 1:N)
-            lin_prof = 1.*k/N
-            lT(k) = lin_prof
-            lWV(k) = lin_prof
-        end do
-
-    end subroutine initialize_scalar_arrays
 
 end module initialize

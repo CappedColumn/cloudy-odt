@@ -39,6 +39,7 @@ module globals
     real(dp), parameter :: nu = 1.488e-5           ! Kinematic Viscosity
     real(dp), parameter :: kT = 1.96e-5           ! Heat Diffusivity (Dt is timestep...)
     real(dp), parameter :: Dv = 2.2705e-5          ! Mass Diffusivity of water vapor
+    real(dp), parameter :: Ndnu = 1.                ! For nondim diffusion of velocity
     real(dp), parameter :: Pr = nu/kT               ! Prandtl Number
     real(dp), parameter :: Sc = nu/Dv              ! Schmidt Number
 

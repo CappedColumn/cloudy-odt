@@ -37,7 +37,7 @@ module droplets
         ! particle properties unique to each particle
         real(dp) :: critical_radius = 0.0
         real(dp) :: critical_supersaturation = 0.0
-        real(dp) :: water_liquid = 0.0      ! Liquid water content, kg/m3
+        real(dp) :: water_liquid = 0.0      ! Absolute liquid water, kg
         real(dp) :: radius = 0.0            ! Radius of the particle, m
 
         ! Particle properties pertaining to dissolved aerosol
@@ -589,7 +589,7 @@ contains
         ! Determine particle liquid water content
         class(particle), intent(inout) :: this
 
-        this%water_liquid = pi_43 * (this%radius - this%solute_radius)**3 * rho_l / domain_volume
+        this%water_liquid = pi_43 * (this%radius**3 - this%solute_radius**3) * rho_l
 
     end subroutine particle_calculate_water_content
     
@@ -1109,7 +1109,7 @@ contains
         stats(2) = Nact
         stats(3) = current_n_particles - Nact ! Unactivated N
         stats(4) = (r_sum / current_n_particles) * um_per_m ! r_bar
-        stats(5) = lwc_sum * g_per_kg ! g/m3
+        stats(5) = lwc_sum * g_per_kg / domain_volume ! g/m3
 
     end subroutine calculate_droplet_statistics
 

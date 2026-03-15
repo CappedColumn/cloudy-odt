@@ -21,6 +21,11 @@ program main
     stop 1
   end if
   call get_command_argument(1, namelist_path)
+  if (scan(trim(namelist_path), '/') == 0) then
+    write(0,*) 'Error: namelist path must include a directory.'
+    write(0,*) 'Use ./params.nml for the current directory.'
+    stop 1
+  end if
   namelist_dir = parent_directory(namelist_path)
 
   ! --- Initialize simulation ---

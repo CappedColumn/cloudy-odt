@@ -4,6 +4,5 @@
 CODT
 build/
 fpm_env
-fpm.toml
 .vscode/
 .claude

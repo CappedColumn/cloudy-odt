@@ -777,15 +777,15 @@ contains
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
         integer     :: ierr, nml_unit, i
-        character(100) :: nml_line, io_emsg
+        character(256) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
         logical :: init_drop_each_gridpoint = .true.
         real(dp) :: expected_Ndrops_per_gridpoint = 1
-        character(100):: inj_data_path, bin_data_path ! Not allocatable since namelist-specified variable
+        character(256):: inj_data_file, bin_data_file ! Not allocatable since namelist-specified variable
 
-        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_path, &
-        bin_data_path, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
+        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_file, &
+        bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -827,12 +827,16 @@ contains
             initial_wet_radius = 1.1
         end if
 
+        ! Resolve input paths relative to namelist directory
+        inj_data_file = resolve_path(namelist_dir, trim(inj_data_file))
+        bin_data_file = resolve_path(namelist_dir, trim(bin_data_file))
+
         ! Set up aerosol type and injection forcings
-        call read_injection_data(trim(inj_data_path))
+        call read_injection_data(trim(inj_data_file))
 
         ! Bring in binning data
         n_aer_category = maxval(aerosol_partition)
-        call read_binning_data(trim(bin_data_path), n_aer_category, particle_bin_edges, size_distribution)
+        call read_binning_data(trim(bin_data_file), n_aer_category, particle_bin_edges, size_distribution)
         
         ! Calculate mid-point radii of DSD
         allocate(particle_bins(n_DSD_bins))

@@ -14,6 +14,15 @@ program main
 
   call cpu_time(t_start)
 
+  ! --- Parse command-line argument ---
+  if (command_argument_count() < 1) then
+    write(0,*) 'Usage: codt <namelist_path>'
+    write(0,*) 'Example: codt /path/to/input/params.nml'
+    stop 1
+  end if
+  call get_command_argument(1, namelist_path)
+  namelist_dir = parent_directory(namelist_path)
+
   ! --- Initialize simulation ---
 
   call initialize_simulation(output_directory) ! output_dir assigned from namelist

@@ -60,10 +60,10 @@ contains
 
     subroutine initialize_params(filename)
 
-        character(100), intent(out) :: filename
+        character(256), intent(out) :: filename
         ! I/O Variables
         integer     :: ierr, nml_unit, k
-        character(100) :: nml_line, io_emsg
+        character(256) :: nml_line, io_emsg
         character(100) :: file_format
         character(100) :: simulation_name
         ! parameters for initializing state of random number generator

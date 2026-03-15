@@ -270,7 +270,7 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     ! -- calculate change of height
     !drdt(7) = ver_vel
     ! -- calculate change of liquid water
-    drdt(8) = -1.0*drdt(2)
+    drdt(8) = -1.0*drdt(2)/grid_scale
 
 end subroutine fcnkb !of costa mesa
 

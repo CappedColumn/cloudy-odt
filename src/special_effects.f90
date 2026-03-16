@@ -40,7 +40,7 @@ contains
 
         character(*), intent(in) :: filename
         integer :: nml_unit, ierr
-        character(100) :: io_emsg, nml_line
+        character(256) :: io_emsg, nml_line
 
         namelist /SPECIALEFFECTS/ do_sidewalls, area_sw, area_bot, C_sw, T_sw, RH_sw, P_sw, sw_nudging_time, &
         do_random_fallout, random_fallout_rate

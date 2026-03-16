@@ -94,14 +94,15 @@ The executable resolves:
 
 ### Status
 
-**Not yet implemented.** Current behavior reads `./params.nml` from the
-working directory with paths relative to CWD. This contract is the target.
+**Implemented.** The executable requires a namelist path as its first
+argument. Relative input paths resolve from the namelist's parent directory.
+`output_directory` must be absolute. Bare filenames (no `/`) are rejected.
 
 ---
 
 ## Planned Modifications
 
-### 1. Command-line namelist path (interface contract above)
+### ~~1. Command-line namelist path (interface contract above)~~ Done
 
 ### 2. Add namelist parameters as netCDF global attributes
 

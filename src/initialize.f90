@@ -91,6 +91,13 @@ contains
         end if
         close(nml_unit)
 
+        ! Validate output_directory is an absolute path
+        if (output_directory(1:1) /= '/') then
+            write(0,*) 'Error: output_directory must be an absolute path.'
+            write(0,*) 'Got: ', trim(output_directory)
+            stop 1
+        end if
+
         ! Calculate additional parameters dependent on namelist variables
         write(*,*) 'Setting domain variables...'
         Tref = Tref + Tice ! Convert to Kelvin

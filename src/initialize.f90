@@ -1,4 +1,5 @@
 module initialize
+    use iso_fortran_env, only: output_unit
     use globals
     use microphysics
     use ODT, only: calc_eddy_length_cdf, diffusion
@@ -173,6 +174,15 @@ contains
         ! Create new subdirectory based on simulation name
         filename = trim(output_directory)//'/'//trim(simulation_name)
         call system("mkdir -p "//filename)
+
+        ! Redirect stdout to log file in output directory
+        close(output_unit)
+        open(output_unit, file=trim(filename)//'/'//trim(simulation_name)//'.log', &
+             status='replace', action='write', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open log file'
+            stop 1
+        end if
 
         ! Create filename based on Tdiff and N
         file_format = '(a, a, a)'

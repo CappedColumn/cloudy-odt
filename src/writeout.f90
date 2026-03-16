@@ -113,7 +113,7 @@ contains
         open(newunit=eddy_unit, file=trim(filename)//'_eddies.txt', form='formatted', status='replace', iostat=ierr)
         if (ierr /= 0) then
             print *, "Error opening eddy data file. "
-            stop
+            stop 1
         end if
 
     end subroutine initialize_eddy_buffer
@@ -321,7 +321,7 @@ contains
         bin_len = size(lDSD,2)
         if (size(lT,2) /= time_len) then
             write(*,'(a)') "Error: Time and profile arrays are not the same length."
-            stop
+            stop 1
         end if
         ! set the starting/ending positions for netCDF file
         count_dim = (/z_len, time_len/)

@@ -791,7 +791,7 @@ contains
         write(*,*) 'Reading MICROPHYSICS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop
+            write(*,*) io_emsg; stop 1
         end if
         read(nml=MICROPHYSICS, unit=nml_unit, iostat=ierr)
         ! Print value causing namelist read error
@@ -800,7 +800,7 @@ contains
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(*,'(a)') 'Invalid Namelist Parameter: ', trim(nml_line)
-            stop
+            stop 1
         end if
         close(nml_unit)
 
@@ -813,7 +813,7 @@ contains
             status='replace', iostat=ierr)
             if (ierr /= 0) then
                 print *, "Error opening file: "
-                stop
+                stop 1
             end if
         end if
 
@@ -947,7 +947,7 @@ contains
         open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) 'Error opening injection data file: ', io_emsg
-            stop
+            stop 1
         end if
 
         read(file_unit, *) ! N Bin-Edges
@@ -987,7 +987,7 @@ contains
         open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) 'Error opening injection data file: ', io_emsg
-            stop
+            stop 1
         end if
 
         ! Parsing is fuN!
@@ -1003,17 +1003,17 @@ contains
         read(file_unit, *) n_times
         allocate(injection_times(n_times))
         read(file_unit, *, iostat=ierr) injection_times
-        if ( ierr /= 0) then; write(*,*) 'Error reading times'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading times'; stop 1; end if
         read(file_unit, *) ! Injection Rate (#/m3/sec):
         read(file_unit, *)
         allocate(injection_rates(n_times))
         read(file_unit, *, iostat=ierr) injection_rates
-        if ( ierr /= 0) then; write(*,*) 'Error reading injection rates'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading injection rates'; stop 1; end if
         read(file_unit, *) ! Number of Edges:
         read(file_unit, *) n_edges
         allocate(aerosol_size_edges(n_edges))
         read(file_unit, *, iostat=ierr) aerosol_size_edges
-        if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop 1; end if
         read(file_unit, *) ! Aerosol Category
         allocate(aerosol_partition(n_edges - 1))
         read(file_unit, *) aerosol_partition
@@ -1023,7 +1023,7 @@ contains
         allocate(aerosol_bin_freq(n_times, n_edges-1)) ! Fix for 1 injection time case
         do i = 1, n_times
             read(file_unit, *, iostat=ierr) aerosol_bin_freq(i,:)
-            if ( ierr /= 0) then; write(*,*) 'Error reading bin frequencies'; stop; end if
+            if ( ierr /= 0) then; write(*,*) 'Error reading bin frequencies'; stop 1; end if
         end do
     
         close(file_unit)

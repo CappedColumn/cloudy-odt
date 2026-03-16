@@ -48,7 +48,7 @@ contains
         write(*,*) 'Initializing Special Effects...'
         open(newunit=nml_unit, file=trim(namelist_path), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop
+            write(*,*) io_emsg; stop 1
         end if
         read(nml=SPECIALEFFECTS, unit=nml_unit, iostat=ierr)
         ! Print value causing namelist read error
@@ -56,7 +56,7 @@ contains
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(*,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
-            stop
+            stop 1
         end if
         close(nml_unit)
 

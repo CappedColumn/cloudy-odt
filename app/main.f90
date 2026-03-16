@@ -11,6 +11,9 @@ program main
   implicit none
 
   real(dp) :: t_start, t_end
+  integer :: done_unit
+  character(8) :: date_str
+  character(10) :: time_str
 
   call cpu_time(t_start)
 
@@ -132,5 +135,13 @@ program main
   write(*,*) 'Fallout: ', total_n_fellout
   write(*,*) 'Injected: ', n_injected
   write(*,*) 'Wall-clock time (s): ', t_end - t_start
+
+  ! Write DONE marker file to output directory
+  call date_and_time(date=date_str, time=time_str)
+  open(newunit=done_unit, file=trim(parent_directory(output_directory))//'DONE', &
+       status='replace', action='write')
+  write(done_unit,'(a,a,a,a,a,a,a,a,a)') date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+       ' ', time_str(1:2), ':', time_str(3:4)
+  close(done_unit)
 
 end program main

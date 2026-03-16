@@ -1,5 +1,5 @@
 module initialize
-    use iso_fortran_env, only: output_unit
+    use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
     use ODT, only: calc_eddy_length_cdf, diffusion
@@ -186,6 +186,9 @@ contains
             write(0,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
             stop 1
         end if
+
+        ! Print output location to stderr (visible in terminal/SLURM output)
+        write(error_unit,*) 'Output: ', trim(filename)
 
         ! Redirect stdout to log file in output directory
         close(output_unit)

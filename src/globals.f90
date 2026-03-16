@@ -123,7 +123,8 @@ module globals
 
     real(dp) :: max_accept_prob = 0.1      ! Upper constraint for stability in eddy accpt. method
 
-    logical :: same_random = .false.    ! Will use random numbers seeded from same state if true 
+    logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
+    logical :: overwrite = .false.      ! Allow overwriting existing output files
 
     ! -----------------------------------------------
     ! -----------------------------------------------

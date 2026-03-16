@@ -20,6 +20,7 @@ same_random = .false. ! Use the same random number generator seed, for testing p
 ! Input/Output
 simulation_name = "CODT_SIM"
 output_directory = "/directory/to/write/path/"
+overwrite = .false. ! Allow overwriting existing output files
 
 ! Read/write Parameters
 write_timer = 1.0 ! Write domain data every X seconds

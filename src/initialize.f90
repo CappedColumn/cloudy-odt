@@ -72,9 +72,12 @@ contains
         integer :: rand_size
 
 
+        logical :: file_exists
+
         namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
         max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
-        simulation_name, output_directory, write_eddies, do_special_effects, write_timer
+        simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
+        overwrite
 
         ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'
@@ -174,6 +177,15 @@ contains
         ! Create new subdirectory based on simulation name
         filename = trim(output_directory)//'/'//trim(simulation_name)
         call system("mkdir -p "//filename)
+
+        ! Check for existing output files
+        inquire(file=trim(filename)//'/'//trim(simulation_name)//'.nc', exist=file_exists)
+        if (file_exists .and. .not. overwrite) then
+            write(0,*) 'Error: output file already exists: ', &
+                trim(filename)//'/'//trim(simulation_name)//'.nc'
+            write(0,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
+            stop 1
+        end if
 
         ! Redirect stdout to log file in output directory
         close(output_unit)

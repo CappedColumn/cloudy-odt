@@ -1,0 +1,29 @@
+name = "Cloudy-ODT"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+author = "Corey Bois"
+maintainer = "corey.bois@utah.edu"
+copyright = "Copyright 2025 Corey Bois"
+description = "Cloudy-ODT simulates turbulent convective cloud chambers, specifically the PI-cloud-chamber at Michigan Tech University. 'ODT' stands for 'One Dimensional Turbulence', a modeling framework created by Alan Kerstein which replicates the statistical nature of 3D turbulence using only one spatial dimension. Cloudy-ODT explicitely calculates the growth of individual cloud droplets, allowing for a comprehensive understanding of the interaction between microphysics and turbulence."
+
+[build]
+auto-executables = true
+auto-tests = true
+auto-examples = false
+link = ["netcdf", "netcdff"]
+external-modules = ["netcdf", "netcdff"]
+
+[library]
+source-dir = "src"
+# Note: include-dir can be handled by shell env variable: FPM_FFLAGS, declared in the script "fpm_env"
+# include-dir = "-I/path/to/netcdf/include"
+
+[install]
+library = false
+
+[dependencies]
+
+[[executable]]
+name = "CODT"
+source-dir = "app"
+main = "main.f90"

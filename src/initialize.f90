@@ -1,4 +1,5 @@
 module initialize
+    use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
     use ODT, only: calc_eddy_length_cdf, diffusion
@@ -60,10 +61,10 @@ contains
 
     subroutine initialize_params(filename)
 
-        character(100), intent(out) :: filename
+        character(256), intent(out) :: filename
         ! I/O Variables
         integer     :: ierr, nml_unit, k
-        character(100) :: nml_line, io_emsg
+        character(256) :: nml_line, io_emsg
         character(100) :: file_format
         character(100) :: simulation_name
         ! parameters for initializing state of random number generator
@@ -71,15 +72,18 @@ contains
         integer :: rand_size
 
 
+        logical :: file_exists
+
         namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
         max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
-        simulation_name, output_directory, write_eddies, do_special_effects, write_timer
+        simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
+        overwrite
 
         ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop
+            write(*,*) io_emsg; stop 1
         end if
         read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
         ! Print value causing namelist read error
@@ -87,9 +91,16 @@ contains
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(*,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
-            stop
+            stop 1
         end if
         close(nml_unit)
+
+        ! Validate output_directory is an absolute path
+        if (output_directory(1:1) /= '/') then
+            write(0,*) 'Error: output_directory must be an absolute path.'
+            write(0,*) 'Got: ', trim(output_directory)
+            stop 1
+        end if
 
         ! Calculate additional parameters dependent on namelist variables
         write(*,*) 'Setting domain variables...'
@@ -167,6 +178,27 @@ contains
         filename = trim(output_directory)//'/'//trim(simulation_name)
         call system("mkdir -p "//filename)
 
+        ! Check for existing output files
+        inquire(file=trim(filename)//'/'//trim(simulation_name)//'.nc', exist=file_exists)
+        if (file_exists .and. .not. overwrite) then
+            write(0,*) 'Error: output file already exists: ', &
+                trim(filename)//'/'//trim(simulation_name)//'.nc'
+            write(0,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
+            stop 1
+        end if
+
+        ! Print output location to stderr (visible in terminal/SLURM output)
+        write(error_unit,*) 'Output: ', trim(filename)
+
+        ! Redirect stdout to log file in output directory
+        close(output_unit)
+        open(output_unit, file=trim(filename)//'/'//trim(simulation_name)//'.log', &
+             status='replace', action='write', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open log file'
+            stop 1
+        end if
+
         ! Create filename based on Tdiff and N
         file_format = '(a, a, a)'
         write(filename, file_format) trim(filename), '/', trim(simulation_name)
@@ -179,10 +211,8 @@ contains
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_buffer(filename)
 
-        ! Write out namelist file
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write')
-        write(nml_unit, nml=PARAMETERS)
-        close(nml_unit)
+        ! Copy original namelist file to output directory
+        call copy_file(namelist_path, trim(filename)//'.nml')
         
         ! Length of a gridcell
         dz_length = H/N

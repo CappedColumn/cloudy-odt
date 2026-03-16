@@ -40,7 +40,7 @@ contains
 
         character(*), intent(in) :: filename
         integer :: nml_unit, ierr
-        character(100) :: io_emsg, nml_line
+        character(256) :: io_emsg, nml_line
 
         namelist /SPECIALEFFECTS/ do_sidewalls, area_sw, area_bot, C_sw, T_sw, RH_sw, P_sw, sw_nudging_time, &
         do_random_fallout, random_fallout_rate
@@ -48,7 +48,7 @@ contains
         write(*,*) 'Initializing Special Effects...'
         open(newunit=nml_unit, file=trim(namelist_path), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop
+            write(*,*) io_emsg; stop 1
         end if
         read(nml=SPECIALEFFECTS, unit=nml_unit, iostat=ierr)
         ! Print value causing namelist read error
@@ -56,14 +56,11 @@ contains
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(*,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
-            stop
+            stop 1
         end if
         close(nml_unit)
 
-        ! Write namelist parameters
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write', position='append')
-        write(nml_unit, nml=SPECIALEFFECTS)
-        close(nml_unit)
+        ! Namelist is copied to output directory in initialize_params
 
         ! Initialize enabled special effects
         if ( do_sidewalls ) call initialize_sidewalls()

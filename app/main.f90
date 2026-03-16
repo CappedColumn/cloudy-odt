@@ -11,13 +11,44 @@ program main
   implicit none
 
   real(dp) :: t_start, t_end
+  integer :: done_unit
+  character(8) :: date_str
+  character(10) :: time_str
 
   call cpu_time(t_start)
+
+  ! --- Parse command-line argument ---
+  if (command_argument_count() < 1) then
+    write(0,*) 'Usage: codt <namelist_path>'
+    write(0,*) 'Example: codt /path/to/input/params.nml'
+    stop 1
+  end if
+  call get_command_argument(1, namelist_path)
+  if (scan(trim(namelist_path), '/') == 0) then
+    write(0,*) 'Error: namelist path must include a directory.'
+    write(0,*) 'Use ./params.nml for the current directory.'
+    stop 1
+  end if
+  namelist_dir = parent_directory(namelist_path)
 
   ! --- Initialize simulation ---
 
   call initialize_simulation(output_directory) ! output_dir assigned from namelist
-  
+
+  ! Log simulation configuration
+  write(*,*) '--- Simulation Configuration ---'
+  write(*,*) 'Namelist: ', trim(namelist_path)
+  write(*,*) 'N: ', N
+  write(*,*) 'tmax (s): ', tmax
+  write(*,*) 'Tdiff (K): ', Tdiff
+  write(*,*) 'Tref (K): ', Tref
+  write(*,*) 'H (m): ', H
+  write(*,*) 'volume_scaling: ', volume_scaling
+  write(*,*) 'do_turbulence: ', do_turbulence
+  write(*,*) 'do_microphysics: ', do_microphysics
+  write(*,*) 'do_special_effects: ', do_special_effects
+  write(*,*) '--------------------------------'
+
   ! -----------------------------
 
   do while (time_nd .le. tmax_nd)
@@ -93,15 +124,24 @@ program main
 
   end do
 
-  write(*,*) 'Total Particles: ', current_n_particles
-  write(*,*) 'fallout: ', total_n_fellout
-  write(*,*) 'Injected: ', n_injected
-
   ! Write Out
   call close_simulation()
 
   call cpu_time(t_end)
 
-  write(*,*) 'Simulation Took: ', t_end-t_start
+  ! Log run results
+  write(*,*) '--- Run Results ---'
+  write(*,*) 'Total Particles: ', current_n_particles
+  write(*,*) 'Fallout: ', total_n_fellout
+  write(*,*) 'Injected: ', n_injected
+  write(*,*) 'Wall-clock time (s): ', t_end - t_start
+
+  ! Write DONE marker file to output directory
+  call date_and_time(date=date_str, time=time_str)
+  open(newunit=done_unit, file=trim(parent_directory(output_directory))//'DONE', &
+       status='replace', action='write')
+  write(done_unit,'(a,a,a,a,a,a,a,a,a)') date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+       ' ', time_str(1:2), ':', time_str(3:4)
+  close(done_unit)
 
 end program main

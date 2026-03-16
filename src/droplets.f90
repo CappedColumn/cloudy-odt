@@ -777,21 +777,21 @@ contains
         ! Initialization of the MICROPHYSICS namelist and related parameters
         character(*), intent(in) :: filename
         integer     :: ierr, nml_unit, i
-        character(100) :: nml_line, io_emsg
+        character(256) :: nml_line, io_emsg
         
         ! Microphysics namelist variables for initialization only
         logical :: init_drop_each_gridpoint = .true.
         real(dp) :: expected_Ndrops_per_gridpoint = 1
-        character(100):: inj_data_path, bin_data_path ! Not allocatable since namelist-specified variable
+        character(256):: inj_data_file, bin_data_file ! Not allocatable since namelist-specified variable
 
-        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_path, &
-        bin_data_path, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
+        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_file, &
+        bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop
+            write(*,*) io_emsg; stop 1
         end if
         read(nml=MICROPHYSICS, unit=nml_unit, iostat=ierr)
         ! Print value causing namelist read error
@@ -800,14 +800,11 @@ contains
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(*,'(a)') 'Invalid Namelist Parameter: ', trim(nml_line)
-            stop
+            stop 1
         end if
         close(nml_unit)
 
-        ! Write namelist parameters
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write', position='append')
-        write(nml_unit, nml=MICROPHYSICS)
-        close(nml_unit)
+        ! Namelist is copied to output directory in initialize_params
         
 
         ! Open trajectory byte stream if writing particle data
@@ -816,7 +813,7 @@ contains
             status='replace', iostat=ierr)
             if (ierr /= 0) then
                 print *, "Error opening file: "
-                stop
+                stop 1
             end if
         end if
 
@@ -827,12 +824,20 @@ contains
             initial_wet_radius = 1.1
         end if
 
+        ! Resolve input paths relative to namelist directory
+        inj_data_file = resolve_path(namelist_dir, trim(inj_data_file))
+        bin_data_file = resolve_path(namelist_dir, trim(bin_data_file))
+
+        ! Copy injection data to output directory
+        i = scan(trim(inj_data_file), '/', back=.true.)
+        call copy_file(trim(inj_data_file), trim(parent_directory(filename))//trim(inj_data_file(i+1:)))
+
         ! Set up aerosol type and injection forcings
-        call read_injection_data(trim(inj_data_path))
+        call read_injection_data(trim(inj_data_file))
 
         ! Bring in binning data
         n_aer_category = maxval(aerosol_partition)
-        call read_binning_data(trim(bin_data_path), n_aer_category, particle_bin_edges, size_distribution)
+        call read_binning_data(trim(bin_data_file), n_aer_category, particle_bin_edges, size_distribution)
         
         ! Calculate mid-point radii of DSD
         allocate(particle_bins(n_DSD_bins))
@@ -942,7 +947,7 @@ contains
         open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) 'Error opening injection data file: ', io_emsg
-            stop
+            stop 1
         end if
 
         read(file_unit, *) ! N Bin-Edges
@@ -982,7 +987,7 @@ contains
         open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) 'Error opening injection data file: ', io_emsg
-            stop
+            stop 1
         end if
 
         ! Parsing is fuN!
@@ -998,17 +1003,17 @@ contains
         read(file_unit, *) n_times
         allocate(injection_times(n_times))
         read(file_unit, *, iostat=ierr) injection_times
-        if ( ierr /= 0) then; write(*,*) 'Error reading times'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading times'; stop 1; end if
         read(file_unit, *) ! Injection Rate (#/m3/sec):
         read(file_unit, *)
         allocate(injection_rates(n_times))
         read(file_unit, *, iostat=ierr) injection_rates
-        if ( ierr /= 0) then; write(*,*) 'Error reading injection rates'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading injection rates'; stop 1; end if
         read(file_unit, *) ! Number of Edges:
         read(file_unit, *) n_edges
         allocate(aerosol_size_edges(n_edges))
         read(file_unit, *, iostat=ierr) aerosol_size_edges
-        if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop; end if
+        if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop 1; end if
         read(file_unit, *) ! Aerosol Category
         allocate(aerosol_partition(n_edges - 1))
         read(file_unit, *) aerosol_partition
@@ -1018,7 +1023,7 @@ contains
         allocate(aerosol_bin_freq(n_times, n_edges-1)) ! Fix for 1 injection time case
         do i = 1, n_times
             read(file_unit, *, iostat=ierr) aerosol_bin_freq(i,:)
-            if ( ierr /= 0) then; write(*,*) 'Error reading bin frequencies'; stop; end if
+            if ( ierr /= 0) then; write(*,*) 'Error reading bin frequencies'; stop 1; end if
         end do
     
         close(file_unit)

@@ -123,7 +123,7 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
 
       IF (ABS(hnext) .LT. hmin) THEN
          WRITE(7,*) 'stepsize smaller than minimum in odeint'
-         STOP
+         STOP 1
       END IF
 
       h = hnext
@@ -196,7 +196,7 @@ subroutine fcnkb(ltime, drop_radius, drdt)
       write(*,*) "fcnb error: Ktemp: ", Ktemp
       write(*,*) "fcnb error: 2.0*pi*Md*R_uni : ", 2.0*pi*Ma*1e-3*R_univ
       flush(6)
-      stop
+      stop 1
       !err_dgm   = -1
       !return
       ! write(*,*) "fcnb error: SQRT(2.0*pi*Md*R_uni*temp): ", SQRT(2.0*pi*Md*R_uni*temp)
@@ -232,7 +232,7 @@ subroutine fcnkb(ltime, drop_radius, drdt)
         nions = 2.0d0
     else  
       write(*,*) "fcnkb: Error: aerosol type unknown"
-      stop
+      stop 1
     end if
 
 
@@ -299,7 +299,7 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
       xnew = x+h
       IF (xnew .EQ. x) THEN
          WRITE(7,*) 'stepsize underflow in rkqs'
-         STOP
+         STOP 1
       END IF
       GOTO 1
    ELSE

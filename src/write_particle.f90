@@ -81,14 +81,14 @@ module write_particle
         access='stream', status='replace', iostat=ios)
         if (ios /= 0) then
             print *, "Error opening file: "
-            stop
+            stop 1
         end if
 
         open(newunit=meta_unit, file=trim(filename)//'_particle_meta.txt', status='replace', &
         iostat=ios)
         if (ios /= 0) then
             print *, "Error opening file: "
-            stop
+            stop 1
         end if
 
     end subroutine open_particle_files

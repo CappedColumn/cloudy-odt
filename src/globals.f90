@@ -85,10 +85,9 @@ module globals
     real(dp), parameter :: g_per_kg = 1e3
     real(dp), parameter :: kg_per_g = 1e-3
 
-    ! Will likely change method of getting directory locations,
-    ! but this will do for now
-    character(*), parameter :: namelist_path = 'input/params.nml' ! Location of namelist file
-    character(100) :: output_directory  ! Location of output direction
+    character(256) :: namelist_path   ! Path to namelist file (set from command line)
+    character(256) :: namelist_dir    ! Parent directory of namelist file (for resolving relative paths)
+    character(256) :: output_directory  ! Location of output directory
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -124,7 +123,8 @@ module globals
 
     real(dp) :: max_accept_prob = 0.1      ! Upper constraint for stability in eddy accpt. method
 
-    logical :: same_random = .false.    ! Will use random numbers seeded from same state if true 
+    logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
+    logical :: overwrite = .false.      ! Allow overwriting existing output files
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -245,7 +245,7 @@ contains
             write(*,'(a)') "Error in netCDF procedure..."
             write(*,'((a), (a), (i4))') error_msg, ' :: ', status
             write(*,'(a)') trim(nf90_strerror(status))
-            stop
+            stop 1
         end if
 
     end subroutine nc_verify
@@ -287,7 +287,61 @@ contains
 
     end function
 
+    function parent_directory(filepath) result(dir)
+        ! Returns the parent directory of a file path.
+        ! e.g. "/home/user/input/params.nml" -> "/home/user/input/"
+        character(*), intent(in) :: filepath
+        character(256) :: dir
+        integer :: idx
 
+        idx = scan(trim(filepath), '/', back=.true.)
+        if (idx > 0) then
+            dir = filepath(1:idx)
+        else
+            dir = './'
+        end if
+    end function parent_directory
 
+    function resolve_path(basedir, filepath) result(full_path)
+        ! If filepath is absolute, return it as-is.
+        ! If relative, prepend basedir.
+        character(*), intent(in) :: basedir, filepath
+        character(256) :: full_path
+
+        if (filepath(1:1) == '/') then
+            full_path = filepath
+        else
+            full_path = trim(basedir) // trim(filepath)
+        end if
+    end function resolve_path
+
+    subroutine copy_file(source, destination)
+        ! Copies a file line-by-line from source to destination
+        character(*), intent(in) :: source, destination
+        integer :: in_unit, out_unit, ierr
+        character(512) :: line
+
+        open(newunit=in_unit, file=trim(source), status='old', action='read', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open source file: ', trim(source)
+            return
+        end if
+
+        open(newunit=out_unit, file=trim(destination), status='replace', action='write', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open destination file: ', trim(destination)
+            close(in_unit)
+            return
+        end if
+
+        do
+            read(in_unit, '(a)', iostat=ierr) line
+            if (ierr /= 0) exit
+            write(out_unit, '(a)') trim(line)
+        end do
+
+        close(in_unit)
+        close(out_unit)
+    end subroutine copy_file
 
 end module globals

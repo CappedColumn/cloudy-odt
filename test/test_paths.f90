@@ -1,5 +1,5 @@
 program test_paths
-    use globals, only: parent_directory, resolve_path
+    use globals, only: parent_directory, resolve_path, copy_file
     implicit none
 
     integer :: n_passed, n_failed
@@ -43,6 +43,10 @@ program test_paths
         trim(resolve_path("/home/user/input/", "../shared/bin_data.txt")), &
         "/home/user/input/../shared/bin_data.txt")
 
+    ! --- copy_file tests ---
+
+    call test_copy_file()
+
     ! --- Summary ---
 
     write(*,*)
@@ -66,5 +70,40 @@ contains
             n_failed = n_failed + 1
         end if
     end subroutine check
+
+    subroutine test_copy_file()
+        integer :: u, ierr
+        character(256) :: line1, line2
+        character(*), parameter :: src = '/tmp/codt_test_src.txt'
+        character(*), parameter :: dst = '/tmp/codt_test_dst.txt'
+
+        ! Write a test source file
+        open(newunit=u, file=src, status='replace', action='write')
+        write(u, '(a)') 'Line one of test file'
+        write(u, '(a)') 'Line two with numbers 12345'
+        close(u)
+
+        ! Copy it
+        call copy_file(src, dst)
+
+        ! Read back and verify
+        open(newunit=u, file=dst, status='old', action='read', iostat=ierr)
+        if (ierr /= 0) then
+            call check("copy_file: destination exists", "missing", "exists")
+            return
+        end if
+
+        read(u, '(a)') line1
+        read(u, '(a)') line2
+        close(u)
+
+        call check("copy_file: line 1 matches", trim(line1), "Line one of test file")
+        call check("copy_file: line 2 matches", trim(line2), "Line two with numbers 12345")
+
+        ! Clean up
+        open(newunit=u, file=src, status='old'); close(u, status='delete')
+        open(newunit=u, file=dst, status='old'); close(u, status='delete')
+
+    end subroutine test_copy_file
 
 end program test_paths

@@ -314,4 +314,33 @@ contains
         end if
     end function resolve_path
 
+    subroutine copy_file(source, destination)
+        ! Copies a file line-by-line from source to destination
+        character(*), intent(in) :: source, destination
+        integer :: in_unit, out_unit, ierr
+        character(512) :: line
+
+        open(newunit=in_unit, file=trim(source), status='old', action='read', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open source file: ', trim(source)
+            return
+        end if
+
+        open(newunit=out_unit, file=trim(destination), status='replace', action='write', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: could not open destination file: ', trim(destination)
+            close(in_unit)
+            return
+        end if
+
+        do
+            read(in_unit, '(a)', iostat=ierr) line
+            if (ierr /= 0) exit
+            write(out_unit, '(a)') trim(line)
+        end do
+
+        close(in_unit)
+        close(out_unit)
+    end subroutine copy_file
+
 end module globals

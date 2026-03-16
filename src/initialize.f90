@@ -186,10 +186,8 @@ contains
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_buffer(filename)
 
-        ! Write out namelist file
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write')
-        write(nml_unit, nml=PARAMETERS)
-        close(nml_unit)
+        ! Copy original namelist file to output directory
+        call copy_file(namelist_path, trim(filename)//'.nml')
         
         ! Length of a gridcell
         dz_length = H/N

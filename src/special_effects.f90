@@ -60,10 +60,7 @@ contains
         end if
         close(nml_unit)
 
-        ! Write namelist parameters
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write', position='append')
-        write(nml_unit, nml=SPECIALEFFECTS)
-        close(nml_unit)
+        ! Namelist is copied to output directory in initialize_params
 
         ! Initialize enabled special effects
         if ( do_sidewalls ) call initialize_sidewalls()

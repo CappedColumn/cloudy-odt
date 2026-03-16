@@ -804,10 +804,7 @@ contains
         end if
         close(nml_unit)
 
-        ! Write namelist parameters
-        open(newunit=nml_unit, file=trim(filename)//'_nml.txt', action='write', position='append')
-        write(nml_unit, nml=MICROPHYSICS)
-        close(nml_unit)
+        ! Namelist is copied to output directory in initialize_params
         
 
         ! Open trajectory byte stream if writing particle data
@@ -830,6 +827,10 @@ contains
         ! Resolve input paths relative to namelist directory
         inj_data_file = resolve_path(namelist_dir, trim(inj_data_file))
         bin_data_file = resolve_path(namelist_dir, trim(bin_data_file))
+
+        ! Copy injection data to output directory
+        i = scan(trim(inj_data_file), '/', back=.true.)
+        call copy_file(trim(inj_data_file), trim(parent_directory(filename))//trim(inj_data_file(i+1:)))
 
         ! Set up aerosol type and injection forcings
         call read_injection_data(trim(inj_data_file))

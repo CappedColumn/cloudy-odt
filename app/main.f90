@@ -31,7 +31,21 @@ program main
   ! --- Initialize simulation ---
 
   call initialize_simulation(output_directory) ! output_dir assigned from namelist
-  
+
+  ! Log simulation configuration
+  write(*,*) '--- Simulation Configuration ---'
+  write(*,*) 'Namelist: ', trim(namelist_path)
+  write(*,*) 'N: ', N
+  write(*,*) 'tmax (s): ', tmax
+  write(*,*) 'Tdiff (K): ', Tdiff
+  write(*,*) 'Tref (K): ', Tref
+  write(*,*) 'H (m): ', H
+  write(*,*) 'volume_scaling: ', volume_scaling
+  write(*,*) 'do_turbulence: ', do_turbulence
+  write(*,*) 'do_microphysics: ', do_microphysics
+  write(*,*) 'do_special_effects: ', do_special_effects
+  write(*,*) '--------------------------------'
+
   ! -----------------------------
 
   do while (time_nd .le. tmax_nd)
@@ -107,15 +121,16 @@ program main
 
   end do
 
-  write(*,*) 'Total Particles: ', current_n_particles
-  write(*,*) 'fallout: ', total_n_fellout
-  write(*,*) 'Injected: ', n_injected
-
   ! Write Out
   call close_simulation()
 
   call cpu_time(t_end)
 
-  write(*,*) 'Simulation Took: ', t_end-t_start
+  ! Log run results
+  write(*,*) '--- Run Results ---'
+  write(*,*) 'Total Particles: ', current_n_particles
+  write(*,*) 'Fallout: ', total_n_fellout
+  write(*,*) 'Injected: ', n_injected
+  write(*,*) 'Wall-clock time (s): ', t_end - t_start
 
 end program main

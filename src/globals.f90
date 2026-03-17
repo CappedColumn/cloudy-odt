@@ -316,18 +316,20 @@ contains
     end function resolve_path
 
     subroutine copy_file(source, destination)
-        ! Copies a file line-by-line from source to destination
+        ! Copies a file byte-for-byte from source to destination using stream I/O
         character(*), intent(in) :: source, destination
         integer :: in_unit, out_unit, ierr
-        character(512) :: line
+        character :: byte
 
-        open(newunit=in_unit, file=trim(source), status='old', action='read', iostat=ierr)
+        open(newunit=in_unit, file=trim(source), status='old', access='stream', &
+             form='unformatted', action='read', iostat=ierr)
         if (ierr /= 0) then
             write(0,*) 'Error: could not open source file: ', trim(source)
             return
         end if
 
-        open(newunit=out_unit, file=trim(destination), status='replace', action='write', iostat=ierr)
+        open(newunit=out_unit, file=trim(destination), status='replace', access='stream', &
+             form='unformatted', action='write', iostat=ierr)
         if (ierr /= 0) then
             write(0,*) 'Error: could not open destination file: ', trim(destination)
             close(in_unit)
@@ -335,9 +337,9 @@ contains
         end if
 
         do
-            read(in_unit, '(a)', iostat=ierr) line
+            read(in_unit, iostat=ierr) byte
             if (ierr /= 0) exit
-            write(out_unit, '(a)') trim(line)
+            write(out_unit) byte
         end do
 
         close(in_unit)

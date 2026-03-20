@@ -153,6 +153,7 @@ contains
                                         buffer_W(:, 1:buffer_count), &
                                         buffer_DSD(:, :, 1:buffer_count), &
                                         buffer_stats(:, 1:buffer_count))
+        call nc_verify( nf90_sync(ncid) )
         buffer_count = 0
 
     end subroutine flush_buffer

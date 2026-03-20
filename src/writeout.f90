@@ -247,7 +247,7 @@ contains
 
         call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, tv_varid), "nf90_def_var: Tv" )
         call nc_verify( nf90_put_att(lncid, tv_varid, "long name", "Virtual Temperature"), "nf90_put_att: Tv, name" )
-        call nc_verify( nf90_put_att(lncid, tv_varid, "units", "celcius"), "nf90_put_att: Tv, units")
+        call nc_verify( nf90_put_att(lncid, tv_varid, "units", "celsius"), "nf90_put_att: Tv, units")
         
         call nc_verify( nf90_def_var(lncid, "S", NF90_FLOAT, dimids, s_varid), "nf90_def_var: S" )
         call nc_verify( nf90_put_att(lncid, s_varid, "long name", "Supersaturation"), "nf90_put_att: S, name" )

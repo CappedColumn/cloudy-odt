@@ -241,34 +241,41 @@ contains
         ! end do
     
         ! Establish variables and attributes for coordinate(dimension) variables
-        call nc_verify( nf90_def_var(lncid, "z", NF90_FLOAT, z_dimid, z_varid), "nf90_def_var: z" )
+        call nc_verify( nf90_def_var(lncid, "z", NF90_FLOAT, z_dimid, z_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: z" )
         call nc_verify( nf90_put_att(lncid, z_varid, "long_name", "Height"), "nf90_put_att: z, name" )
         call nc_verify( nf90_put_att(lncid, z_varid, "units", "meters"), "nf90_put_att: z, units" )
-        call nc_verify( nf90_def_var(lncid, "time", NF90_FLOAT, t_dimid, t_varid), "nf90_def_var: time" )
+        call nc_verify( nf90_def_var(lncid, "time", NF90_FLOAT, t_dimid, t_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: time" )
         call nc_verify( nf90_put_att(lncid, t_varid, "long_name", "Time"), "nf90_put_att: time, name" )
         call nc_verify( nf90_put_att(lncid, t_varid, "units", "seconds"), "nf90_put_att: time, units" )
 
     
         ! Note, netCDF will write out variables in (time, height) order
         dimids = (/ z_dimid, t_dimid /) ! Standard time/height dimensions
-        call nc_verify( nf90_def_var(lncid, "T", NF90_FLOAT, dimids, tc_varid), "nf90_def_var: T" )
+        call nc_verify( nf90_def_var(lncid, "T", NF90_FLOAT, dimids, tc_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: T" )
         call nc_verify( nf90_put_att(lncid, tc_varid, "long_name", "Temperature"), "nf90_put_att: T, name" )
         call nc_verify( nf90_put_att(lncid, tc_varid, "units", "celsius"), "nf90_put_att: T, units" )
         
-        call nc_verify( nf90_def_var(lncid, "QV", NF90_FLOAT, dimids, qv_varid), "nf90_def_var: QV" )
+        call nc_verify( nf90_def_var(lncid, "QV", NF90_FLOAT, dimids, qv_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: QV" )
         call nc_verify( nf90_put_att(lncid, qv_varid, "long_name", "Water Vapor Mixing Ratio"), "nf90_put_att: QV, name" )
         call nc_verify( nf90_put_att(lncid, qv_varid, "units", "g/kg"), "nf90_put_att: QV, units")
 
-        call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, tv_varid), "nf90_def_var: Tv" )
+        call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, tv_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: Tv" )
         call nc_verify( nf90_put_att(lncid, tv_varid, "long_name", "Virtual Temperature"), "nf90_put_att: Tv, name" )
         call nc_verify( nf90_put_att(lncid, tv_varid, "units", "celsius"), "nf90_put_att: Tv, units")
         
-        call nc_verify( nf90_def_var(lncid, "S", NF90_FLOAT, dimids, s_varid), "nf90_def_var: S" )
+        call nc_verify( nf90_def_var(lncid, "S", NF90_FLOAT, dimids, s_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: S" )
         call nc_verify( nf90_put_att(lncid, s_varid, "long_name", "Supersaturation"), "nf90_put_att: S, name" )
         call nc_verify( nf90_put_att(lncid, s_varid, "units", "%"), "nf90_put_att: S, units")
 
         ! Vertical Velocity
-        call nc_verify( nf90_def_var(lncid, "W", NF90_FLOAT, dimids, w_varid), "nf90_def_var: W" )
+        call nc_verify( nf90_def_var(lncid, "W", NF90_FLOAT, dimids, w_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: W" )
         call nc_verify( nf90_put_att(lncid, w_varid, "long_name", "W-Velocity"), "nf90_put_att: W, name" )
         call nc_verify( nf90_put_att(lncid, w_varid, "units", "m/s"), "nf90_put_att: W, units")
 
@@ -276,23 +283,28 @@ contains
 
         ! Particle statistic variables (only when microphysics is enabled)
         if ( do_microphysics ) then
-            call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, statids(1)), "nf90_def_var: Np" )
+            call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, statids(1), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: Np" )
             call nc_verify( nf90_put_att(lncid, statids(1), "long_name", "Number of Particles"), "nf90_put_att: Np, name" )
             call nc_verify( nf90_put_att(lncid, statids(1), "units", "#"), "nf90_put_att: Np units")
 
-            call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, statids(2)), "nf90_def_var: Nact" )
+            call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, statids(2), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: Nact" )
             call nc_verify( nf90_put_att(lncid, statids(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
             call nc_verify( nf90_put_att(lncid, statids(2), "units", "#"), "nf90_put_att: Nact units")
 
-            call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, statids(3)), "nf90_def_var: Nun" )
+            call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, statids(3), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: Nun" )
             call nc_verify( nf90_put_att(lncid, statids(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
             call nc_verify( nf90_put_att(lncid, statids(3), "units", "#"), "nf90_put_att: Nun units")
 
-            call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, statids(4)), "nf90_def_var: Ravg" )
+            call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, statids(4), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: Ravg" )
             call nc_verify( nf90_put_att(lncid, statids(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
             call nc_verify( nf90_put_att(lncid, statids(4), "units", "um"), "nf90_put_att: Ravg units")
 
-            call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, statids(5)), "nf90_def_var: LWC" )
+            call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, statids(5), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: LWC" )
             call nc_verify( nf90_put_att(lncid, statids(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
             call nc_verify( nf90_put_att(lncid, statids(5), "units", "g/m3"), "nf90_put_att: LWC units")
         end if

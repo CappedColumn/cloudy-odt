@@ -896,7 +896,8 @@ contains
 
         ! Create Droplet Size Distribution variable
         dimids = (/ r_dimid, t_dimid /)
-        call nc_verify( nf90_def_var(lncid, "DSD", NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD")
+        call nc_verify( nf90_def_var(lncid, "DSD", NF90_INT, dimids, dsd_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: DSD")
         call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", "Droplet Size Distribution"), "nf90_put_att: DSD, name")
         call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD, units")
 
@@ -926,7 +927,8 @@ contains
         do i = 1, n_DSDs
             write(strint,*) i
             name = "DSD_" // adjustl(strint)
-            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD_aer" )
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid, &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: DSD_aer" )
             name = "Droplet Size Distribution - " // adjustl(strint)
             call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
             call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")

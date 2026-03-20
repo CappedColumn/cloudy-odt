@@ -84,6 +84,8 @@ module droplets
     integer(i4) :: n_injected, inj_time_idx
     logical :: update_inj_rate
     real(dp) :: initial_wet_radius
+    logical :: init_drop_each_gridpoint = .true.
+    real(dp) :: expected_Ndrops_per_gridpoint = 1
 
     ! DGM-Controlling variables
     real(dp), parameter :: RK5_min_timestep = 0.01
@@ -779,9 +781,6 @@ contains
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
         
-        ! Microphysics namelist variables for initialization only
-        logical :: init_drop_each_gridpoint = .true.
-        real(dp) :: expected_Ndrops_per_gridpoint = 1
         character(256):: inj_data_file, bin_data_file ! Not allocatable since namelist-specified variable
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_file, &
@@ -874,6 +873,7 @@ contains
         real(dp), intent(in) :: r_bins(:)
 
         integer :: t_dimid, r_dimid, r_varid, dsd_varid, nbins, dimids(2)
+        integer :: re_dimid, re_varid
 
         nbins = size(r_bins)
 
@@ -882,21 +882,30 @@ contains
         ! Open netcdf in definition mode
         call nc_verify( nf90_redef(lncid), "nf90_redef: DSD" )
 
-        ! Create radius dimension and variable
+        ! Create radius dimension and variable (bin centers)
         call nc_verify( nf90_def_dim(lncid, "radius", nbins, r_dimid), "nf90_def_dim: radius")
         call nc_verify( nf90_def_var(lncid, "radius", NF90_FLOAT, r_dimid, r_varid), "nf90_def_var: radius")
+        call nc_verify( nf90_put_att(lncid, r_varid, "long_name", "Droplet Bin Centers"), "nf90_put_att: radius, name")
         call nc_verify( nf90_put_att(lncid, r_varid, "units", "microns"), "nf90_put_att: radius, units")
+
+        ! Create radius_edges variable (bin edges)
+        call nc_verify( nf90_def_dim(lncid, "radius_edges", nbins + 1, re_dimid), "nf90_def_dim: radius_edges")
+        call nc_verify( nf90_def_var(lncid, "radius_edges", NF90_FLOAT, re_dimid, re_varid), "nf90_def_var: radius_edges")
+        call nc_verify( nf90_put_att(lncid, re_varid, "units", "microns"), "nf90_put_att: radius_edges, units")
+        call nc_verify( nf90_put_att(lncid, re_varid, "long_name", "Droplet Bin Edges"), "nf90_put_att: radius_edges, name")
 
         ! Create Droplet Size Distribution variable
         dimids = (/ r_dimid, t_dimid /)
-        call nc_verify( nf90_def_var(lncid, "DSD", NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD")
-        call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", "Droplet Size Distribution"), "nf90_put_att: DSD, name")
+        call nc_verify( nf90_def_var(lncid, "DSD", NF90_INT, dimids, dsd_varid, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: DSD")
+        call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", "Droplet Size Distribution"), "nf90_put_att: DSD, name")
         call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD, units")
 
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD")
 
-        ! Populate radius dimension
+        ! Populate radius variables
         call nc_verify( nf90_put_var(lncid, r_varid, r_bins), "nf90_put_var: radius")
+        call nc_verify( nf90_put_var(lncid, re_varid, particle_bin_edges), "nf90_put_var: radius_edges")
 
     end subroutine netcdf_add_DSD
 
@@ -918,9 +927,10 @@ contains
         do i = 1, n_DSDs
             write(strint,*) i
             name = "DSD_" // adjustl(strint)
-            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD_aer" )
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid, &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: DSD_aer" )
             name = "Droplet Size Distribution - " // adjustl(strint)
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
             call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
 
         end do

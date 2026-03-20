@@ -28,7 +28,7 @@ contains
         end if
 
         trajectory_time_iter = trajectory_time_iter + ldt
-        if ( trajectory_start <= time .and. trajectory_end > ltime ) then
+        if ( trajectory_start <= ltime .and. trajectory_end > ltime ) then
             if ( trajectory_time_iter >= trajectory_timer ) then
                 call write_particle_data_nc(lparticles, ltime)
                 trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)

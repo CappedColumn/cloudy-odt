@@ -1,5 +1,5 @@
 program main
-  use write_particle, only: write_trajectory_controller, close_particle_files
+  use write_particle, only: write_trajectory_controller
   use globals
   use initialize, only: initialize_simulation, close_simulation
   use writeout, only: write_data, add_to_eddy_buffer

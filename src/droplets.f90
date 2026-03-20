@@ -91,7 +91,6 @@ module droplets
     real(dp), parameter :: RK5_min_timestep = 0.01
 
     ! Particle I/O Handling
-    integer :: pid_unit ! particle ID file
     logical :: write_trajectories
     real(dp) :: trajectory_start = 0., trajectory_end = 0.
     real(dp) :: trajectory_timer = 1.
@@ -220,13 +219,6 @@ contains
                     Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx))
 
         call injected_particle%update_gridcell()
-
-        ! Determine if particle will undergo trajectory tracking
-        if ( write_trajectories ) then
-            if ( (trajectory_start <= time) .and. (trajectory_end > time) ) then
-                call write_particle_id(injected_particle)
-            end if
-        end if
 
         ! Index newly injected particle object into array of current particles
         lparticles_array(current_n_particles) = injected_particle
@@ -806,16 +798,6 @@ contains
         ! Namelist is copied to output directory in initialize_params
         
 
-        ! Open trajectory byte stream if writing particle data
-        if ( write_trajectories ) then
-            open(newunit=pid_unit, file=trim(filename)//'_PID.bin', form='unformatted', access='stream', &
-            status='replace', iostat=ierr)
-            if (ierr /= 0) then
-                print *, "Error opening file: "
-                stop 1
-            end if
-        end if
-
         ! Verify that the initial wet radius will be greater than dry radius
         if ( initial_wet_radius <= 1.) then
             write(*,*) 'Injected wet radius too small...'
@@ -1085,20 +1067,6 @@ contains
         end if
 
     end function calculate_injection_rate
-
-    subroutine write_particle_id(droplet)
-        ! Write out particle meta-data
-        type(particle), intent(in) :: droplet
-
-        write(pid_unit) droplet%particle_id, droplet%solute_type%aerosol_id, droplet%solute_radius
-                        
-    end subroutine write_particle_id
-
-    subroutine close_droplets()
-
-        close(pid_unit)
-
-    end subroutine close_droplets
 
     subroutine calculate_droplet_statistics(droplets, stats)
         ! Calculate a few droplet statistics to be included in the netcdf file

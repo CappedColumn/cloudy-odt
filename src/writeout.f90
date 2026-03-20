@@ -274,26 +274,28 @@ contains
 
 
 
-        ! Statistic Variable creation
-        call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, statids(1)), "nf90_def_var: Np" )
-        call nc_verify( nf90_put_att(lncid, statids(1), "long_name", "Number of Particles"), "nf90_put_att: Np, name" )
-        call nc_verify( nf90_put_att(lncid, statids(1), "units", "#"), "nf90_put_att: Np units")
+        ! Particle statistic variables (only when microphysics is enabled)
+        if ( do_microphysics ) then
+            call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, statids(1)), "nf90_def_var: Np" )
+            call nc_verify( nf90_put_att(lncid, statids(1), "long_name", "Number of Particles"), "nf90_put_att: Np, name" )
+            call nc_verify( nf90_put_att(lncid, statids(1), "units", "#"), "nf90_put_att: Np units")
 
-        call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, statids(2)), "nf90_def_var: Nact" )
-        call nc_verify( nf90_put_att(lncid, statids(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
-        call nc_verify( nf90_put_att(lncid, statids(2), "units", "#"), "nf90_put_att: Nact units")
+            call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, statids(2)), "nf90_def_var: Nact" )
+            call nc_verify( nf90_put_att(lncid, statids(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
+            call nc_verify( nf90_put_att(lncid, statids(2), "units", "#"), "nf90_put_att: Nact units")
 
-        call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, statids(3)), "nf90_def_var: Nun" )
-        call nc_verify( nf90_put_att(lncid, statids(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
-        call nc_verify( nf90_put_att(lncid, statids(3), "units", "#"), "nf90_put_att: Nun units")
+            call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, statids(3)), "nf90_def_var: Nun" )
+            call nc_verify( nf90_put_att(lncid, statids(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
+            call nc_verify( nf90_put_att(lncid, statids(3), "units", "#"), "nf90_put_att: Nun units")
 
-        call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, statids(4)), "nf90_def_var: Ravg" )
-        call nc_verify( nf90_put_att(lncid, statids(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
-        call nc_verify( nf90_put_att(lncid, statids(4), "units", "um"), "nf90_put_att: Ravg units")
+            call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, statids(4)), "nf90_def_var: Ravg" )
+            call nc_verify( nf90_put_att(lncid, statids(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
+            call nc_verify( nf90_put_att(lncid, statids(4), "units", "um"), "nf90_put_att: Ravg units")
 
-        call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, statids(5)), "nf90_def_var: LWC" )
-        call nc_verify( nf90_put_att(lncid, statids(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
-        call nc_verify( nf90_put_att(lncid, statids(5), "units", "g/m3"), "nf90_put_att: LWC units")
+            call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, statids(5)), "nf90_def_var: LWC" )
+            call nc_verify( nf90_put_att(lncid, statids(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
+            call nc_verify( nf90_put_att(lncid, statids(5), "units", "g/m3"), "nf90_put_att: LWC units")
+        end if
 
     
         ! Variable length particle variables
@@ -349,11 +351,13 @@ contains
         call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
         call nc_verify( nf90_inq_varid(lncid, "W", varids(6)) )
         
-        call nc_verify( nf90_inq_varid(ncid, "Np", statids(1)) )
-        call nc_verify( nf90_inq_varid(ncid, "Nact", statids(2)) )
-        call nc_verify( nf90_inq_varid(ncid, "Nun", statids(3)) )
-        call nc_verify( nf90_inq_varid(ncid, "Ravg", statids(4)) )
-        call nc_verify( nf90_inq_varid(ncid, "LWC", statids(5)) )
+        if ( do_microphysics ) then
+            call nc_verify( nf90_inq_varid(ncid, "Np", statids(1)) )
+            call nc_verify( nf90_inq_varid(ncid, "Nact", statids(2)) )
+            call nc_verify( nf90_inq_varid(ncid, "Nun", statids(3)) )
+            call nc_verify( nf90_inq_varid(ncid, "Ravg", statids(4)) )
+            call nc_verify( nf90_inq_varid(ncid, "LWC", statids(5)) )
+        end if
 
         ! Write to variable slots
         call nc_verify( nf90_put_var(ncid, varids(1), ltime, start=(/nc_write_iter/)) )
@@ -382,11 +386,13 @@ contains
 
         end if
 
-        call nc_verify( nf90_put_var(ncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(ncid, statids(2), lstats(2,:), start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(ncid, statids(3), lstats(3,:), start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(ncid, statids(4), lstats(4,:), start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(ncid, statids(5), lstats(5,:), start=(/nc_write_iter/)) )
+        if ( do_microphysics ) then
+            call nc_verify( nf90_put_var(ncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(ncid, statids(2), lstats(2,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(ncid, statids(3), lstats(3,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(ncid, statids(4), lstats(4,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(ncid, statids(5), lstats(5,:), start=(/nc_write_iter/)) )
+        end if
 
         ! Move 'start' time location to end of buffer for next write
         nc_write_iter = nc_write_iter + buffer_count

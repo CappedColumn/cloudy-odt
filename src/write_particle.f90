@@ -263,5 +263,100 @@ module write_particle
 
     end subroutine create_particle_netcdf
 
+    subroutine write_particle_data_nc(lparticles, ltime)
+        ! Writes one time step of particle data to the _particles.nc file.
+        ! Extracts fields into temporary 1D arrays and appends to the
+        ! record and time_step dimensions.
+        type(particle), intent(in) :: lparticles(:)
+        real(dp), intent(in) :: ltime
+
+        integer :: np, i, varid
+        integer(i4), allocatable :: int_buf(:)
+        real, allocatable :: float_buf(:)
+
+        np = current_n_particles
+        if (np == 0) return
+
+        ! --- Per-time-step variables ---
+        time_step_count = time_step_count + 1
+
+        call nc_verify( nf90_inq_varid(pnc_id, "time", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, ltime, start=(/time_step_count/)) )
+
+        call nc_verify( nf90_inq_varid(pnc_id, "row_sizes", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, np, start=(/time_step_count/)) )
+
+        ! --- Per-record variables ---
+        allocate(int_buf(np), float_buf(np))
+
+        ! particle_id
+        do i = 1, np; int_buf(i) = lparticles(i)%particle_id; end do
+        call nc_verify( nf90_inq_varid(pnc_id, "particle_id", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! aerosol_id
+        do i = 1, np; int_buf(i) = lparticles(i)%solute_type%aerosol_id; end do
+        call nc_verify( nf90_inq_varid(pnc_id, "aerosol_id", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! gridcell
+        do i = 1, np; int_buf(i) = lparticles(i)%gridcell; end do
+        call nc_verify( nf90_inq_varid(pnc_id, "gridcell", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! position
+        do i = 1, np; float_buf(i) = real(lparticles(i)%position); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "position", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! temperature
+        do i = 1, np; float_buf(i) = real(lparticles(i)%temperature); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "temperature", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! water_vapor
+        do i = 1, np; float_buf(i) = real(lparticles(i)%water_vapor); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "water_vapor", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! supersaturation
+        do i = 1, np; float_buf(i) = real(lparticles(i)%supersaturation); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "supersaturation", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! radius (m -> um)
+        do i = 1, np; float_buf(i) = real(lparticles(i)%radius * um_per_m); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "radius", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! solute_radius
+        do i = 1, np; float_buf(i) = real(lparticles(i)%solute_radius); end do
+        call nc_verify( nf90_inq_varid(pnc_id, "solute_radius", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! activated (logical -> 0/1)
+        do i = 1, np
+            if (lparticles(i)%activated) then
+                int_buf(i) = 1
+            else
+                int_buf(i) = 0
+            end if
+        end do
+        call nc_verify( nf90_inq_varid(pnc_id, "activated", varid) )
+        call nc_verify( nf90_put_var(pnc_id, varid, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        deallocate(int_buf, float_buf)
+
+        ! Update record counter
+        record_count = record_count + np
+
+    end subroutine write_particle_data_nc
+
+    subroutine close_particle_netcdf()
+
+        call nc_verify( nf90_close(pnc_id), "close_particle_netcdf: nf90_close" )
+
+    end subroutine close_particle_netcdf
+
 
 end module write_particle

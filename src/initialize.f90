@@ -42,7 +42,7 @@ contains
         end if
 
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
-        
+
     end subroutine initialize_simulation
 
     subroutine close_simulation()
@@ -202,7 +202,7 @@ contains
         ! Create filename based on Tdiff and N
         file_format = '(a, a, a)'
         write(filename, file_format) trim(filename), '/', trim(simulation_name)
-        call create_netcdf(trim(filename)//".nc", z, ncid)
+        call create_netcdf(trim(filename)//".nc", z, ncid, simulation_name, write_buffer)
 
         ! Writeout parameters
         write_time_iter = 0.

@@ -84,6 +84,8 @@ module droplets
     integer(i4) :: n_injected, inj_time_idx
     logical :: update_inj_rate
     real(dp) :: initial_wet_radius
+    logical :: init_drop_each_gridpoint = .true.
+    real(dp) :: expected_Ndrops_per_gridpoint = 1
 
     ! DGM-Controlling variables
     real(dp), parameter :: RK5_min_timestep = 0.01
@@ -779,9 +781,6 @@ contains
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
         
-        ! Microphysics namelist variables for initialization only
-        logical :: init_drop_each_gridpoint = .true.
-        real(dp) :: expected_Ndrops_per_gridpoint = 1
         character(256):: inj_data_file, bin_data_file ! Not allocatable since namelist-specified variable
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_file, &

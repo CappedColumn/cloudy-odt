@@ -2,7 +2,11 @@ module writeout
     use globals
     use netcdf
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
-                        size_distribution, n_aer_category
+                        size_distribution, n_aer_category, init_drop_each_gridpoint, &
+                        expected_Ndrops_per_gridpoint, write_trajectories, trajectory_start, &
+                        trajectory_end, trajectory_timer, initial_wet_radius
+    use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
+                               RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     implicit none
 
     ! Buffer variables and arrays for writing to netCDF
@@ -16,6 +20,10 @@ module writeout
     integer(i4) :: eddy_counter = 0
     integer(i4) :: eddy_unit
     real(dp), allocatable :: buffer_eddy(:,:)
+
+    ! Namelist metadata for global attributes (set by create_netcdf)
+    character(100) :: nc_simulation_name
+    integer(i4) :: nc_write_buffer
 
     !private :: nc_verify
     public  :: create_netcdf, initialize_buffers, add_to_profile_buffer, write_netcdf_profiles, flush_buffer, close_netcdf
@@ -160,10 +168,11 @@ contains
 
     end subroutine write_eddy_buffer
 
-    subroutine create_netcdf(file_name, z_m, lncid)
-        character(*), intent(in):: file_name
+    subroutine create_netcdf(file_name, z_m, lncid, simulation_name, lwrite_buffer)
+        character(*), intent(in):: file_name, simulation_name
         real(dp), intent(in) :: z_m(:) !, scalar_vars(:) ! Establish z-dimension
         integer, intent(out) :: lncid
+        integer(i4), intent(in) :: lwrite_buffer
 
         ! time/height dimensions
         logical :: file_exists
@@ -178,6 +187,10 @@ contains
 
         nz = size(z_m)
         nc_write_iter = 1
+
+        ! Store namelist metadata for writing as global attributes at close time
+        nc_simulation_name = simulation_name
+        nc_write_buffer = lwrite_buffer
         
         ! Static Variables
         ! integer :: i, nvars
@@ -220,8 +233,7 @@ contains
         call nc_verify( nf90_def_dim(lncid, "time", NF90_UNLIMITED, t_dimid), "nf90_def_dim: time"  )
         call nc_verify( nf90_def_dim(lncid, "z", nz, z_dimid), "nf90_def_dim: z" )
     
-        ! Simulation global attributes NF90_GLOBAL
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "Attribute", "Global"), "nf90_put_att: global")
+
 
         ! Create variables for scalar properties of simulation
         ! do i = 1,nvars
@@ -382,6 +394,7 @@ contains
     subroutine close_netcdf(lncid)
         integer, intent(in) :: lncid
 
+        call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer)
         call nc_verify( nf90_close(lncid), 'nf90_close')
         if ( write_eddies ) then
             if ( eddy_counter > 0 ) call write_eddy_buffer()
@@ -394,5 +407,69 @@ contains
 
 
     
+
+    subroutine write_namelist_attributes(lncid, simulation_name, lwrite_buffer)
+        ! Writes all namelist parameters as global attributes to the netCDF file.
+        ! Re-enters define mode, writes attributes, then exits define mode.
+        integer, intent(in) :: lncid
+        character(*), intent(in) :: simulation_name
+        integer(i4), intent(in) :: lwrite_buffer
+
+        call nc_verify( nf90_redef(lncid), "nf90_redef: namelist attributes" )
+
+        ! PARAMETERS namelist (19 attributes)
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(simulation_name)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.N", N) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lmin", Lmin) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lprob", Lprob) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.tmax", tmax) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tdiff", Tdiff) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.pres", pres) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.H", H) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.volume_scaling", volume_scaling) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.max_accept_prob", max_accept_prob) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_timer", write_timer) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_buffer", lwrite_buffer) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.same_random", merge(1, 0, same_random)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_turbulence", merge(1, 0, do_turbulence)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_microphysics", merge(1, 0, do_microphysics)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_eddies", merge(1, 0, write_eddies)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_special_effects", merge(1, 0, do_special_effects)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.overwrite", merge(1, 0, overwrite)) )
+
+        ! MICROPHYSICS namelist (7 attributes, only when microphysics is enabled)
+        if ( do_microphysics ) then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.init_drop_each_gridpoint", &
+                            merge(1, 0, init_drop_each_gridpoint)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.expected_Ndrops_per_gridpoint", &
+                            expected_Ndrops_per_gridpoint) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.write_trajectories", &
+                            merge(1, 0, write_trajectories)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_start", trajectory_start) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_end", trajectory_end) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_timer", trajectory_timer) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.initial_wet_radius", initial_wet_radius) )
+        end if
+
+        ! SPECIALEFFECTS namelist (10 attributes, only when special effects is enabled)
+        if ( do_special_effects ) then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.do_sidewalls", &
+                            merge(1, 0, do_sidewalls)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.do_random_fallout", &
+                            merge(1, 0, do_random_fallout)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.area_sw", area_sw) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.area_bot", area_bot) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.C_sw", C_sw) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.T_sw", T_sw) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.RH_sw", RH_sw) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.P_sw", P_sw) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.sw_nudging_time", sw_nudging_time) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.random_fallout_rate", random_fallout_rate) )
+        end if
+
+        call nc_verify( nf90_enddef(lncid), "nf90_enddef: namelist attributes" )
+
+    end subroutine write_namelist_attributes
 
 end module writeout

@@ -119,7 +119,7 @@ program main
     ! Write to netCDF buffer
     if ( write_time_iter >= write_timer ) call write_data()
 
-    if ( write_trajectories ) call write_trajectory_controller(particles, time, dt)
+    if ( do_microphysics .and. write_trajectories ) call write_trajectory_controller(particles, time, dt)
 
 
   end do

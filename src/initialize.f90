@@ -51,7 +51,7 @@ contains
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)
-        if ( write_trajectories ) then
+        if ( do_microphysics .and. write_trajectories ) then
             call close_particle_netcdf()
         end if
 

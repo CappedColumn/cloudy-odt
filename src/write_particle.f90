@@ -61,6 +61,7 @@ module write_particle
         if ( trajectory_start <= time .and. trajectory_end > ltime ) then
             if ( trajectory_time_iter >= trajectory_timer ) then
                 call write_particle_data(lparticles, ltime)
+                call write_particle_data_nc(lparticles, ltime)
                 trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)
             end if
         end if
@@ -74,6 +75,7 @@ module write_particle
         call wparticle_initialize(mydrop, particles(1))
         call open_particle_files(filename)
         call write_particle_meta_data()
+        call create_particle_netcdf(filename)
 
     end subroutine initialize_write_particle
 

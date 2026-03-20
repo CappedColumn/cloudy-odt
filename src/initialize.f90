@@ -8,7 +8,7 @@ module initialize
                 initialize_eddy_buffer, add_to_profile_buffer, flush_buffer, close_netcdf
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
                 write_trajectories, close_droplets
-    use write_particle, only: initialize_write_particle, close_particle_files
+    use write_particle, only: initialize_write_particle, close_particle_files, close_particle_netcdf
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -34,7 +34,7 @@ contains
             call initialize_microphysics(filename)
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
-            if ( write_trajectories ) call initialize_write_particle(output_directory)
+            if ( write_trajectories ) call initialize_write_particle(filename)
         end if
 
         if ( do_special_effects ) then
@@ -54,6 +54,7 @@ contains
         if ( write_trajectories ) then
             call close_droplets()
             call close_particle_files()
+            call close_particle_netcdf()
         end if
 
     end subroutine close_simulation

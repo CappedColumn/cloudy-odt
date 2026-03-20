@@ -885,18 +885,19 @@ contains
         ! Create radius dimension and variable (bin centers)
         call nc_verify( nf90_def_dim(lncid, "radius", nbins, r_dimid), "nf90_def_dim: radius")
         call nc_verify( nf90_def_var(lncid, "radius", NF90_FLOAT, r_dimid, r_varid), "nf90_def_var: radius")
+        call nc_verify( nf90_put_att(lncid, r_varid, "long_name", "Droplet Bin Centers"), "nf90_put_att: radius, name")
         call nc_verify( nf90_put_att(lncid, r_varid, "units", "microns"), "nf90_put_att: radius, units")
 
         ! Create radius_edges variable (bin edges)
         call nc_verify( nf90_def_dim(lncid, "radius_edges", nbins + 1, re_dimid), "nf90_def_dim: radius_edges")
         call nc_verify( nf90_def_var(lncid, "radius_edges", NF90_FLOAT, re_dimid, re_varid), "nf90_def_var: radius_edges")
         call nc_verify( nf90_put_att(lncid, re_varid, "units", "microns"), "nf90_put_att: radius_edges, units")
-        call nc_verify( nf90_put_att(lncid, re_varid, "long name", "Droplet Bin Edges"), "nf90_put_att: radius_edges, name")
+        call nc_verify( nf90_put_att(lncid, re_varid, "long_name", "Droplet Bin Edges"), "nf90_put_att: radius_edges, name")
 
         ! Create Droplet Size Distribution variable
         dimids = (/ r_dimid, t_dimid /)
         call nc_verify( nf90_def_var(lncid, "DSD", NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD")
-        call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", "Droplet Size Distribution"), "nf90_put_att: DSD, name")
+        call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", "Droplet Size Distribution"), "nf90_put_att: DSD, name")
         call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD, units")
 
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD")
@@ -927,7 +928,7 @@ contains
             name = "DSD_" // adjustl(strint)
             call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid), "nf90_def_var: DSD_aer" )
             name = "Droplet Size Distribution - " // adjustl(strint)
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "long name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
             call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
 
         end do

@@ -104,25 +104,20 @@ argument. Relative input paths resolve from the namelist's parent directory.
 
 ### ~~1. Command-line namelist path (interface contract above)~~ Done
 
-### 2. Add namelist parameters as netCDF global attributes
+### ~~2. Add namelist parameters as netCDF global attributes~~ Done
 
-After `nf90_create` and before `nf90_enddef`, add `nf90_put_att` calls for
-all namelist parameters so each netCDF file is self-documenting. Exclude
-machine-specific paths (`output_directory`, `inj_data_path`, `bin_data_path`).
+### ~~3. Store bin edges in netCDF~~ Done
 
-Fortran logicals cannot be written directly as netCDF attributes — use
-`merge(1, 0, logical_var)` to convert to integer (1=true, 0=false).
+Bin edges stored as `radius_edges` (201 values) alongside existing
+`radius` bin centers (200 values).
 
-### 3. Store bin edges instead of bin centers in netCDF
+### ~~4. Fix "celcius" typo~~ Done
 
-Currently the `radius` dimension stores 200 bin centers. Change to store
-201 bin edges so centers can always be derived. This eliminates the need
-for `codt_tools` to load `bin_data.txt` separately.
+### 5. Move eddy output to netCDF
 
-### 4. Fix "celcius" typo
-
-The `units` attribute on `Tv` (virtual temperature) is spelled "celcius".
-Change to "celsius".
+The `_eddies.txt` file is the only non-netCDF structured output. Consider
+moving eddy data (midpoint, half-length, time) into the main `.nc` file
+or a separate `_eddies.nc` file for consistency.
 
 ---
 

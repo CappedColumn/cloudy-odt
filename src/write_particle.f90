@@ -19,6 +19,7 @@ module write_particle
     integer :: vid_temperature, vid_water_vapor, vid_supersaturation, vid_radius
     integer :: vid_solute_radius, vid_activated, vid_aerosol_category
     integer :: vid_time, vid_row_sizes
+    integer, parameter :: sync_interval = 10
 
 contains
 
@@ -220,6 +221,11 @@ contains
 
         ! Update record counter
         record_count = record_count + np
+
+        ! Periodically flush to disk for crash resilience
+        if (mod(time_step_count, sync_interval) == 0) then
+            call nc_verify( nf90_sync(pnc_id) )
+        end if
 
     end subroutine write_particle_data_nc
 

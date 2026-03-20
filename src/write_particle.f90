@@ -17,7 +17,7 @@ module write_particle
     ! Cached NetCDF variable IDs (set once in create_particle_netcdf)
     integer :: vid_particle_id, vid_aerosol_id, vid_gridcell, vid_position
     integer :: vid_temperature, vid_water_vapor, vid_supersaturation, vid_radius
-    integer :: vid_solute_radius, vid_activated
+    integer :: vid_solute_radius, vid_activated, vid_aerosol_category
     integer :: vid_time, vid_row_sizes
 
 contains
@@ -121,6 +121,10 @@ contains
         call nc_verify( nf90_put_att(pnc_id, vid_activated, "flag_values", (/0, 1/)) )
         call nc_verify( nf90_put_att(pnc_id, vid_activated, "flag_meanings", "unactivated activated") )
 
+        call nc_verify( nf90_def_var(pnc_id, "aerosol_category", NF90_INT, rec_dimid, vid_aerosol_category, &
+                         deflate_level=1, shuffle=.true.) )
+        call nc_verify( nf90_put_att(pnc_id, vid_aerosol_category, "long_name", "Aerosol Category") )
+
         ! --- Per-time-step variables (on time_step dimension) ---
 
         call nc_verify( nf90_def_var(pnc_id, "time", NF90_DOUBLE, ts_dimid, vid_time, &
@@ -207,6 +211,10 @@ contains
             end if
         end do
         call nc_verify( nf90_put_var(pnc_id, vid_activated, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! aerosol_category
+        do i = 1, np; int_buf(i) = lparticles(i)%aerosol_category; end do
+        call nc_verify( nf90_put_var(pnc_id, vid_aerosol_category, int_buf, start=(/record_count+1/), count=(/np/)) )
 
         deallocate(int_buf, float_buf)
 

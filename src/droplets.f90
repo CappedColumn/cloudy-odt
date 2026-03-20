@@ -873,6 +873,7 @@ contains
         real(dp), intent(in) :: r_bins(:)
 
         integer :: t_dimid, r_dimid, r_varid, dsd_varid, nbins, dimids(2)
+        integer :: re_dimid, re_varid
 
         nbins = size(r_bins)
 
@@ -881,10 +882,16 @@ contains
         ! Open netcdf in definition mode
         call nc_verify( nf90_redef(lncid), "nf90_redef: DSD" )
 
-        ! Create radius dimension and variable
+        ! Create radius dimension and variable (bin centers)
         call nc_verify( nf90_def_dim(lncid, "radius", nbins, r_dimid), "nf90_def_dim: radius")
         call nc_verify( nf90_def_var(lncid, "radius", NF90_FLOAT, r_dimid, r_varid), "nf90_def_var: radius")
         call nc_verify( nf90_put_att(lncid, r_varid, "units", "microns"), "nf90_put_att: radius, units")
+
+        ! Create radius_edges variable (bin edges)
+        call nc_verify( nf90_def_dim(lncid, "radius_edges", nbins + 1, re_dimid), "nf90_def_dim: radius_edges")
+        call nc_verify( nf90_def_var(lncid, "radius_edges", NF90_FLOAT, re_dimid, re_varid), "nf90_def_var: radius_edges")
+        call nc_verify( nf90_put_att(lncid, re_varid, "units", "microns"), "nf90_put_att: radius_edges, units")
+        call nc_verify( nf90_put_att(lncid, re_varid, "long name", "Droplet Bin Edges"), "nf90_put_att: radius_edges, name")
 
         ! Create Droplet Size Distribution variable
         dimids = (/ r_dimid, t_dimid /)
@@ -894,8 +901,9 @@ contains
 
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD")
 
-        ! Populate radius dimension
+        ! Populate radius variables
         call nc_verify( nf90_put_var(lncid, r_varid, r_bins), "nf90_put_var: radius")
+        call nc_verify( nf90_put_var(lncid, re_varid, particle_bin_edges), "nf90_put_var: radius_edges")
 
     end subroutine netcdf_add_DSD
 

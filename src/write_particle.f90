@@ -219,12 +219,12 @@ module write_particle
         call nc_verify( nf90_def_var(pnc_id, "temperature", NF90_FLOAT, rec_dimid, varid, &
                          deflate_level=1, shuffle=.true.) )
         call nc_verify( nf90_put_att(pnc_id, varid, "long_name", "Temperature") )
-        call nc_verify( nf90_put_att(pnc_id, varid, "units", "K") )
+        call nc_verify( nf90_put_att(pnc_id, varid, "units", "celsius") )
 
         call nc_verify( nf90_def_var(pnc_id, "water_vapor", NF90_FLOAT, rec_dimid, varid, &
                          deflate_level=1, shuffle=.true.) )
         call nc_verify( nf90_put_att(pnc_id, varid, "long_name", "Water Vapor Mixing Ratio") )
-        call nc_verify( nf90_put_att(pnc_id, varid, "units", "kg/kg") )
+        call nc_verify( nf90_put_att(pnc_id, varid, "units", "g/kg") )
 
         call nc_verify( nf90_def_var(pnc_id, "supersaturation", NF90_FLOAT, rec_dimid, varid, &
                          deflate_level=1, shuffle=.true.) )
@@ -311,13 +311,13 @@ module write_particle
         call nc_verify( nf90_inq_varid(pnc_id, "position", varid) )
         call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
 
-        ! temperature
-        do i = 1, np; float_buf(i) = real(lparticles(i)%temperature); end do
+        ! temperature (K -> C)
+        do i = 1, np; float_buf(i) = real(lparticles(i)%temperature - Tice); end do
         call nc_verify( nf90_inq_varid(pnc_id, "temperature", varid) )
         call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
 
-        ! water_vapor
-        do i = 1, np; float_buf(i) = real(lparticles(i)%water_vapor); end do
+        ! water_vapor (kg/kg -> g/kg)
+        do i = 1, np; float_buf(i) = real(lparticles(i)%water_vapor * g_per_kg); end do
         call nc_verify( nf90_inq_varid(pnc_id, "water_vapor", varid) )
         call nc_verify( nf90_put_var(pnc_id, varid, float_buf, start=(/record_count+1/), count=(/np/)) )
 

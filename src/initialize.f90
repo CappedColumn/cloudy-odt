@@ -5,7 +5,7 @@ module initialize
     use ODT, only: calc_eddy_length_cdf, diffusion
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
-                initialize_eddy_buffer, add_to_profile_buffer, flush_buffer, close_netcdf
+                initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
@@ -208,7 +208,7 @@ contains
 
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
-        if ( write_eddies ) call initialize_eddy_buffer(filename)
+        if ( write_eddies ) call initialize_eddy_file(filename)
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(filename)//'.nml')

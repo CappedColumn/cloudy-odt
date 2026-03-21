@@ -15,11 +15,8 @@ module writeout
     real(dp), allocatable :: buffer_SS(:,:), buffer_W(:,:), buffer_time(:), buffer_stats(:,:)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
-    ! Buffer arrays for writting eddy data
-    integer(i4) :: buffer_eddy_size = 50000 ! Will write to disk every 50000 eddies
-    integer(i4) :: eddy_counter = 0
+    ! Eddy output file unit (unformatted stream binary)
     integer(i4) :: eddy_unit
-    real(dp), allocatable :: buffer_eddy(:,:)
 
     ! Namelist metadata for global attributes (set by create_netcdf)
     character(100) :: nc_simulation_name
@@ -111,37 +108,29 @@ contains
 
     end subroutine add_to_profile_buffer
 
-    subroutine initialize_eddy_buffer(filename)
-
+    subroutine initialize_eddy_file(filename)
         character(*), intent(in) :: filename
         integer(i4) :: ierr
 
-        allocate(buffer_eddy(buffer_eddy_size,3))
-
-        open(newunit=eddy_unit, file=trim(filename)//'_eddies.txt', form='formatted', status='replace', iostat=ierr)
+        open(newunit=eddy_unit, file=trim(filename)//'_eddies.bin', &
+             form='unformatted', access='stream', status='replace', iostat=ierr)
         if (ierr /= 0) then
-            print *, "Error opening eddy data file. "
+            print *, "Error opening eddy data file."
             stop 1
         end if
 
-    end subroutine initialize_eddy_buffer
+        ! Header: grid size, domain height, ODT constants, temperature BCs
+        write(eddy_unit) N, H, C2, ZC2, Tdiff, Tref
 
-    recursive subroutine add_to_eddy_buffer(loc, len, ltime)
+    end subroutine initialize_eddy_file
 
+    subroutine write_eddy(loc, len, ltime)
         integer(i4), intent(in) :: loc, len
         real(dp), intent(in) :: ltime
 
-        if ( eddy_counter < buffer_eddy_size ) then
-            eddy_counter = eddy_counter + 1
-            buffer_eddy(eddy_counter, 1) = (1.*loc+(len/2.))/N ! Midpoint (z)
-            buffer_eddy(eddy_counter, 2) = 1.*len/(2.*N)       ! 1/2 length (real)
-            buffer_eddy(eddy_counter, 3) = ltime               ! time (s)
-        else
-            call write_eddy_buffer() ! Will reset eddy_counter to 0 for recursive call
-            call add_to_eddy_buffer(loc, len, ltime)
-        end if
+        write(eddy_unit) loc, len, ltime
 
-    end subroutine
+    end subroutine write_eddy
 
     subroutine flush_buffer()
         ! writes the buffer to the netCDF file and resets buffer position
@@ -158,16 +147,6 @@ contains
 
     end subroutine flush_buffer
 
-    subroutine write_eddy_buffer()
-
-        integer(i4) :: i
-
-        do i = 1, eddy_counter
-            write(eddy_unit, '(f10.3, 1X, f10.3, 1X, f10.6)') buffer_eddy(i, 1), buffer_eddy(i, 2), buffer_eddy(i, 3)
-        end do
-        eddy_counter = 0
-
-    end subroutine write_eddy_buffer
 
     subroutine create_netcdf(file_name, z_m, lncid, simulation_name, lwrite_buffer)
         character(*), intent(in):: file_name, simulation_name
@@ -417,10 +396,7 @@ contains
 
         call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer)
         call nc_verify( nf90_close(lncid), 'nf90_close')
-        if ( write_eddies ) then
-            if ( eddy_counter > 0 ) call write_eddy_buffer()
-            close(eddy_unit)
-        end if
+        if ( write_eddies ) close(eddy_unit)
 
     end subroutine
 

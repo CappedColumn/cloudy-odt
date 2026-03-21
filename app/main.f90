@@ -2,7 +2,7 @@ program main
   use write_particle, only: write_trajectory_controller
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_data, add_to_eddy_buffer
+  use writeout, only: write_data, write_eddy
   use microphysics
   use ODT
   use droplets!, only: aerosols, particles, move_particles_in_eddy, move_particles_by_gravity, &
@@ -93,7 +93,7 @@ program main
       
       if ( eddy_accepted ) then
         if ( write_eddies ) then
-          call add_to_eddy_buffer(eddy_location, eddy_length, time)
+          call write_eddy(eddy_location, eddy_length, time)
         end if
 
         call diffusion()

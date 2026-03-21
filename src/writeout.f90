@@ -162,7 +162,6 @@ contains
         integer :: t_varid, z_varid
         integer :: tc_varid, qv_varid, s_varid, tv_varid, w_varid
         integer :: statids(5)
-        integer :: r_prtcl_varid
         integer :: j, k, nz, nbins
 
         nz = size(z_m)
@@ -172,26 +171,6 @@ contains
         nc_simulation_name = simulation_name
         nc_write_buffer = lwrite_buffer
         
-        ! Static Variables
-        ! integer :: i, nvars
-        ! nvars = size(scalar_vars)
-        ! character(*) :: name(nvars), long_name(nvars), units(nvars)
-        ! integer :: varids(nvars)
-
-        
-        ! allocate(name(nvars))
-        ! allocate(long_name(nvars))
-        ! allocate(units(nvars))
-        ! allocate(varids(nvars))
-
-        ! name = ['Pr', 'Sc', 'Nu', 'kT', 'Dv', 'g', 'C2', 'ZC2']
-        ! long_name = ['Prandtl Number', 'Schmidt Number', 'Kinematic Viscosity', &
-        !             'Thermal Diffusivity', 'Water Vapor Diffusivity', 'Gravity', &
-        !             'Turbulent Strength', 'Viscous Cut-Off Parameter']
-        ! units = ['non-dim', 'non-dim', 'kg/m/s', 'm2/s', 'm2/s', 'm/s2', 'non-dim', &
-        !         'non-dim']
-    
-    
         ! This subroutine creates/overwrites a netcdf file, defines all
         ! dimensions and variables to be written out from the simulation
         ! and exits define mode. Note, the netCDF is still open for writing.
@@ -215,11 +194,6 @@ contains
     
 
 
-        ! Create variables for scalar properties of simulation
-        ! do i = 1,nvars
-        !     call nc_verify( nf90_def_var(lncid, name(i), NF90_FLOAT, varids(i)) )
-        ! end do
-    
         ! Establish variables and attributes for coordinate(dimension) variables
         call nc_verify( nf90_def_var(lncid, "z", NF90_FLOAT, z_dimid, z_varid, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: z" )
@@ -289,25 +263,12 @@ contains
             call nc_verify( nf90_put_att(lncid, statids(5), "units", "g/m3"), "nf90_put_att: LWC units")
         end if
 
-    
-        ! Variable length particle variables
-        ! call nc_verify( nf90_def_vlen(lncid, "r", NF90_FLOAT, r_prtcl_varid) )
-        ! call nc_verify( nf90_put_att(lncid, r_prtcl_varid, "long_name", "Particle Radius"), "nf90_put_att: r, name" )
-        ! call nc_verify( nf90_put_att(lncid, r_prtcl_varid, "units", "microns"), "nf90_put_att: r, units")
-    
         ! Exit define mode, however netCDF is still open
         call nc_verify( nf90_enddef(lncid), "nf90_enddef" )
     
         ! Fill variables for known dimensions
         call nc_verify( nf90_put_var(lncid, z_varid, z_m), "nf90_put_var: z" )
 
-        ! Fill variables for already determined scalar variables
-        ! do i = 1,nvars
-        !     call nc_verify( nf90_put_var(lncid, varids(i), scalar_vars(i)), "nf90_put_var: scalar" )
-        !     call nc_verify( nf90_put_att(lncid, varids(i), "long_name", long_name(i)), "nf90_put_att: scalar" )
-        !     call nc_verify( nf90_put_att(lncid, varids(i), "units", units(i)), "nf90_put_att: scalar" )
-        ! end do
-    
         write(*,'(a)') "NetCDF file fully created."
     
     end subroutine create_netcdf
@@ -336,35 +297,38 @@ contains
         start_dim = (/1, nc_write_iter/)
         
         ! Get variable IDs
-        call nc_verify( nf90_inq_varid(lncid, "time", varids(1)) )   
+        call nc_verify( nf90_inq_varid(lncid, "time", varids(1)) )
         call nc_verify( nf90_inq_varid(lncid, "T", varids(2)) )
         call nc_verify( nf90_inq_varid(lncid, "QV", varids(3)) )
         call nc_verify( nf90_inq_varid(lncid, "Tv", varids(4)) )
         call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
         call nc_verify( nf90_inq_varid(lncid, "W", varids(6)) )
-        
-        if ( do_microphysics ) then
-            call nc_verify( nf90_inq_varid(ncid, "Np", statids(1)) )
-            call nc_verify( nf90_inq_varid(ncid, "Nact", statids(2)) )
-            call nc_verify( nf90_inq_varid(ncid, "Nun", statids(3)) )
-            call nc_verify( nf90_inq_varid(ncid, "Ravg", statids(4)) )
-            call nc_verify( nf90_inq_varid(ncid, "LWC", statids(5)) )
-        end if
 
         ! Write to variable slots
-        call nc_verify( nf90_put_var(ncid, varids(1), ltime, start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(ncid, varids(2), lT, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(ncid, varids(3), lWV, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(ncid, varids(4), lTv, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(ncid, varids(5), lSS, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(ncid, varids(6), lw, start=start_dim, count=count_dim) )
-        
+        call nc_verify( nf90_put_var(lncid, varids(1), ltime, start=(/nc_write_iter/)) )
+        call nc_verify( nf90_put_var(lncid, varids(2), lT, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varids(3), lWV, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varids(4), lTv, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varids(5), lSS, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varids(6), lw, start=start_dim, count=count_dim) )
+
         if ( do_microphysics ) then
+            ! Particle statistics
+            call nc_verify( nf90_inq_varid(lncid, "Np", statids(1)) )
+            call nc_verify( nf90_inq_varid(lncid, "Nact", statids(2)) )
+            call nc_verify( nf90_inq_varid(lncid, "Nun", statids(3)) )
+            call nc_verify( nf90_inq_varid(lncid, "Ravg", statids(4)) )
+            call nc_verify( nf90_inq_varid(lncid, "LWC", statids(5)) )
+            call nc_verify( nf90_put_var(lncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, statids(2), lstats(2,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, statids(3), lstats(3,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, statids(4), lstats(4,:), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, statids(5), lstats(5,:), start=(/nc_write_iter/)) )
 
             ! Write total DSD
             call nc_verify( nf90_inq_varid(lncid, "DSD", DSDid ))
             count_dim = (/ bin_len, time_len /)
-            call nc_verify( nf90_put_var(ncid, DSDid, lDSD(1,:,:), start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(lncid, DSDid, lDSD(1,:,:), start=start_dim, count=count_dim) )
 
             ! Write the subcategory DSDs
             if ( n_aer_category > 1 ) then
@@ -372,18 +336,9 @@ contains
                     write(strint,*) i
                     varname = "DSD_" // adjustl(strint)
                     call nc_verify( nf90_inq_varid(lncid, trim(varname), DSDid ))
-                    call nc_verify( nf90_put_var(ncid, DSDid, lDSD(i+1,:,:), start=start_dim, count=count_dim) )
+                    call nc_verify( nf90_put_var(lncid, DSDid, lDSD(i+1,:,:), start=start_dim, count=count_dim) )
                 end do
             end if
-
-        end if
-
-        if ( do_microphysics ) then
-            call nc_verify( nf90_put_var(ncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(ncid, statids(2), lstats(2,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(ncid, statids(3), lstats(3,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(ncid, statids(4), lstats(4,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(ncid, statids(5), lstats(5,:), start=(/nc_write_iter/)) )
         end if
 
         ! Move 'start' time location to end of buffer for next write

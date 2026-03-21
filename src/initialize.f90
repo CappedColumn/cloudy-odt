@@ -5,10 +5,10 @@ module initialize
     use ODT, only: calc_eddy_length_cdf, diffusion
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
-                initialize_eddy_buffer, add_to_profile_buffer, flush_buffer, close_netcdf
+                initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
-                write_trajectories, close_droplets
-    use write_particle, only: initialize_write_particle, close_particle_files
+                write_trajectories
+    use write_particle, only: initialize_write_particle, close_particle_netcdf
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -34,7 +34,7 @@ contains
             call initialize_microphysics(filename)
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
-            if ( write_trajectories ) call initialize_write_particle(output_directory)
+            if ( write_trajectories ) call initialize_write_particle(filename)
         end if
 
         if ( do_special_effects ) then
@@ -51,9 +51,8 @@ contains
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)
-        if ( write_trajectories ) then
-            call close_droplets()
-            call close_particle_files()
+        if ( do_microphysics .and. write_trajectories ) then
+            call close_particle_netcdf()
         end if
 
     end subroutine close_simulation
@@ -209,7 +208,7 @@ contains
 
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
-        if ( write_eddies ) call initialize_eddy_buffer(filename)
+        if ( write_eddies ) call initialize_eddy_file(filename)
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(filename)//'.nml')

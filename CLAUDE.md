@@ -113,11 +113,33 @@ Bin edges stored as `radius_edges` (201 values) alongside existing
 
 ### ~~4. Fix "celcius" typo~~ Done
 
-### 5. Move eddy output to netCDF
+### ~~5. Convert eddy output to binary stream~~ Done
 
-The `_eddies.txt` file is the only non-netCDF structured output. Consider
-moving eddy data (midpoint, half-length, time) into the main `.nc` file
-or a separate `_eddies.nc` file for consistency.
+Eddy output converted from formatted text (`_eddies.txt`) to unformatted
+binary stream (`_eddies.bin`). Stores raw grid indices (M, L) and
+dimensional time for direct replay, with a header containing N, H, C2,
+ZC2, Tdiff, Tref.
+
+### 6. Add predetermined eddies mode
+
+Add a simulation mode where eddies are read from an existing `_eddies.bin`
+file instead of generated via Monte Carlo acceptance. This enables running
+microphysics on pre-computed turbulence fields. Requires:
+- A new namelist flag (e.g., `use_predetermined_eddies`) and a path
+  parameter (e.g., `eddy_file`) in the `PARAMETERS` namelist
+- On startup, read the eddy file header and validate that `N` matches
+- In the time loop, replace `eddy_acceptance_method` with sequential
+  reads from the eddy file — call `implement_eddy(L, M)` when simulation
+  time reaches the next eddy's timestamp
+- Skip `lower_dt`/`raise_dt` since there is no acceptance sampling
+- `write_eddies` and `use_predetermined_eddies` should be mutually exclusive
+
+### 7. Add eddy data reader to codt_tools
+
+Add an `eddy_io.py` module to the Python `codt_tools` package to read
+`_eddies.bin` files. Should return the header as a dict and eddy records
+as a structured numpy array using `numpy.frombuffer`. Integrate into
+`CODTSimulation` as a `load_eddies()` method.
 
 ---
 
@@ -126,10 +148,21 @@ or a separate `_eddies.nc` file for consistency.
 | File | Format | Description |
 |------|--------|-------------|
 | `{name}.nc` | netCDF4 | Main output: profiles + time series |
-| `{name}_particles.nc` | netCDF4 | Particle-level data |
-| `{name}_nml.txt` | ASCII | Copy of namelist as written by Fortran |
-| `{name}_particle.bin` | Binary (stream) | Trajectory data (if enabled) |
-| `{name}_PID.bin` | Binary (stream) | Particle ID + dry radius table |
-| `{name}_particle_meta.txt` | ASCII | Trajectory time index |
+| `{name}_particles.nc` | netCDF4 | Particle-level data (if `write_trajectories=.true.`) |
+| `{name}_eddies.bin` | Binary (stream) | Accepted eddy events (if `write_eddies=.true.`) |
+| `{name}.nml` | ASCII | Copy of namelist |
 
 All output is written to `{output_directory}/{simulation_name}/`.
+
+---
+
+## Cross-Project Sync
+
+When committing changes to CODT, update `~/dev/CODT_tools/CLAUDE.md` at the end of the session to reflect any changes that affect the codt_tools interface. This includes changes to:
+- Output file formats, names, or structure (sections 2.2–2.4 in codt_tools)
+- Namelist parameters or their behavior
+- Executable invocation or path resolution (section 2.5 in codt_tools)
+- NetCDF variable names, dimensions, attributes, or units
+- Fortran modification status (section 5 in codt_tools)
+
+Update the relevant sections in `~/dev/CODT_tools/CLAUDE.md` to match what was actually implemented. Keep both CLAUDE.md files consistent.

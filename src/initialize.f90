@@ -30,7 +30,7 @@ contains
         end if
 
         if ( do_microphysics ) then
-            call initialize_microphysics(file_prefix)
+            call initialize_microphysics()
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
             if ( write_trajectories ) call initialize_write_particle(file_prefix)

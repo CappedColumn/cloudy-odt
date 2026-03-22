@@ -71,13 +71,13 @@ module droplets
 
     ! Arrays to hold all particles and aerosol types
     type(particle), allocatable :: particles(:) ! allocated in initialize_microphysics()
-    type(aerosol), allocatable :: aerosols(:) ! allocated in read_injection_data()
+    type(aerosol), allocatable :: aerosols(:) ! allocated in read_aerosol_netcdf()
     integer(i4) :: particle_array_expansion = 1000
 
     ! Aerosol injection variables
-    real(dp), allocatable :: injection_times(:), injection_rates(:) ! allocated in read_injection_data()
-    real(dp), allocatable :: aerosol_size_edges(:), aerosol_bin_freq(:,:) ! allocated in read_injection_data()
-    real(dp), allocatable :: aerosol_radii(:) ! allocated in read_injection_data()
+    real(dp), allocatable :: injection_times(:), injection_rates(:) ! allocated in read_aerosol_netcdf()
+    real(dp), allocatable :: aerosol_size_edges(:), aerosol_bin_freq(:,:) ! allocated in read_aerosol_netcdf()
+    real(dp), allocatable :: aerosol_radii(:) ! allocated in read_aerosol_netcdf()
     integer(i4), allocatable :: aerosol_partition(:)
     real(dp) :: last_injection_time
     real(dp) :: injection_dt

@@ -510,8 +510,8 @@ contains
         ! Currently in domain
         this%fellout = .false.
 
-        ! Determine solute properties (sampled from injection_data.txt) and initial radius
-        call sample_radius(aerosol_bin_freq(inj_time_idx,:), aerosol_radii, this%solute_radius, this%aerosol_category)
+        ! Determine solute properties (sampled from aerosol input) and initial radius
+        call sample_radius(aerosol_bin_freq(:,inj_time_idx), aerosol_radii, this%solute_radius, this%aerosol_category)
         this%solute_gross_mass = ( pi_43 * this%solute_type%solute_density ) * this%solute_radius**3
         this%radius = initial_wet_radius * this%solute_radius
 
@@ -524,7 +524,7 @@ contains
     end subroutine particle_initialize
 
     subroutine sample_radius(bin_freq, radii, radius, aer_partition)
-        ! Selects an aerosol size from distribution specified in injection_data.txt
+        ! Selects an aerosol size from CDF distribution in aerosol input file
         real(dp), intent(in) :: bin_freq(:), radii(:)
         real(dp), intent(out) :: radius
         integer(i4), intent(out) :: aer_partition
@@ -773,9 +773,9 @@ contains
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
         
-        character(256):: inj_data_file, bin_data_file ! Not allocatable since namelist-specified variable
+        character(256):: aerosol_file, bin_data_file ! Not allocatable since namelist-specified variable
 
-        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, inj_data_file, &
+        namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
 
         ! Read in microphysical namelist parameters
@@ -806,15 +806,15 @@ contains
         end if
 
         ! Resolve input paths relative to namelist directory
-        inj_data_file = resolve_path(namelist_dir, trim(inj_data_file))
+        aerosol_file = resolve_path(namelist_dir, trim(aerosol_file))
         bin_data_file = resolve_path(namelist_dir, trim(bin_data_file))
 
-        ! Copy injection data to output directory
-        i = scan(trim(inj_data_file), '/', back=.true.)
-        call copy_file(trim(inj_data_file), trim(parent_directory(filename))//trim(inj_data_file(i+1:)))
+        ! Copy aerosol input to output directory
+        i = scan(trim(aerosol_file), '/', back=.true.)
+        call copy_file(trim(aerosol_file), trim(parent_directory(filename))//trim(aerosol_file(i+1:)))
 
         ! Set up aerosol type and injection forcings
-        call read_injection_data(trim(inj_data_file))
+        call read_aerosol_netcdf(trim(aerosol_file))
 
         ! Bring in binning data
         n_aer_category = maxval(aerosol_partition)
@@ -960,78 +960,95 @@ contains
 
     end subroutine read_binning_data
 
-    subroutine read_injection_data(location)
-        ! Reads in aerosol properties and aerosol injection size/frequency
-        character(*), intent(in) :: location
-        integer :: i, ierr, file_unit
-        character(100) :: io_emsg
-        logical :: file_exists
+    subroutine read_aerosol_netcdf(filepath)
+        ! Reads aerosol properties, injection schedule, and size distribution
+        ! from a NetCDF file (CODT_aerosol_input_v1 schema).
+        character(*), intent(in) :: filepath
+        integer :: i, aer_ncid, varid, dimid
+        integer :: n_types, n_bins, n_edges, n_times
+        character(64) :: conventions
+        character(20) :: aer_name
+        integer :: aer_n_ions
+        real(dp) :: aer_molar_mass, aer_density
 
-        character(10) :: name
-        integer :: n_ions
-        integer :: n_times, n_edges, n_aer_partition
-        real(dp) :: molar_mass, density
+        write(*,*) 'Reading aerosol data from: ', trim(filepath)
 
-        ! Open the injection data file
-        write(*,*) 'Reading injection data from: ', location
-        inquire(file=location, exist=file_exists)
-        if ( .not. file_exists ) write(*,*) 'Injection data file does not exist: ', location
-        open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
-        if (ierr .ne. 0) then
-            write(*,*) 'Error opening injection data file: ', io_emsg
+        ! Open and validate schema version
+        call nc_verify(nf90_open(trim(filepath), NF90_NOWRITE, aer_ncid), &
+                       'opening aerosol file')
+        call nc_verify(nf90_get_att(aer_ncid, NF90_GLOBAL, 'conventions', conventions), &
+                       'reading conventions attribute')
+        if (trim(conventions) /= 'CODT_aerosol_input_v1') then
+            write(*,*) 'Error: expected CODT_aerosol_input_v1, got: ', trim(conventions)
             stop 1
         end if
 
-        ! Parsing is fuN!
-        read(file_unit, *) ! Aerosol Name:
-        read(file_unit, *) name
-        read(file_unit, *) ! Aerosol N-Ions (#):
-        read(file_unit, *) n_ions
-        read(file_unit, *) ! Aerosol Molar Mass (kg/mol): 
-        read(file_unit, *) molar_mass
-        read(file_unit, *) ! Aerosol Density (kg/m3):
-        read(file_unit, *) density
-        read(file_unit, *) ! Number of Times:
-        read(file_unit, *) n_times
-        allocate(injection_times(n_times))
-        read(file_unit, *, iostat=ierr) injection_times
-        if ( ierr /= 0) then; write(*,*) 'Error reading times'; stop 1; end if
-        read(file_unit, *) ! Injection Rate (#/m3/sec):
-        read(file_unit, *)
-        allocate(injection_rates(n_times))
-        read(file_unit, *, iostat=ierr) injection_rates
-        if ( ierr /= 0) then; write(*,*) 'Error reading injection rates'; stop 1; end if
-        read(file_unit, *) ! Number of Edges:
-        read(file_unit, *) n_edges
+        ! Read dimensions
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'aerosol_type', dimid), 'finding aerosol_type dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_types), 'reading aerosol_type dim')
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'bin', dimid), 'finding bin dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_bins), 'reading bin dim')
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'edge', dimid), 'finding edge dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_edges), 'reading edge dim')
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'time', dimid), 'finding time dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_times), 'reading time dim')
+
+        if (n_edges /= n_bins + 1) then
+            write(*,*) 'Error: edge dimension must equal bin + 1'
+            stop 1
+        end if
+
+        ! Allocate and read size distribution arrays
         allocate(aerosol_size_edges(n_edges))
-        read(file_unit, *, iostat=ierr) aerosol_size_edges
-        if ( ierr /= 0) then; write(*,*) 'Error reading size edges'; stop 1; end if
-        read(file_unit, *) ! Aerosol Category
-        allocate(aerosol_partition(n_edges - 1))
-        read(file_unit, *) aerosol_partition
-        read(file_unit, *) ! Bin Frequencies:
-        read(file_unit, *)
-        read(file_unit, *)
-        allocate(aerosol_bin_freq(n_times, n_edges-1)) ! Fix for 1 injection time case
-        do i = 1, n_times
-            read(file_unit, *, iostat=ierr) aerosol_bin_freq(i,:)
-            if ( ierr /= 0) then; write(*,*) 'Error reading bin frequencies'; stop 1; end if
-        end do
-    
-        close(file_unit)
+        call nc_verify(nf90_inq_varid(aer_ncid, 'edge_radii', varid), 'finding edge_radii')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_size_edges), 'reading edge_radii')
 
-        ! Calculate the distribution of aerosol radii
-        ! which are the midpoints in each specified size bin
-        allocate(aerosol_radii(n_edges-1))
-        do i = 1, n_edges-1
-            aerosol_radii(i) = (aerosol_size_edges(i) + aerosol_size_edges(i+1)) / 2
+        allocate(injection_times(n_times))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'injection_time', varid), 'finding injection_time')
+        call nc_verify(nf90_get_var(aer_ncid, varid, injection_times), 'reading injection_time')
+
+        allocate(injection_rates(n_times))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'injection_rate', varid), 'finding injection_rate')
+        call nc_verify(nf90_get_var(aer_ncid, varid, injection_rates), 'reading injection_rate')
+
+        allocate(aerosol_partition(n_bins))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'category', varid), 'finding category')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_partition), 'reading category')
+
+        allocate(aerosol_bin_freq(n_bins, n_times))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'cumulative_frequency', varid), &
+                       'finding cumulative_frequency')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_bin_freq), &
+                       'reading cumulative_frequency')
+
+        ! Read aerosol properties for type 1
+        call nc_verify(nf90_inq_varid(aer_ncid, 'n_ions', varid), 'finding n_ions')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_n_ions, start=[1]), 'reading n_ions')
+
+        call nc_verify(nf90_inq_varid(aer_ncid, 'molar_mass', varid), 'finding molar_mass')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_molar_mass, start=[1]), 'reading molar_mass')
+
+        call nc_verify(nf90_inq_varid(aer_ncid, 'solute_density', varid), 'finding solute_density')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_density, start=[1]), 'reading solute_density')
+
+        ! Read aerosol name from global attribute
+        call nc_verify(nf90_get_att(aer_ncid, NF90_GLOBAL, 'aerosol_name', aer_name), &
+                       'reading aerosol_name')
+
+        call nc_verify(nf90_close(aer_ncid), 'closing aerosol file')
+
+        ! Calculate midpoint radii (nanometers)
+        allocate(aerosol_radii(n_bins))
+        do i = 1, n_bins
+            aerosol_radii(i) = (aerosol_size_edges(i) + aerosol_size_edges(i+1)) / 2.0_dp
         end do
 
-        ! Initialize the aerosol type from injection file
+        ! Initialize aerosol type
         allocate(aerosols(1))
-        call aerosols(1)%aerosol_initialize(name, 1, n_ions, molar_mass, density)
+        call aerosols(1)%aerosol_initialize(trim(aer_name), 1, aer_n_ions, &
+                                            aer_molar_mass, aer_density)
 
-    end subroutine read_injection_data
+    end subroutine read_aerosol_netcdf
 
     subroutine initialize_injection(inj_rate)
         ! 

@@ -767,9 +767,8 @@ contains
 
     !!! INITIALIZATION !!!
 
-    subroutine initialize_microphysics(filename)
+    subroutine initialize_microphysics()
         ! Initialization of the MICROPHYSICS namelist and related parameters
-        character(*), intent(in) :: filename
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
         
@@ -800,8 +799,8 @@ contains
 
         ! Verify that the initial wet radius will be greater than dry radius
         if ( initial_wet_radius <= 1.) then
-            write(*,*) 'Injected wet radius too small...'
-            write(*,*) '...changing to 1.1x dry radius.'
+            write(*,*) 'WARNING: initial_wet_radius must be > 1.0 (got ', initial_wet_radius, ')'
+            write(*,*) '         Auto-correcting to 1.1x dry radius.'
             initial_wet_radius = 1.1
         end if
 
@@ -811,7 +810,7 @@ contains
 
         ! Copy aerosol input to output directory
         i = scan(trim(aerosol_file), '/', back=.true.)
-        call copy_file(trim(aerosol_file), trim(parent_directory(filename))//trim(aerosol_file(i+1:)))
+        call copy_file(trim(aerosol_file), trim(sim_output_dir)//trim(aerosol_file(i+1:)))
 
         ! Set up aerosol type and injection forcings
         call read_aerosol_netcdf(trim(aerosol_file))

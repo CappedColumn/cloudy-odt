@@ -16,10 +16,22 @@ The `fpm_env` script is configured for CHPC (University of Utah) modules. Edit t
 ## Running
 
 ```bash
-./build/*/app/CODT > output.log
+./build/*/app/CODT /path/to/params.nml
 ```
 
-All simulation parameters are set in `input/params.nml` (three namelists: `PARAMETERS`, `MICROPHYSICS`, `SPECIALEFFECTS`). The executable takes no arguments.
+The executable requires a namelist path as its first argument. All simulation
+parameters are set via three namelists (`PARAMETERS`, `MICROPHYSICS`,
+`SPECIALEFFECTS`). Stdout is redirected to a log file in the output directory.
+
+## Testing
+
+```bash
+fpm test                # runs all test programs in test/
+```
+
+Test programs are standalone executables in `test/` — they exercise library
+routines (path resolution, file copying, aerosol NetCDF reader) but do **not**
+run full simulations.
 
 ## Architecture
 

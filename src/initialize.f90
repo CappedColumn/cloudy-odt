@@ -18,27 +18,26 @@ module initialize
     
 contains
 
-    subroutine initialize_simulation(filename)
+    subroutine initialize_simulation()
         ! I make make main.f90 look approachable by
         ! hiding the monsters under the bed
-        character(*), intent(out) :: filename
 
         ! Life is nothing but a dream, as realistic as it seems
-        call initialize_params(filename)
+        call initialize_params()
 
         if ( do_turbulence ) then
             call calc_eddy_length_cdf(prob_eddy_length)
         end if
-        
+
         if ( do_microphysics ) then
-            call initialize_microphysics(filename)
+            call initialize_microphysics()
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
-            if ( write_trajectories ) call initialize_write_particle(filename)
+            if ( write_trajectories ) call initialize_write_particle(file_prefix)
         end if
 
         if ( do_special_effects ) then
-            call initialize_special_effects(filename)
+            call initialize_special_effects()
         end if
 
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
@@ -58,14 +57,11 @@ contains
     end subroutine close_simulation
 
 
-    subroutine initialize_params(filename)
+    subroutine initialize_params()
 
-        character(256), intent(out) :: filename
         ! I/O Variables
         integer     :: ierr, nml_unit, k
         character(256) :: nml_line, io_emsg
-        character(100) :: file_format
-        character(100) :: simulation_name
         ! parameters for initializing state of random number generator
         integer, allocatable :: rand_seed(:) ! Some compilers have array of seeds for RNG
         integer :: rand_size
@@ -173,45 +169,45 @@ contains
             z(k) = H*k/N ! Grid cell position in meters
         end do
 
-        ! Create new subdirectory based on simulation name
-        filename = trim(output_directory)//'/'//trim(simulation_name)
-        call system("mkdir -p "//filename)
+        ! Build output paths:
+        !   sim_output_dir = "{output_directory}/{simulation_name}/"
+        !   file_prefix    = "{sim_output_dir}{simulation_name}"
+        sim_output_dir = trim(output_directory)//'/'//trim(simulation_name)//'/'
+        file_prefix = trim(sim_output_dir)//trim(simulation_name)
+        call system("mkdir -p "//trim(sim_output_dir))
 
         ! Check for existing output files
-        inquire(file=trim(filename)//'/'//trim(simulation_name)//'.nc', exist=file_exists)
+        inquire(file=trim(file_prefix)//'.nc', exist=file_exists)
         if (file_exists .and. .not. overwrite) then
-            write(0,*) 'Error: output file already exists: ', &
-                trim(filename)//'/'//trim(simulation_name)//'.nc'
+            write(0,*) 'Error: output file already exists: ', trim(file_prefix)//'.nc'
             write(0,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
             stop 1
         end if
 
         ! Print output location to stderr (visible in terminal/SLURM output)
-        write(error_unit,*) 'Output: ', trim(filename)
+        write(error_unit,*) 'Output: ', trim(sim_output_dir)
 
         ! Redirect stdout to log file in output directory
         close(output_unit)
-        open(output_unit, file=trim(filename)//'/'//trim(simulation_name)//'.log', &
+        open(output_unit, file=trim(file_prefix)//'.log', &
              status='replace', action='write', iostat=ierr)
         if (ierr /= 0) then
             write(0,*) 'Error: could not open log file'
             stop 1
         end if
 
-        ! Create filename based on Tdiff and N
-        file_format = '(a, a, a)'
-        write(filename, file_format) trim(filename), '/', trim(simulation_name)
-        call create_netcdf(trim(filename)//".nc", z, ncid, simulation_name, write_buffer)
+        ! Create main netCDF output file
+        call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
 
         ! Writeout parameters
         write_time_iter = 0.
 
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
-        if ( write_eddies ) call initialize_eddy_file(filename)
+        if ( write_eddies ) call initialize_eddy_file(file_prefix)
 
         ! Copy original namelist file to output directory
-        call copy_file(namelist_path, trim(filename)//'.nml')
+        call copy_file(namelist_path, trim(file_prefix)//'.nml')
         
         ! Length of a gridcell
         dz_length = H/N

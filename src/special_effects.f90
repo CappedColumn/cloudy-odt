@@ -37,9 +37,8 @@ contains
     end subroutine run_special_effects
 
 
-    subroutine initialize_special_effects(filename)
+    subroutine initialize_special_effects()
 
-        character(*), intent(in) :: filename
         integer :: nml_unit, ierr
         character(256) :: io_emsg, nml_line
 

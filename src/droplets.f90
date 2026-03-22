@@ -811,7 +811,7 @@ contains
 
         ! Copy injection data to output directory
         i = scan(trim(inj_data_file), '/', back=.true.)
-        call copy_file(trim(inj_data_file), trim(parent_directory(filename))//trim(inj_data_file(i+1:)))
+        call copy_file(trim(inj_data_file), trim(sim_output_dir)//trim(inj_data_file(i+1:)))
 
         ! Set up aerosol type and injection forcings
         call read_injection_data(trim(inj_data_file))

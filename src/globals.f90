@@ -85,9 +85,12 @@ module globals
     real(dp), parameter :: g_per_kg = 1e3
     real(dp), parameter :: kg_per_g = 1e-3
 
-    character(256) :: namelist_path   ! Path to namelist file (set from command line)
-    character(256) :: namelist_dir    ! Parent directory of namelist file (for resolving relative paths)
-    character(256) :: output_directory  ! Location of output directory
+    character(256) :: namelist_path    ! Path to namelist file (set from command line)
+    character(256) :: namelist_dir     ! Parent directory of namelist file (for resolving relative paths)
+    character(256) :: output_directory ! Base output directory from namelist (absolute path)
+    character(100) :: simulation_name  ! Simulation name from namelist
+    character(256) :: sim_output_dir   ! {output_directory}/{simulation_name}/ — where all output files live
+    character(256) :: file_prefix      ! {sim_output_dir}{simulation_name} — base path for output files (.nc, .nml, etc.)
 
     ! -----------------------------------------------
     ! -----------------------------------------------

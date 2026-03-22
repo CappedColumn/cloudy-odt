@@ -33,7 +33,7 @@ program main
 
   ! --- Initialize simulation ---
 
-  call initialize_simulation(output_directory) ! output_dir assigned from namelist
+  call initialize_simulation()
 
   ! Log simulation configuration
   write(*,*) '--- Simulation Configuration ---'
@@ -136,9 +136,9 @@ program main
   write(*,*) 'Injected: ', n_injected
   write(*,*) 'Wall-clock time (s): ', t_end - t_start
 
-  ! Write DONE marker file to output directory
+  ! Write DONE marker file to simulation output directory
   call date_and_time(date=date_str, time=time_str)
-  open(newunit=done_unit, file=trim(parent_directory(output_directory))//'DONE', &
+  open(newunit=done_unit, file=trim(sim_output_dir)//'DONE', &
        status='replace', action='write')
   write(done_unit,'(a,a,a,a,a,a,a,a,a)') date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
        ' ', time_str(1:2), ':', time_str(3:4)

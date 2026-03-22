@@ -325,7 +325,7 @@ contains
              form='unformatted', action='read', iostat=ierr)
         if (ierr /= 0) then
             write(0,*) 'Error: could not open source file: ', trim(source)
-            return
+            stop 1
         end if
 
         open(newunit=out_unit, file=trim(destination), status='replace', access='stream', &
@@ -333,7 +333,7 @@ contains
         if (ierr /= 0) then
             write(0,*) 'Error: could not open destination file: ', trim(destination)
             close(in_unit)
-            return
+            stop 1
         end if
 
         do

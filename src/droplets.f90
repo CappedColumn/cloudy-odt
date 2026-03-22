@@ -800,8 +800,8 @@ contains
 
         ! Verify that the initial wet radius will be greater than dry radius
         if ( initial_wet_radius <= 1.) then
-            write(*,*) 'Injected wet radius too small...'
-            write(*,*) '...changing to 1.1x dry radius.'
+            write(*,*) 'WARNING: initial_wet_radius must be > 1.0 (got ', initial_wet_radius, ')'
+            write(*,*) '         Auto-correcting to 1.1x dry radius.'
             initial_wet_radius = 1.1
         end if
 

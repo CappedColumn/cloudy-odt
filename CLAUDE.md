@@ -31,7 +31,7 @@ All simulation parameters are set in `input/params.nml` (three namelists: `PARAM
 
 Both paths call `update_droplets()` when microphysics is enabled.
 
-**Particle system** (`src/droplets.f90`): `aerosol` base type holds solute properties; `particle` extends it with position, radius, thermodynamic state. Particles are stored in an allocatable array and track their grid cell index. Injection reads from `input/injection_data.txt`; binning uses `input/bin_data.txt`.
+**Particle system** (`src/droplets.f90`): `aerosol` base type holds solute properties; `particle` extends it with position, radius, thermodynamic state. Particles are stored in an allocatable array and track their grid cell index. Aerosol injection data (size distribution, chemistry, injection schedule) is read from `input/aerosol_input.nc` (NetCDF, `CODT_aerosol_input_v1` schema); droplet size binning uses `input/bin_data.txt`.
 
 **Droplet Growth Model** (`src/DGM.f90`): Cash-Karp RK45 adaptive ODE integrator (Numerical Recipes heritage). The state vector `ystart(1:8)` carries: radius, qv, temperature, supersaturation, pressure, vertical velocity, height, liquid water. `set_aerosol_properties()` must be called before `integrate_ODE()` to configure solute type (`dmaxa`: 1=NaCl, 2=(NH4)2SO4, 3=ammonium bisulfate).
 
@@ -60,7 +60,7 @@ codt <NAMELIST_PATH>
 ```
 
 - The executable reads the namelist from the provided path.
-- All relative paths inside the namelist (`inj_data_path`, `bin_data_path`)
+- All relative paths inside the namelist (`aerosol_file`, `bin_data_file`)
   are resolved **relative to the namelist's parent directory**.
 - `output_directory` must be an **absolute path**.
 - If no argument is provided, print an error message and stop with a
@@ -71,7 +71,7 @@ codt <NAMELIST_PATH>
 1. Check `command_argument_count()` on startup
 2. If an argument is present, use `get_command_argument(1, namelist_path)`
 3. Open and read the namelist from `namelist_path`
-4. Resolve `inj_data_path` and `bin_data_path` relative to the namelist's
+4. Resolve `aerosol_file` and `bin_data_file` relative to the namelist's
    parent directory (not CWD)
 5. If no argument is provided, print a usage message to stderr and
    `stop 1`
@@ -82,14 +82,14 @@ Given invocation: `codt /scratch/runs/sim01/input/params.nml`
 
 And namelist contents:
 ```
-inj_data_path = "injection_data.txt"
-bin_data_path = "bin_data.txt"
+aerosol_file = "aerosol_input.nc"
+bin_data_file = "bin_data.txt"
 output_directory = "/scratch/output"
 ```
 
 The executable resolves:
-- `inj_data_path` → `/scratch/runs/sim01/input/injection_data.txt`
-- `bin_data_path` → `/scratch/runs/sim01/input/bin_data.txt`
+- `aerosol_file` → `/scratch/runs/sim01/input/aerosol_input.nc`
+- `bin_data_file` → `/scratch/runs/sim01/input/bin_data.txt`
 - `output_directory` → `/scratch/output` (used as-is)
 
 ### Status
@@ -120,7 +120,14 @@ binary stream (`_eddies.bin`). Stores raw grid indices (M, L) and
 dimensional time for direct replay, with a header containing N, H, C2,
 ZC2, Tdiff, Tref.
 
-### 6. Add predetermined eddies mode
+### ~~6. Replace injection_data.txt with NetCDF aerosol input~~ Done
+
+Aerosol input switched from positional text to NetCDF (`CODT_aerosol_input_v1`
+schema). File contains aerosol chemistry per type (`aerosol_type` dimension),
+shared size bins with CDF thresholds, and time-varying injection schedule.
+Namelist variable renamed `inj_data_file` → `aerosol_file`.
+
+### 7. Add predetermined eddies mode
 
 Add a simulation mode where eddies are read from an existing `_eddies.bin`
 file instead of generated via Monte Carlo acceptance. This enables running
@@ -134,7 +141,7 @@ microphysics on pre-computed turbulence fields. Requires:
 - Skip `lower_dt`/`raise_dt` since there is no acceptance sampling
 - `write_eddies` and `use_predetermined_eddies` should be mutually exclusive
 
-### 7. Add eddy data reader to codt_tools
+### 8. Add eddy data reader to codt_tools
 
 Add an `eddy_io.py` module to the Python `codt_tools` package to read
 `_eddies.bin` files. Should return the header as a dict and eddy records

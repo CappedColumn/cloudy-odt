@@ -44,7 +44,7 @@ expected_Ndrops_per_gridpoint = 1.0       ! Set initial size of particle array t
 ! Must be greater than 1
 initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 
-inj_data_file = "injection_data.txt"
+aerosol_file = "aerosol_input.nc"
 bin_data_file = "bin_data.txt"
 
 ! --- Droplet Writeout Parameters ---

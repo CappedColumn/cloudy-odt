@@ -2,7 +2,7 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: calc_eddy_length_cdf, diffusion
+    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
                 initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
@@ -47,7 +47,7 @@ contains
     subroutine close_simulation()
         use microphysics, only: update_dim_scalars, update_supersat
 
-        call diffusion()
+        call diffusion(delta_time)
         call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
         call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
@@ -104,14 +104,16 @@ contains
         write(*,*) 'Setting domain variables...'
         Tref = Tref + Tice ! Convert to Kelvin
         Ttop = Tref - Tdiff
-        time_conv_nd = nu / (H**2)
-        tmax_nd = tmax * time_conv_nd
         Lmax = int(N / 3)
-        time_nd = 0.
         time = 0.
         last_time = 0.
-        dt_nd = 1. / (1. * N * N) ! initial timestep
-        diffusion_step = 1. / (1.*N*N) ! Diffusional timestep (fixed)
+
+        ! Initialize ODT time conversion and non-dim dt
+        call initialize_ODT(H)
+
+        ! Dimensional timestep: dt = (1/N^2) / time_conv_nd = H^2 / (nu * N^2)
+        diffusion_step = H**2 / (nu * 1.0_dp * N * N)
+        dt = diffusion_step
         
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N

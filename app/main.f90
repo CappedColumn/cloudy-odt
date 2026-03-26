@@ -51,24 +51,21 @@ program main
 
   ! -----------------------------
 
-  do while (time_nd .le. tmax_nd)
+  do while (time .le. tmax)
 
     ! Update iterators and timing
     Nt = Nt + 1
-    time_nd = time_nd + dt_nd
-    dt = dt_nd/time_conv_nd
-    time = time_nd/time_conv_nd
+    time = time + dt
     write_time_iter = write_time_iter + dt
-    delta_time_nd = time_nd - last_time
-    delta_time = delta_time_nd/time_conv_nd
+    delta_time = time - last_time
 
     ! ---------------------------------------------------------
     ! Diffusion event
     ! ---------------------------------------------------------
-    if (delta_time_nd .ge. diffusion_step) then
+    if (delta_time .ge. diffusion_step) then
       Nd = Nd + 1
 
-      call diffusion()
+      call diffusion(delta_time)
       call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
       call update_supersat(T, WV, SS, pres)
 
@@ -80,19 +77,19 @@ program main
         call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
       end if
 
-      last_time = time_nd
+      last_time = time
     end if
 
     ! ---------------------------------------------------------
     ! ODT eddy event
     ! ---------------------------------------------------------
     if ( do_turbulence ) then
-      call eddy_acceptance_method(eddy_location, eddy_length, eddy_accepted)
+      call eddy_acceptance_method(dt, eddy_location, eddy_length, eddy_accepted)
 
       if ( eddy_accepted ) then
         if ( write_eddies ) call write_eddy(eddy_location, eddy_length, time)
 
-        call diffusion()
+        call diffusion(delta_time)
         call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
 
@@ -108,7 +105,7 @@ program main
           call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
         end if
 
-        last_time = time_nd
+        last_time = time
       end if
     end if
     ! ---------------------------------------------------------

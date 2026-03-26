@@ -159,21 +159,13 @@ module globals
     ! -----------------------------------------------
 
     real(dp) :: tmax = 30            ! Maximum simulation time (seconds)
-    real(dp) :: tmax_nd     ! Maxmimum simulation time (non-dimensional, params.nml)
     real(dp) :: time    ! Dimensional time
-    real(dp) :: time_nd        ! Non-dimensional time
-    real(dp) :: last_time       ! Time lagging by dt
+    real(dp) :: last_time       ! Time lagging by dt (dimensional)
     real(dp) :: dt                 ! Dimensional time step
-    real(dp) :: dt_nd             ! Non-Dimensional time step
-    real(dp) :: delta_time_nd
-    real(dp) :: delta_time
-    real(dp) :: diffusion_step             ! Difussive Time Step
+    real(dp) :: delta_time         ! Dimensional time since last diffusion
+    real(dp) :: diffusion_step     ! Diffusive time step (dimensional, seconds)
     integer(i4) :: Nt = 0       ! Number of timesteps
     integer(i4) :: Nd = 0       ! Number of Diffusion Calls
-
-    integer(i4) :: Np = 0       ! Number of eddy probs. calculated (acc/rej method)
-    integer(i4) :: Na = 0       ! Number of accepted eddies
-    real(dp) :: Pa = 0.         ! Total acceptance probabilitiess
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -186,11 +178,9 @@ module globals
 
     integer(i4) :: Lmax      ! Largest Eddy Size (1/3 of domain, in gridpoints)
     integer(i4) :: LpD          ! Twice the most probable length
-    real(dp) :: time_conv_nd ! Convert between dimensional and nd-time
     real(dp) :: buoy_nd           ! Dimensionless Buoyancy
     real(dp) :: prob_coeff          ! Used in calculation of eddy acceptance probability
     real(dp) :: Co, Cm              ! Used for initial eddy sample guess
-    real(dp) :: t_diff       ! Diffusion Time Step
 
     ! Eddy acceptance/rejection related
     real(dp), allocatable :: prob_eddy_length(:)      ! Probability of eddy sizes

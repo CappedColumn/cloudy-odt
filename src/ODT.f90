@@ -2,21 +2,44 @@ module ODT
     use globals
     implicit none
 
-    public 
+    public
 
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
-    ! of the model. This includes calculating the eddy probabilities, sizes, location, and 
+    ! of the model. This includes calculating the eddy probabilities, sizes, location, and
     ! the eddy rejection/acceptance method (the entire loop)
+
+    ! Non-dimensional time variables — internal to ODT
+    real(dp), private :: dt_nd             ! Non-dimensional time step
+    real(dp), private :: time_conv_nd      ! Conversion factor: dimensional -> non-dim time (nu/H^2)
+
+    ! Eddy acceptance/rejection counters — internal to ODT
+    integer(i4), private :: Np = 0       ! Number of eddy probs. calculated
+    integer(i4) :: Na = 0                ! Number of accepted eddies
+    real(dp), private :: Pa = 0.         ! Total acceptance probabilities
 
 contains
 
-    subroutine diffusion()
-        ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
-        ! Caller is responsible for syncing dim/nondim fields afterward.
+    subroutine initialize_ODT(H_domain)
+        ! Initialize ODT module: set time conversion factor and initial dt_nd.
+        ! Must be called after namelist read, before time loop.
+        real(dp), intent(in) :: H_domain
 
-        call diffuse_scalar(W_nd, Ndnu)
-        call diffuse_scalar(T_nd, Pr)
-        call diffuse_scalar(WV_nd, Sc)
+        time_conv_nd = nu / (H_domain**2)
+        dt_nd = 1.0_dp / (1.0_dp * N * N)
+    end subroutine initialize_ODT
+
+    subroutine diffusion(ldelta_time)
+        ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
+        ! Takes dimensional delta_time (seconds) and converts to non-dim internally.
+        ! Caller is responsible for syncing dim/nondim fields afterward.
+        real(dp), intent(in) :: ldelta_time
+        real(dp) :: delta_time_nd
+
+        delta_time_nd = ldelta_time * time_conv_nd
+
+        call diffuse_scalar(W_nd, Ndnu, delta_time_nd)
+        call diffuse_scalar(T_nd, Pr, delta_time_nd)
+        call diffuse_scalar(WV_nd, Sc, delta_time_nd)
 
     end subroutine diffusion
 
@@ -191,17 +214,24 @@ contains
     end subroutine raise_dt
 
 
-    subroutine eddy_acceptance_method(M, L, eddy_flag)
+    subroutine eddy_acceptance_method(ldt, M, L, eddy_flag)
         ! After sampling eddy size/length (L) and eddy location (M),
         ! computes an expected acceptance rate based on the current
         ! state of the velocity/vector fields.
 
-        ! The acceptance probability is then tested, if too high an 
-        ! adjustment is made with by lowering the timestep
+        ! The acceptance probability is then tested, if too high an
+        ! adjustment is made with by lowering the timestep.
+        !
+        ! Takes dimensional dt, converts to non-dim internally,
+        ! and returns the (possibly adjusted) dimensional dt.
 
+        real(dp), intent(inout) :: ldt
         integer(i4), intent(out) :: M, L
         logical, intent(out) :: eddy_flag
         real(dp) :: rand_num(3)
+
+        ! Sync non-dim dt from dimensional input
+        dt_nd = ldt * time_conv_nd
 
         ! Get 3 random numbers from a uniform distribution
         call random_number(rand_num)
@@ -210,31 +240,27 @@ contains
         M = sample_eddy_location(N, L, rand_num(2))
         ! Calculated the probability of the randomly selected eddy
         call eddy_acceptance_prob(M, L, accept_prob)
-        
+
         !if ( accept_prob > 0.0 ) write(*,*) accept_prob, L, M
 
         call lower_dt(accept_prob)
-
-        ! write(*,*) rand_num(3), accept_prob, dt_nd/nu
 
         ! Monte-Carlo test for this eddy
         if (rand_num(3) .lt. accept_prob) then
             ! Success
             eddy_flag = .true.
-            ! M = eddy_loc
-            ! L = eddy_len
             call implement_eddy(L, M)
-    
+
             Na = Na + 1
-            !last_time = time_nd ! In main loop now to pass to droplet growth model
 
         else
             eddy_flag = .false.
         end if
-    
+
         if (Np > 1e4) call raise_dt()
-    
-        !call flush()
+
+        ! Convert adjusted dt_nd back to dimensional
+        ldt = dt_nd / time_conv_nd
 
     end subroutine eddy_acceptance_method
 
@@ -352,13 +378,14 @@ contains
 
     end subroutine addK
 
-    subroutine diffuse_scalar(sclr, dim_num)
+    subroutine diffuse_scalar(sclr, dim_num, ldelta_time_nd)
         real(dp), intent(in) :: dim_num
+        real(dp), intent(in) :: ldelta_time_nd
         real(dp), intent(inout) :: sclr(:)
         real(dp) :: De, l(N+1), d(N+1), r(N+1), xsc(N+1)
         integer(i4) :: k
 
-        De = (delta_time_nd*(N+1)*(N+1))/(2.*dim_num)
+        De = (ldelta_time_nd*(N+1)*(N+1))/(2.*dim_num)
 
         l(1) = 0.
         d(1) = 1. + (2.*De)

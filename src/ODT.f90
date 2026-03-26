@@ -1,6 +1,5 @@
 module ODT
     use globals
-    use microphysics, only: update_dim_scalars, update_supersat
     implicit none
 
     public 
@@ -12,14 +11,12 @@ module ODT
 contains
 
     subroutine diffusion()
-        ! Interface for main.f90. Diffuses the non-dim scalar fields, and updates the dimensional
-        ! fields, as well as supersaturation.
+        ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
+        ! Caller is responsible for syncing dim/nondim fields afterward.
 
         call diffuse_scalar(W, Ndnu)
         call diffuse_scalar(T, Pr)
         call diffuse_scalar(WV, Sc)
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
-        call update_supersat(Tdim, WVdim, SS, pres)
 
     end subroutine diffusion
 

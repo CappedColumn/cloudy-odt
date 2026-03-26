@@ -105,15 +105,14 @@ contains
 
     subroutine update_droplets(ltime, ldt)
         ! Interface subroutine to main.f90. Does aerosol injection, settling,
-        ! droplet-environment property update, droplet growth and scalar field
-        ! updates (after droplet growth)
+        ! droplet-environment property update, and droplet growth.
+        ! Caller is responsible for syncing nondim fields afterward.
         real(dp), intent(in) :: ltime, ldt
 
         call injection_controller(time, particles)
         call move_particles_by_gravity(particles, ldt)
         call update_all_particles(particles, Tdim, WVdim, Tvdim, SS)
         call droplet_growth_model(particles, ltime, ldt)
-        call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
 
     end subroutine update_droplets
 

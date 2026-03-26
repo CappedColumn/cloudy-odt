@@ -45,8 +45,11 @@ contains
     end subroutine initialize_simulation
 
     subroutine close_simulation()
+        use microphysics, only: update_dim_scalars, update_supersat
 
         call diffusion()
+        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+        call update_supersat(Tdim, WVdim, SS, pres)
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)

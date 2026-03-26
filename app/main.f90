@@ -63,57 +63,54 @@ program main
     delta_time = delta_time_nd/time_conv_nd
 
     ! ---------------------------------------------------------
+    ! Diffusion event
     ! ---------------------------------------------------------
-    ! Ensure timesteps do not surpass diffusion scheme
     if (delta_time_nd .ge. diffusion_step) then
       Nd = Nd + 1
 
       call diffusion()
+      call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+      call update_supersat(Tdim, WVdim, SS, pres)
 
-      ! Update particle positions
       if ( do_microphysics ) call update_droplets(time, delta_time)
+      if ( do_special_effects ) call run_special_effects(Tdim, WVdim, delta_time)
 
-      ! Implement Special Effects
-      if ( do_special_effects ) then
-        call run_special_effects(Tdim, WVdim, delta_time)
+      ! Sync nondim fields after physics modified dim arrays
+      if ( do_microphysics .or. do_special_effects ) then
+        call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
       end if
 
-      last_time = time_nd ! Remember last "event" call
+      last_time = time_nd
     end if
-    ! ---------------------------------------------------------
-    ! ---------------------------------------------------------
 
     ! ---------------------------------------------------------
+    ! ODT eddy event
     ! ---------------------------------------------------------
-    ! One-Dimensional Turbulence Scheme
     if ( do_turbulence ) then
-      ! Set and eddy length, location and acceptance probability
-      ! Then either accepts or rejects the tested eddy
       call eddy_acceptance_method(eddy_location, eddy_length, eddy_accepted)
-      
+
       if ( eddy_accepted ) then
-        if ( write_eddies ) then
-          call write_eddy(eddy_location, eddy_length, time)
-        end if
+        if ( write_eddies ) call write_eddy(eddy_location, eddy_length, time)
 
         call diffusion()
+        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+        call update_supersat(Tdim, WVdim, SS, pres)
 
         if ( do_microphysics ) then
-          call move_particles_in_eddy(particles, eddy_location, eddy_length) ! Eddy movement
+          call move_particles_in_eddy(particles, eddy_location, eddy_length)
           call update_droplets(time, delta_time)
         end if
 
-        ! Implement Special Effects
-        if ( do_special_effects ) then
-          call run_special_effects(Tdim, WVdim, delta_time)
+        if ( do_special_effects ) call run_special_effects(Tdim, WVdim, delta_time)
+
+        ! Sync nondim fields after physics modified dim arrays
+        if ( do_microphysics .or. do_special_effects ) then
+          call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
         end if
-        
-        last_time = time_nd ! Remember last "event" call
+
+        last_time = time_nd
       end if
     end if
-
-    ! Ensure nondim and dim scalars are 
-    ! ---------------------------------------------------------
     ! ---------------------------------------------------------
 
     ! Write to netCDF buffer

@@ -69,7 +69,7 @@ program main
       Nd = Nd + 1
 
       call diffusion()
-      call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+      call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
       call update_supersat(Tdim, WVdim, SS, pres)
 
       if ( do_microphysics ) call update_droplets(time, delta_time)
@@ -77,7 +77,7 @@ program main
 
       ! Sync nondim fields after physics modified dim arrays
       if ( do_microphysics .or. do_special_effects ) then
-        call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
+        call update_nondim_scalars(Tdim, WVdim, Tvdim, T_nd, WV_nd, Tv_nd)
       end if
 
       last_time = time_nd
@@ -93,7 +93,7 @@ program main
         if ( write_eddies ) call write_eddy(eddy_location, eddy_length, time)
 
         call diffusion()
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
         call update_supersat(Tdim, WVdim, SS, pres)
 
         if ( do_microphysics ) then
@@ -105,7 +105,7 @@ program main
 
         ! Sync nondim fields after physics modified dim arrays
         if ( do_microphysics .or. do_special_effects ) then
-          call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
+          call update_nondim_scalars(Tdim, WVdim, Tvdim, T_nd, WV_nd, Tv_nd)
         end if
 
         last_time = time_nd

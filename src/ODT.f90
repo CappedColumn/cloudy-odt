@@ -14,9 +14,9 @@ contains
         ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
         ! Caller is responsible for syncing dim/nondim fields afterward.
 
-        call diffuse_scalar(W, Ndnu)
-        call diffuse_scalar(T, Pr)
-        call diffuse_scalar(WV, Sc)
+        call diffuse_scalar(W_nd, Ndnu)
+        call diffuse_scalar(T_nd, Pr)
+        call diffuse_scalar(WV_nd, Sc)
 
     end subroutine diffusion
 
@@ -125,8 +125,8 @@ contains
         Lnd = (1.*L)/(1.*N)
 
         ! Integrate values across the eddy
-        wK = integrate_eddy(L, M, w)
-        TvK = -integrate_eddy(L, M, Tv)
+        wK = integrate_eddy(L, M, W_nd)
+        TvK = -integrate_eddy(L, M, Tv_nd)
 
         ! Calculate energies
         pot_energy = buoy_nd * TvK * Lnd
@@ -283,11 +283,11 @@ contains
         end if
 
         ! Create triplet copies
-        call triplet_map(L, M, w)
-        call triplet_map(L, M, T)
-        call triplet_map(L, M, WV)
+        call triplet_map(L, M, W_nd)
+        call triplet_map(L, M, T_nd)
+        call triplet_map(L, M, WV_nd)
         ! Scale for energy conservation
-        call addK(L, M, w, cw)
+        call addK(L, M, W_nd, cw)
         
     end subroutine implement_eddy
 

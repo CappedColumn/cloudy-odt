@@ -48,7 +48,7 @@ contains
         use microphysics, only: update_dim_scalars, update_supersat
 
         call diffusion()
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
         call update_supersat(Tdim, WVdim, SS, pres)
         call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
         call flush_buffer()
@@ -147,10 +147,10 @@ contains
         ! Allocate scalar/vector fields
         write(*,*) 'Allocating arrays...'
         call allocate_zero_arrays(z, N)
-        call allocate_nondim_array(W, N)
-        call allocate_nondim_array(T, N)
-        call allocate_nondim_array(WV, N)
-        call allocate_nondim_array(Tv, N)
+        call allocate_nondim_array(W_nd, N)
+        call allocate_nondim_array(T_nd, N)
+        call allocate_nondim_array(WV_nd, N)
+        call allocate_nondim_array(Tv_nd, N)
         call allocate_zero_arrays(Tdim, N)
         call allocate_zero_arrays(WVdim, N)
         call allocate_zero_arrays(Tvdim, N)
@@ -163,8 +163,8 @@ contains
         !W = W + random_array(W)*2.e-10
 
         call initialize_linear_array(z)
-        call initialize_velocity_arrays(W)
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
+        call initialize_velocity_arrays(W_nd)
+        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
         call update_supersat(Tdim, WVdim, SS, pres)
 
         ! Initialize positional array
@@ -254,18 +254,18 @@ contains
 
     end subroutine initialize_linear_array
 
-    subroutine initialize_velocity_arrays(lw)
+    subroutine initialize_velocity_arrays(lw_nd)
         ! Initializes velcoity arrays with some noise. This prevents a numerical issue from
         ! occuring when calculating the kinetic energy (i.e. KE != 0)
-        real(dp), intent(inout), allocatable :: lw(:)
+        real(dp), intent(inout), allocatable :: lw_nd(:)
         real(dp) :: rand_num
         integer(i4) :: k
 
         do k = 1, N
             call random_number(rand_num)
-            lw(k) = 2.e-10 * (rand_num - 0.5)
+            lw_nd(k) = 2.e-10 * (rand_num - 0.5)
         end do
-        lw(N+1) = 0.
+        lw_nd(N+1) = 0.
 
     end subroutine initialize_velocity_arrays
 

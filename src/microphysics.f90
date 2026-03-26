@@ -60,11 +60,11 @@ contains
     end function calc_supersat
 
     ! FIX: Make Tv updated externally, then update dim fron ALL nondim
-    pure subroutine update_dim_scalars(lW, lT, lWV, lTv, lWdim, lTdim, lWVdim, lTvdim)
+    pure subroutine update_dim_scalars(lW_nd, lT_nd, lWV_nd, lTv_nd, lWdim, lTdim, lWVdim, lTvdim)
         ! Takes the non-dimensional scalar arrays, and updates the dimensional
         ! arrays. Also calculates the virtual temperature
-        real(dp), intent(in) :: lW(:), lT(:), lWV(:)
-        real(dp), intent(out) ::  lWdim(:), lTdim(:), lWVdim(:), lTv(:), lTvdim(:)
+        real(dp), intent(in) :: lW_nd(:), lT_nd(:), lWV_nd(:)
+        real(dp), intent(out) ::  lWdim(:), lTdim(:), lWVdim(:), lTv_nd(:), lTvdim(:)
         integer(i4) :: k
 
         ! Called after the non-dimensional T and WV fields are changed in some way
@@ -77,30 +77,30 @@ contains
         ! Calculated dimensional scalar fields
         ! Note the subtraction because Tdiff and WVdiff are actually negative w.r.t height
         do concurrent (k = 1:N)
-            lWdim(k) = lW(k) * w_dim_factor
-            lTdim(k) = Tref - Tdiff * lT(k)
-            lWVdim(k) = WVref - WVdiff * lWV(k)
+            lWdim(k) = lW_nd(k) * w_dim_factor
+            lTdim(k) = Tref - Tdiff * lT_nd(k)
+            lWVdim(k) = WVref - WVdiff * lWV_nd(k)
         end do
 
         ! Calculate non-dimensional virtual temperature
         do concurrent (k = 1:N)
             lTvdim(k) = virtual_temp(lTdim(k), lWVdim(k))
-            lTv(k) = (Tvref - lTvdim(k)) / Tdiff
-        end do 
+            lTv_nd(k) = (Tvref - lTvdim(k)) / Tdiff
+        end do
 
     end subroutine update_dim_scalars
 
-    pure subroutine update_nondim_scalars(lTdim, lWVdim, lTvdim, lT, lWV, lTv)
-        ! Updates the non-dimensional scalar fields based on the current value of 
+    pure subroutine update_nondim_scalars(lTdim, lWVdim, lTvdim, lT_nd, lWV_nd, lTv_nd)
+        ! Updates the non-dimensional scalar fields based on the current value of
         ! the dimension scalar fields
         real(dp), intent(in) :: lTdim(:), lWVdim(:), lTvdim(:)
-        real(dp), intent(out) :: lT(:), lWV(:), lTv(:)
+        real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
         integer(i4) :: k
 
         do concurrent (k = 1:N)
-            lT(k) = -(lTdim(k) - Tref) / Tdiff
-            lWV(k) = -(lWVdim(k) - WVref) / WVdiff
-            lTv(k) = -(lTvdim(k) - Tvref) / Tvdiff
+            lT_nd(k) = -(lTdim(k) - Tref) / Tdiff
+            lWV_nd(k) = -(lWVdim(k) - WVref) / WVdiff
+            lTv_nd(k) = -(lTvdim(k) - Tvref) / Tvdiff
         end do
 
     end subroutine update_nondim_scalars

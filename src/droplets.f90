@@ -841,7 +841,7 @@ contains
         ! Initialize particles in each gridpoint (approximately)
         if ( init_drop_each_gridpoint ) then
             do i = 1, N
-                call inject_particle(particles, Tdim, WVdim, Tv, SS, aerosols(1))
+                call inject_particle(particles, Tdim, WVdim, Tvdim, SS, aerosols(1))
             end do
         end if
 

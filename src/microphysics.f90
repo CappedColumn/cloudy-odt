@@ -59,30 +59,19 @@ contains
 
     end function calc_supersat
 
-    ! FIX: Make Tv updated externally, then update dim fron ALL nondim
-    pure subroutine update_dim_scalars(lW_nd, lT_nd, lWV_nd, lTv_nd, lW, lT, lWV, lTv)
+    pure subroutine update_dim_scalars(lT_nd, lWV_nd, lTv_nd, lT, lWV, lTv)
         ! Takes the non-dimensional scalar arrays, and updates the dimensional
-        ! arrays. Also calculates the virtual temperature
-        real(dp), intent(in) :: lW_nd(:), lT_nd(:), lWV_nd(:)
-        real(dp), intent(out) ::  lW(:), lT(:), lWV(:), lTv_nd(:), lTv(:)
+        ! arrays. Also calculates the virtual temperature and nondim Tv.
+        real(dp), intent(in) :: lT_nd(:), lWV_nd(:)
+        real(dp), intent(out) :: lT(:), lWV(:), lTv_nd(:), lTv(:)
         integer(i4) :: k
 
-        ! Called after the non-dimensional T and WV fields are changed in some way
-        ! Updates the dimensional values and calculates a new virtual temperature
-        ! for the next eddy acceptance test
-
-        ! Takes the non-dimensional arrays of T and WV and
-        ! calculates the non-dim/dim virtual temperature
-
-        ! Calculated dimensional scalar fields
         ! Note the subtraction because Tdiff and WVdiff are actually negative w.r.t height
         do concurrent (k = 1:N)
-            lW(k) = lW_nd(k) * w_dim_factor
             lT(k) = Tref - Tdiff * lT_nd(k)
             lWV(k) = WVref - WVdiff * lWV_nd(k)
         end do
 
-        ! Calculate non-dimensional virtual temperature
         do concurrent (k = 1:N)
             lTv(k) = virtual_temp(lT(k), lWV(k))
             lTv_nd(k) = (Tvref - lTv(k)) / Tdiff

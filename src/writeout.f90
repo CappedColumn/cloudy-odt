@@ -12,7 +12,7 @@ module writeout
     ! Buffer variables and arrays for writing to netCDF
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)
-    real(dp), allocatable :: buffer_SS(:,:), buffer_W(:,:), buffer_time(:), buffer_stats(:,:)
+    real(dp), allocatable :: buffer_SS(:,:), buffer_time(:), buffer_stats(:,:)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
     ! Eddy output file unit (unformatted stream binary)
@@ -32,7 +32,7 @@ contains
         write(*,*) 'Writing time: ', time
         call calculate_droplet_statistics(particles, statistics)
         call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
-        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
         ! Reset write timer, note "extra" time from eddy method is
         ! considered to prevent time compounding
         write_time_iter = mod(write_time_iter, write_timer)
@@ -52,7 +52,6 @@ contains
         allocate(buffer_WV(N_grid, buff_len))
         allocate(buffer_Tv(N_grid, buff_len))
         allocate(buffer_SS(N_grid, buff_len))
-        allocate(buffer_W(N_grid, buff_len))
         allocate(buffer_time(buff_len))
         allocate(buffer_stats(5, buff_len))
 
@@ -60,7 +59,6 @@ contains
         buffer_WV = 0.
         buffer_Tv = 0.
         buffer_SS = 0.
-        buffer_W = 0.
         buffer_time = 0.
         buffer_stats = 0.
 
@@ -83,10 +81,10 @@ contains
 
     end subroutine initialize_particle_buffers
 
-    recursive subroutine add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lW, lDSD, lstats)
+    recursive subroutine add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lDSD, lstats)
         ! Writes the profile arrays into the profile buffers, will flush
         ! the buffer to write netCDF if buffer is full
-        real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:), lW(:), lstats(:)
+        real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:), lstats(:)
         integer(i4), intent(in) :: lDSD(:,:)
 
         ! Write profile data into buffers
@@ -97,13 +95,12 @@ contains
             buffer_WV(:, buffer_count) = lWV
             buffer_Tv(:, buffer_count) = lTv - Tice ! (C)
             buffer_SS(:, buffer_count) = lSS
-            buffer_W(:, buffer_count) = lW
             buffer_stats(:, buffer_count) = lstats
             buffer_DSD(:, :, buffer_count) = lDSD
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
-            call add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lW, lDSD, lstats)
+            call add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lDSD, lstats)
         end if
 
     end subroutine add_to_profile_buffer
@@ -139,7 +136,6 @@ contains
                                         buffer_WV(:, 1:buffer_count), &
                                         buffer_Tv(:, 1:buffer_count), &
                                         buffer_SS(:, 1:buffer_count), &
-                                        buffer_W(:, 1:buffer_count), &
                                         buffer_DSD(:, :, 1:buffer_count), &
                                         buffer_stats(:, 1:buffer_count))
         call nc_verify( nf90_sync(ncid) )
@@ -160,7 +156,7 @@ contains
         integer :: t_dimid, z_dimid, dimids(2)
         ! Variable initialization
         integer :: t_varid, z_varid
-        integer :: tc_varid, qv_varid, s_varid, tv_varid, w_varid
+        integer :: tc_varid, qv_varid, s_varid, tv_varid
         integer :: statids(5)
         integer :: j, k, nz, nbins
 
@@ -227,12 +223,6 @@ contains
         call nc_verify( nf90_put_att(lncid, s_varid, "long_name", "Supersaturation"), "nf90_put_att: S, name" )
         call nc_verify( nf90_put_att(lncid, s_varid, "units", "%"), "nf90_put_att: S, units")
 
-        ! Vertical Velocity
-        call nc_verify( nf90_def_var(lncid, "W", NF90_FLOAT, dimids, w_varid, &
-                        deflate_level=1, shuffle=.true.), "nf90_def_var: W" )
-        call nc_verify( nf90_put_att(lncid, w_varid, "long_name", "W-Velocity"), "nf90_put_att: W, name" )
-        call nc_verify( nf90_put_att(lncid, w_varid, "units", "m/s"), "nf90_put_att: W, units")
-
 
 
         ! Particle statistic variables (only when microphysics is enabled)
@@ -274,16 +264,16 @@ contains
     end subroutine create_netcdf
 
 
-    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lw, lDSD, lstats)
+    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lDSD, lstats)
         integer(i4), intent(in) :: lncid
-        real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lw(:,:), lstats(:,:)
+        real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lstats(:,:)
         integer(i4), intent(in) :: lDSD(:,:,:)
 
-        integer :: varids(6), DSDid, i ! time, T, WV, Tv, SS, w, DSD are coordinates
+        integer :: varids(5), DSDid, i
         integer :: statids(5), time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
         character(100) :: varname, strint
-    
+
         ! netCDF profile variables are (time, height) dimensions
         time_len = size(ltime,1)
         z_len = size(lT,1)
@@ -295,14 +285,13 @@ contains
         ! set the starting/ending positions for netCDF file
         count_dim = (/z_len, time_len/)
         start_dim = (/1, nc_write_iter/)
-        
+
         ! Get variable IDs
         call nc_verify( nf90_inq_varid(lncid, "time", varids(1)) )
         call nc_verify( nf90_inq_varid(lncid, "T", varids(2)) )
         call nc_verify( nf90_inq_varid(lncid, "QV", varids(3)) )
         call nc_verify( nf90_inq_varid(lncid, "Tv", varids(4)) )
         call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
-        call nc_verify( nf90_inq_varid(lncid, "W", varids(6)) )
 
         ! Write to variable slots
         call nc_verify( nf90_put_var(lncid, varids(1), ltime, start=(/nc_write_iter/)) )
@@ -310,7 +299,6 @@ contains
         call nc_verify( nf90_put_var(lncid, varids(3), lWV, start=start_dim, count=count_dim) )
         call nc_verify( nf90_put_var(lncid, varids(4), lTv, start=start_dim, count=count_dim) )
         call nc_verify( nf90_put_var(lncid, varids(5), lSS, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(lncid, varids(6), lw, start=start_dim, count=count_dim) )
 
         if ( do_microphysics ) then
             ! Particle statistics

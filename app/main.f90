@@ -69,7 +69,7 @@ program main
       Nd = Nd + 1
 
       call diffusion()
-      call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+      call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
       call update_supersat(T, WV, SS, pres)
 
       if ( do_microphysics ) call update_droplets(time, delta_time)
@@ -93,7 +93,7 @@ program main
         if ( write_eddies ) call write_eddy(eddy_location, eddy_length, time)
 
         call diffusion()
-        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
 
         if ( do_microphysics ) then

@@ -67,7 +67,6 @@ module globals
     real(dp), parameter :: alpha = 3.5e-3           ! Thermal Expansion Coefficient
     real(dp), parameter :: C2 = 1.5e3                ! Turbulent strength in ODT (dimensionless, squared): see Eq. 2.9 - Wunsch and Kerstein 2005
     real(dp), parameter :: C = sqrt(C2)
-    real(dp) :: w_dim_factor
     real(dp), parameter :: ZC2 = 1.0e5                 ! ODT viscous cut-off parameter (dimensionless): see same equation/paper
 
     ! Aerosol Calculations/Constants
@@ -206,7 +205,7 @@ module globals
     ! ------------------- ARRAYS --------------------
 
     ! Velocity arrays
-    real(dp), allocatable :: W_nd(:), W(:)   ! Velocity components
+    real(dp), allocatable :: W_nd(:)   ! ODT velocity (nondim, energy conservation)
 
     ! Positional arrays
     real(dp), allocatable :: z(:)

@@ -40,7 +40,7 @@ contains
             call initialize_special_effects()
         end if
 
-        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
 
     end subroutine initialize_simulation
 
@@ -48,9 +48,9 @@ contains
         use microphysics, only: update_dim_scalars, update_supersat
 
         call diffusion()
-        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
-        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)
         if ( do_microphysics .and. write_trajectories ) then
@@ -131,7 +131,6 @@ contains
         Co = exp(-LpD/(1.*Lmin))
         Cm = exp(-LpD/(1.*Lmax))
         prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
-        w_dim_factor = nu / (H * C)
 
         ! initialize randomness in the model
         if (same_random) then
@@ -155,16 +154,11 @@ contains
         call allocate_zero_arrays(WV, N)
         call allocate_zero_arrays(Tv, N)
         call allocate_zero_arrays(SS, N)
-        call allocate_zero_arrays(W, N)
         call allocate_zero_arrays(prob_eddy_length, N)
-
-        ! Initialize scalar/vector fields with some random perturbation
-        ! NOTE THIS ONLY HAS POSITIVE PERTURBATIONS - NONDIMENSIONAL???
-        !W = W + random_array(W)*2.e-10
 
         call initialize_linear_array(z)
         call initialize_velocity_arrays(W_nd)
-        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
 
         ! Initialize positional array

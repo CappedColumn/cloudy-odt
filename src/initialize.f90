@@ -40,7 +40,7 @@ contains
             call initialize_special_effects()
         end if
 
-        call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
 
     end subroutine initialize_simulation
 
@@ -48,9 +48,9 @@ contains
         use microphysics, only: update_dim_scalars, update_supersat
 
         call diffusion()
-        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
-        call update_supersat(Tdim, WVdim, SS, pres)
-        call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
+        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+        call update_supersat(T, WV, SS, pres)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)
         if ( do_microphysics .and. write_trajectories ) then
@@ -151,11 +151,11 @@ contains
         call allocate_nondim_array(T_nd, N)
         call allocate_nondim_array(WV_nd, N)
         call allocate_nondim_array(Tv_nd, N)
-        call allocate_zero_arrays(Tdim, N)
-        call allocate_zero_arrays(WVdim, N)
-        call allocate_zero_arrays(Tvdim, N)
+        call allocate_zero_arrays(T, N)
+        call allocate_zero_arrays(WV, N)
+        call allocate_zero_arrays(Tv, N)
         call allocate_zero_arrays(SS, N)
-        call allocate_zero_arrays(Wdim, N)
+        call allocate_zero_arrays(W, N)
         call allocate_zero_arrays(prob_eddy_length, N)
 
         ! Initialize scalar/vector fields with some random perturbation
@@ -164,8 +164,8 @@ contains
 
         call initialize_linear_array(z)
         call initialize_velocity_arrays(W_nd)
-        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, Wdim, Tdim, WVdim, Tvdim)
-        call update_supersat(Tdim, WVdim, SS, pres)
+        call update_dim_scalars(W_nd, T_nd, WV_nd, Tv_nd, W, T, WV, Tv)
+        call update_supersat(T, WV, SS, pres)
 
         ! Initialize positional array
         do k = 1, N

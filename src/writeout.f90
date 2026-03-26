@@ -32,7 +32,7 @@ contains
         write(*,*) 'Writing time: ', time
         call calculate_droplet_statistics(particles, statistics)
         call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
-        call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, W, size_distribution, statistics)
         ! Reset write timer, note "extra" time from eddy method is
         ! considered to prevent time compounding
         write_time_iter = mod(write_time_iter, write_timer)

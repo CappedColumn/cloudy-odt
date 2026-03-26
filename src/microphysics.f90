@@ -60,11 +60,11 @@ contains
     end function calc_supersat
 
     ! FIX: Make Tv updated externally, then update dim fron ALL nondim
-    pure subroutine update_dim_scalars(lW_nd, lT_nd, lWV_nd, lTv_nd, lWdim, lTdim, lWVdim, lTvdim)
+    pure subroutine update_dim_scalars(lW_nd, lT_nd, lWV_nd, lTv_nd, lW, lT, lWV, lTv)
         ! Takes the non-dimensional scalar arrays, and updates the dimensional
         ! arrays. Also calculates the virtual temperature
         real(dp), intent(in) :: lW_nd(:), lT_nd(:), lWV_nd(:)
-        real(dp), intent(out) ::  lWdim(:), lTdim(:), lWVdim(:), lTv_nd(:), lTvdim(:)
+        real(dp), intent(out) ::  lW(:), lT(:), lWV(:), lTv_nd(:), lTv(:)
         integer(i4) :: k
 
         ! Called after the non-dimensional T and WV fields are changed in some way
@@ -77,44 +77,44 @@ contains
         ! Calculated dimensional scalar fields
         ! Note the subtraction because Tdiff and WVdiff are actually negative w.r.t height
         do concurrent (k = 1:N)
-            lWdim(k) = lW_nd(k) * w_dim_factor
-            lTdim(k) = Tref - Tdiff * lT_nd(k)
-            lWVdim(k) = WVref - WVdiff * lWV_nd(k)
+            lW(k) = lW_nd(k) * w_dim_factor
+            lT(k) = Tref - Tdiff * lT_nd(k)
+            lWV(k) = WVref - WVdiff * lWV_nd(k)
         end do
 
         ! Calculate non-dimensional virtual temperature
         do concurrent (k = 1:N)
-            lTvdim(k) = virtual_temp(lTdim(k), lWVdim(k))
-            lTv_nd(k) = (Tvref - lTvdim(k)) / Tdiff
+            lTv(k) = virtual_temp(lT(k), lWV(k))
+            lTv_nd(k) = (Tvref - lTv(k)) / Tdiff
         end do
 
     end subroutine update_dim_scalars
 
-    pure subroutine update_nondim_scalars(lTdim, lWVdim, lTvdim, lT_nd, lWV_nd, lTv_nd)
+    pure subroutine update_nondim_scalars(lT, lWV, lTv, lT_nd, lWV_nd, lTv_nd)
         ! Updates the non-dimensional scalar fields based on the current value of
         ! the dimension scalar fields
-        real(dp), intent(in) :: lTdim(:), lWVdim(:), lTvdim(:)
+        real(dp), intent(in) :: lT(:), lWV(:), lTv(:)
         real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
         integer(i4) :: k
 
         do concurrent (k = 1:N)
-            lT_nd(k) = -(lTdim(k) - Tref) / Tdiff
-            lWV_nd(k) = -(lWVdim(k) - WVref) / WVdiff
-            lTv_nd(k) = -(lTvdim(k) - Tvref) / Tvdiff
+            lT_nd(k) = -(lT(k) - Tref) / Tdiff
+            lWV_nd(k) = -(lWV(k) - WVref) / WVdiff
+            lTv_nd(k) = -(lTv(k) - Tvref) / Tvdiff
         end do
 
     end subroutine update_nondim_scalars
 
-    pure subroutine update_supersat(lTdim, lWVdim, lSS, lpres)
+    pure subroutine update_supersat(lT, lWV, lSS, lpres)
         ! Calculates the supersaturation fields based on the current values of
         ! temperature and water vapor fields
-        real(dp), intent(in) :: lTdim(:), lWVdim(:), lpres
+        real(dp), intent(in) :: lT(:), lWV(:), lpres
         real(dp), intent(out) :: lSS(:)
 
         integer(i4) :: k
 
         do concurrent (k = 1:N)
-            lSS(k) = calc_supersat(lTdim(k), lWVdim(k), lpres)
+            lSS(k) = calc_supersat(lT(k), lWV(k), lpres)
         end do
 
     end subroutine update_supersat

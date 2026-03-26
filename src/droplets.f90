@@ -111,7 +111,7 @@ contains
 
         call injection_controller(time, particles)
         call move_particles_by_gravity(particles, ldt)
-        call update_all_particles(particles, Tdim, WVdim, Tvdim, SS)
+        call update_all_particles(particles, T, WV, Tv, SS)
         call droplet_growth_model(particles, ltime, ldt)
 
     end subroutine update_droplets
@@ -143,7 +143,7 @@ contains
             ! Determine number of particles to inject
             inject_n = int(time_since_last_injection / injection_dt)
             do i = 1, inject_n
-                call inject_particle(lparticles, Tdim, WVdim, Tvdim, SS, aerosols(1))
+                call inject_particle(lparticles, T, WV, Tv, SS, aerosols(1))
                 n_injected = n_injected + 1
             end do
 
@@ -614,7 +614,7 @@ contains
             call update_particle(lparticles(i))
             call single_droplet_growth(lparticles(i), ltime, ldt)
             !call lparticles(i)%verify_radius()
-            call update_scalar_fields_DGM(lparticles(i), Tdim, WVdim, Tvdim, SS)
+            call update_scalar_fields_DGM(lparticles(i), T, WV, Tv, SS)
         end do
 
     end subroutine droplet_growth_model
@@ -692,11 +692,11 @@ contains
     end subroutine single_droplet_growth
 
 
-    subroutine update_scalar_fields_DGM(droplet, lTdim, lWVdim, lTvdim, lSS)
+    subroutine update_scalar_fields_DGM(droplet, lT, lWV, lTv, lSS)
         ! Once droplet growth model is complete/solved, scalar fields need to be updated
         ! to values determine from DGM
         type(particle), intent(in) :: droplet
-        real(dp), intent(inout) :: lTdim(:), lWVdim(:), lTvdim(:), lSS(:)
+        real(dp), intent(inout) :: lT(:), lWV(:), lTv(:), lSS(:)
 
         integer(i4) :: idx
 
@@ -704,10 +704,10 @@ contains
         idx = droplet%gridcell
 
         ! Update scalar fields for the gridcell
-        lTdim(idx) = droplet%temperature
-        lWVdim(idx) = droplet%water_vapor
+        lT(idx) = droplet%temperature
+        lWV(idx) = droplet%water_vapor
         lSS(idx) = droplet%supersaturation
-        lTvdim(idx) = droplet%virt_temp
+        lTv(idx) = droplet%virt_temp
 
     end subroutine update_scalar_fields_DGM
 
@@ -742,7 +742,7 @@ contains
         integer :: idx
 
         idx = lparticle%gridcell
-        call lparticle%update_scalars(Tdim(idx), WVdim(idx), Tvdim(idx), SS(idx))
+        call lparticle%update_scalars(T(idx), WV(idx), Tv(idx), SS(idx))
         call lparticle%verify_activation
 
     end subroutine update_particle
@@ -841,7 +841,7 @@ contains
         ! Initialize particles in each gridpoint (approximately)
         if ( init_drop_each_gridpoint ) then
             do i = 1, N
-                call inject_particle(particles, Tdim, WVdim, Tvdim, SS, aerosols(1))
+                call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
             end do
         end if
 

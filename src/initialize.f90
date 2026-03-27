@@ -106,7 +106,7 @@ contains
         Ttop = Tref - Tdiff
         Lmax = int(N / 3)
         time = 0.
-        last_time = 0.
+        last_time_updated = 0.
 
         ! Initialize ODT time conversion and non-dim dt
         call initialize_ODT(H)

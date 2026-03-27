@@ -1,12 +1,13 @@
 program main
-  use write_particle, only: write_trajectory_controller
+  use write_particle, only: write_particle_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
   use writeout, only: write_data, write_eddy
   use microphysics
   use ODT
-  use droplets!, only: aerosols, particles, move_particles_in_eddy, move_particles_by_gravity, &
-               !       total_n_fellout, current_n_particles, droplet_growth_model, update_particle_properties, injection_controller
+  use droplets, only: particles, move_particles_in_eddy, update_droplets, &
+                      total_n_fellout, current_n_particles, n_injected, write_trajectories, &
+                      trajectory_start, trajectory_end, trajectory_timer
   use special_effects, only: run_special_effects
   implicit none
 
@@ -57,7 +58,8 @@ program main
     Nt = Nt + 1
     time = time + dt
     write_time_iter = write_time_iter + dt
-    delta_time = time - last_time
+    if (do_microphysics .and. write_trajectories) trajectory_time_iter = trajectory_time_iter + dt
+    delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------
     ! Diffusion event
@@ -77,7 +79,7 @@ program main
         call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
       end if
 
-      last_time = time
+      last_time_updated = time
     end if
 
     ! ---------------------------------------------------------
@@ -105,7 +107,7 @@ program main
           call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
         end if
 
-        last_time = time
+        last_time_updated = time
       end if
     end if
     ! ---------------------------------------------------------
@@ -113,7 +115,14 @@ program main
     ! Write to netCDF buffer
     if ( write_time_iter >= write_timer ) call write_data()
 
-    if ( do_microphysics .and. write_trajectories ) call write_trajectory_controller(particles, time, dt)
+    if ( do_microphysics .and. write_trajectories ) then
+      if ( trajectory_start <= time .and. time < trajectory_end ) then
+        if ( trajectory_time_iter >= trajectory_timer ) then
+          call write_particle_data(particles, time)
+          trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)
+        end if
+      end if
+    end if
 
 
   end do

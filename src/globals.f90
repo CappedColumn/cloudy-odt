@@ -160,7 +160,7 @@ module globals
 
     real(dp) :: tmax = 30            ! Maximum simulation time (seconds)
     real(dp) :: time    ! Dimensional time
-    real(dp) :: last_time       ! Time lagging by dt (dimensional)
+    real(dp) :: last_time_updated  ! Time of last physics update (diffusion/eddy event)
     real(dp) :: dt                 ! Dimensional time step
     real(dp) :: delta_time         ! Dimensional time since last diffusion
     real(dp) :: diffusion_step     ! Diffusive time step (dimensional, seconds)
@@ -218,8 +218,9 @@ module globals
 
     integer :: ncid, ncid_particles
     ! writout iterators
-    real(dp) :: write_time_iter = 0. ! iterator for write out
+    real(dp) :: write_time_iter = 0.       ! accumulator for profile write interval
     real(dp) :: write_timer
+    real(dp) :: trajectory_time_iter = 0.  ! accumulator for trajectory write interval
 
 
 contains

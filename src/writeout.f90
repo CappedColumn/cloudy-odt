@@ -15,6 +15,9 @@ module writeout
     real(dp), allocatable :: buffer_SS(:,:), buffer_time(:), buffer_stats(:,:)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
+    ! Write timer accumulator (moved from globals — accumulated inside write_profiles)
+    real(dp) :: write_time_iter = 0.
+
     ! Eddy output file unit (unformatted stream binary)
     integer(i4) :: eddy_unit
 
@@ -23,21 +26,27 @@ module writeout
     integer(i4) :: nc_write_buffer
 
     !private :: nc_verify
-    public  :: create_netcdf, initialize_buffers, add_to_profile_buffer, write_netcdf_profiles, flush_buffer, close_netcdf
+    public  :: create_netcdf, initialize_buffers, add_to_profile_buffer, write_netcdf_profiles, flush_buffer, close_netcdf, &
+               write_profiles
     
 contains
 
-    subroutine write_data()
+    subroutine write_profiles(ldt)
+        ! Accumulates the write timer and writes profile data when the interval is reached.
+        real(dp), intent(in) :: ldt
 
-        write(*,*) 'Writing time: ', time
-        call calculate_droplet_statistics(particles, statistics)
-        call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
-        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
-        ! Reset write timer, note "extra" time from eddy method is
-        ! considered to prevent time compounding
-        write_time_iter = mod(write_time_iter, write_timer)
+        write_time_iter = write_time_iter + ldt
+        if (write_time_iter >= write_timer) then
+            write(*,*) 'Writing time: ', time
+            if (do_microphysics) then
+                call calculate_droplet_statistics(particles, statistics)
+                call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
+            end if
+            call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+            write_time_iter = mod(write_time_iter, write_timer)
+        end if
 
-    end subroutine write_data
+    end subroutine write_profiles
 
     subroutine initialize_buffers(buff_len, N_grid)
         ! Initializes buffer size and arrays for writing to netCDF
@@ -144,8 +153,8 @@ contains
     end subroutine flush_buffer
 
 
-    subroutine create_netcdf(file_name, z_m, lncid, simulation_name, lwrite_buffer)
-        character(*), intent(in):: file_name, simulation_name
+    subroutine create_netcdf(file_name, z_m, lncid, sim_name, lwrite_buffer)
+        character(*), intent(in):: file_name, sim_name
         real(dp), intent(in) :: z_m(:) !, scalar_vars(:) ! Establish z-dimension
         integer, intent(out) :: lncid
         integer(i4), intent(in) :: lwrite_buffer
@@ -164,7 +173,7 @@ contains
         nc_write_iter = 1
 
         ! Store namelist metadata for writing as global attributes at close time
-        nc_simulation_name = simulation_name
+        nc_simulation_name = sim_name
         nc_write_buffer = lwrite_buffer
         
         ! This subroutine creates/overwrites a netcdf file, defines all
@@ -348,17 +357,17 @@ contains
 
     
 
-    subroutine write_namelist_attributes(lncid, simulation_name, lwrite_buffer)
+    subroutine write_namelist_attributes(lncid, sim_name, lwrite_buffer)
         ! Writes all namelist parameters as global attributes to the netCDF file.
         ! Re-enters define mode, writes attributes, then exits define mode.
         integer, intent(in) :: lncid
-        character(*), intent(in) :: simulation_name
+        character(*), intent(in) :: sim_name
         integer(i4), intent(in) :: lwrite_buffer
 
         call nc_verify( nf90_redef(lncid), "nf90_redef: namelist attributes" )
 
         ! PARAMETERS namelist (19 attributes)
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(simulation_name)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(sim_name)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.N", N) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lmin", Lmin) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lprob", Lprob) )

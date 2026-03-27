@@ -218,9 +218,7 @@ module globals
 
     integer :: ncid, ncid_particles
     ! writout iterators
-    real(dp) :: write_time_iter = 0.       ! accumulator for profile write interval
     real(dp) :: write_timer
-    real(dp) :: trajectory_time_iter = 0.  ! accumulator for trajectory write interval
 
 
 contains

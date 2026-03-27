@@ -1,13 +1,12 @@
 program main
-  use write_particle, only: write_particle_data
+  use write_particle, only: write_trajectory_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_data, write_eddy
+  use writeout, only: write_profiles, write_eddy
   use microphysics
   use ODT
   use droplets, only: particles, move_particles_in_eddy, update_droplets, &
-                      total_n_fellout, current_n_particles, n_injected, write_trajectories, &
-                      trajectory_start, trajectory_end, trajectory_timer
+                      total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
   implicit none
 
@@ -57,9 +56,13 @@ program main
     ! Update iterators and timing
     Nt = Nt + 1
     time = time + dt
-    write_time_iter = write_time_iter + dt
-    if (do_microphysics .and. write_trajectories) trajectory_time_iter = trajectory_time_iter + dt
     delta_time = time - last_time_updated
+
+    ! ---------------------------------------------------------
+    ! Output (before physics — dt not yet adjusted by eddy method)
+    ! ---------------------------------------------------------
+    call write_profiles(dt)
+    if ( do_microphysics .and. write_trajectories ) call write_trajectory_data(particles, time, dt)
 
     ! ---------------------------------------------------------
     ! Diffusion event
@@ -83,7 +86,7 @@ program main
     end if
 
     ! ---------------------------------------------------------
-    ! ODT eddy event
+    ! ODT eddy event (may adjust dt for next iteration)
     ! ---------------------------------------------------------
     if ( do_turbulence ) then
       call eddy_acceptance_method(dt, eddy_location, eddy_length, eddy_accepted)
@@ -108,19 +111,6 @@ program main
         end if
 
         last_time_updated = time
-      end if
-    end if
-    ! ---------------------------------------------------------
-
-    ! Write to netCDF buffer
-    if ( write_time_iter >= write_timer ) call write_data()
-
-    if ( do_microphysics .and. write_trajectories ) then
-      if ( trajectory_start <= time .and. time < trajectory_end ) then
-        if ( trajectory_time_iter >= trajectory_timer ) then
-          call write_particle_data(particles, time)
-          trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)
-        end if
       end if
     end if
 

@@ -198,9 +198,6 @@ contains
         ! Create main netCDF output file
         call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
 
-        ! Writeout parameters
-        write_time_iter = 0.
-
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_file(file_prefix)

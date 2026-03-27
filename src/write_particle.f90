@@ -1,9 +1,13 @@
 module write_particle
     use netcdf
-    use droplets, only: particle, particles, current_n_particles
+    use droplets, only: particle, particles, current_n_particles, &
+                        trajectory_start, trajectory_end, trajectory_timer
     use globals
     use writeout, only: nc_verify
     implicit none
+
+    ! Trajectory write timer accumulator
+    real(dp) :: trajectory_time_iter = 0.
 
     ! NetCDF particle output state
     integer :: pnc_id
@@ -18,6 +22,20 @@ module write_particle
     integer, parameter :: sync_interval = 10
 
 contains
+
+    subroutine write_trajectory_data(lparticles, ltime, ldt)
+        ! Accumulates the trajectory timer and writes particle data when the interval is reached.
+        type(particle), intent(in) :: lparticles(:)
+        real(dp), intent(in) :: ltime, ldt
+
+        trajectory_time_iter = trajectory_time_iter + ldt
+        if (trajectory_start <= ltime .and. ltime < trajectory_end) then
+            if (trajectory_time_iter >= trajectory_timer) then
+                call write_particle_data(lparticles, ltime)
+                trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)
+            end if
+        end if
+    end subroutine write_trajectory_data
 
     subroutine initialize_write_particle(filename)
 

@@ -15,9 +15,6 @@ module writeout
     real(dp), allocatable :: buffer_SS(:,:), buffer_time(:), buffer_stats(:,:)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
-    ! Write timer accumulator (moved from globals — accumulated inside write_profiles)
-    real(dp) :: write_time_iter = 0.
-
     ! Eddy output file unit (unformatted stream binary)
     integer(i4) :: eddy_unit
 
@@ -25,15 +22,17 @@ module writeout
     character(100) :: nc_simulation_name
     integer(i4) :: nc_write_buffer
 
-    !private :: nc_verify
-    public  :: create_netcdf, initialize_buffers, add_to_profile_buffer, write_netcdf_profiles, flush_buffer, close_netcdf, &
-               write_profiles
+    public  :: create_netcdf, initialize_buffers, initialize_particle_buffers, &
+               add_to_profile_buffer, flush_buffer, close_netcdf, &
+               write_profiles, write_eddy, initialize_eddy_file
+    private :: write_netcdf_profiles
     
 contains
 
     subroutine write_profiles(ldt)
         ! Accumulates the write timer and writes profile data when the interval is reached.
         real(dp), intent(in) :: ldt
+        real(dp), save :: write_time_iter = 0.
 
         write_time_iter = write_time_iter + ldt
         if (write_time_iter >= write_timer) then

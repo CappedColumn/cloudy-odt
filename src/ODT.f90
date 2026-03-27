@@ -2,20 +2,25 @@ module ODT
     use globals
     implicit none
 
-    public
-
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
     ! of the model. This includes calculating the eddy probabilities, sizes, location, and
     ! the eddy rejection/acceptance method (the entire loop)
 
-    ! Non-dimensional time variables — internal to ODT
-    real(dp), private :: dt_nd             ! Non-dimensional time step
-    real(dp), private :: time_conv_nd      ! Conversion factor: dimensional -> non-dim time (nu/H^2)
+    private
+    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method, triplet_map
 
-    ! Eddy acceptance/rejection counters — internal to ODT
-    integer(i4), private :: Np = 0       ! Number of eddy probs. calculated
-    integer(i4) :: Na = 0                ! Number of accepted eddies
-    real(dp), private :: Pa = 0.         ! Total acceptance probabilities
+    ! Non-dimensional time variables
+    real(dp) :: dt_nd             ! Non-dimensional time step
+    real(dp) :: time_conv_nd      ! Conversion factor: dimensional -> non-dim time (nu/H^2)
+
+    ! Eddy acceptance/rejection counters
+    integer(i4) :: Np = 0       ! Number of eddy probs. calculated
+    integer(i4) :: Na = 0       ! Number of accepted eddies
+    real(dp) :: Pa = 0.         ! Total acceptance probabilities
+
+    ! Integrated eddy values (set in eddy_acceptance_prob, used in implement_eddy)
+    real(dp) :: wK, TvK
+    real(dp) :: pot_energy       ! Potential energy
 
 contains
 
@@ -68,8 +73,6 @@ contains
 
         integer :: L
         real(dp) :: lC, lz
-        ! Co = dexp(-LpD/(1.d0*Lmin))
-        ! Cm = dexp(-LpD/(1.d0*Lmax))
         lC = 0.d0
         do L = Lmin, Lmax
             lz = dexp(-LpD/(1.d0*L))*(dexp(LpD/(L*(L+1.d0)))-1.d0)
@@ -229,6 +232,7 @@ contains
         integer(i4), intent(out) :: M, L
         logical, intent(out) :: eddy_flag
         real(dp) :: rand_num(3)
+        real(dp) :: accept_prob
 
         ! Sync non-dim dt from dimensional input
         dt_nd = ldt * time_conv_nd

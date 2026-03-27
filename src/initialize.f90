@@ -13,8 +13,9 @@ module initialize
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
     
-    private :: allocate_zero_arrays, initialize_velocity_arrays, initialize_params
-    public :: initialize_simulation
+    private :: allocate_zero_arrays, allocate_nondim_array, initialize_linear_array, &
+               initialize_velocity_arrays, initialize_params
+    public :: initialize_simulation, close_simulation
     
 contains
 

@@ -184,10 +184,6 @@ module globals
 
     ! Eddy acceptance/rejection related
     real(dp), allocatable :: prob_eddy_length(:)      ! Probability of eddy sizes
-    real(dp) :: accept_prob                 ! Eddy Acceptance Prob. for eddy w/ (L, M)
-    real(dp) :: pot_energy                  ! Potential Energy
-    real(dp) :: tot_accept_prob             ! Tracker of the aggregate acceptance probabilities
-    integer(i4) :: num_accept_prob          ! Tracker of the number of probabilities calculated
     
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -208,15 +204,12 @@ module globals
     ! Statistics
     real(dp) :: statistics(5) ! N, Na, Nu, r_bar, LWC
 
-    ! Integrated Eddy Values
-    real(dp) :: wK, TvK
-
     ! -----------------------------------------------
     ! -----------------------------------------------
 
     ! Read/Write Arrays
 
-    integer :: ncid, ncid_particles
+    integer :: ncid
     ! writout iterators
     real(dp) :: write_timer
 

@@ -33,13 +33,45 @@ Test programs are standalone executables in `test/` — they exercise library
 routines (path resolution, file copying, aerosol NetCDF reader) but do **not**
 run full simulations.
 
+## Reference Test (Reftest)
+
+The best way to verify that a change doesn't break anything is to run a
+full simulation and compare output bitwise against reference files. This
+catches numerical regressions that unit tests miss.
+
+The reftest input and reference output files live outside the repo (not
+checked in). Ask the user where their reftest input and output directories
+are located before running.
+
+**Run:**
+```bash
+source fpm_env && fpm run -- <reftest_input_dir>/params.nml
+```
+
+**Compare:**
+```bash
+python3 scripts/compare_reftest.py <reftest_output_dir>
+```
+
+If all variables print `identical`, the change is safe. If any variable
+shows `DIFFERS`, investigate before committing. The reftest uses
+`same_random = .true.` so output is deterministic.
+
+When a change intentionally alters output (e.g., reordering writes,
+changing physics), promote the new output to reference:
+```bash
+cd <reftest_output_dir>
+cp reftest.nc reftest_REF.nc
+cp reftest_particles.nc reftest_particles_REF.nc
+```
+
 ## Architecture
 
-**Dual representation of fields:** Scalar fields exist in both non-dimensional (for ODT numerics) and dimensional (for physics) forms. Arrays `T`, `WV`, `Tv`, `W` are non-dimensional; `Tdim`, `WVdim`, `Tvdim`, `Wdim` are dimensional. Always update both after modifying either (see `update_dim_scalars` in `microphysics.f90`).
+**Dual representation of fields:** Scalar fields exist in both non-dimensional (for ODT numerics) and dimensional (for physics) forms. Non-dimensional arrays (`T_nd`, `WV_nd`, `Tv_nd`, `W_nd`) are used by ODT numerics; dimensional arrays (`T`, `WV`, `Tv`, `SS`) are used by physics. Always call `update_dim_scalars` after modifying non-dim fields, and `update_nondim_scalars` after physics modifies dim fields (both in `microphysics.f90`).
 
-**Time loop structure** (`app/main.f90`): Each iteration advances `time_nd` by `dt_nd`. Two event types trigger physics:
-1. **Diffusion step** — fires when `delta_time_nd >= diffusion_step`. Runs Crank-Nicolson tridiagonal diffusion on all scalar fields, then updates particles.
-2. **Eddy step** — Monte-Carlo accept/reject of a triplet-map eddy. On acceptance: diffusion + triplet map + particle rearrangement.
+**Time loop structure** (`app/main.f90`): Each iteration advances dimensional `time` by `dt`. Output is written first (before physics), then two event types trigger physics:
+1. **Diffusion step** — fires when `delta_time >= diffusion_step`. Runs Crank-Nicolson tridiagonal diffusion on all scalar fields, then updates particles.
+2. **Eddy step** — Monte-Carlo accept/reject of a triplet-map eddy. On acceptance: diffusion + triplet map + particle rearrangement. The `eddy_acceptance_method` converts `dt` to non-dimensional internally and may adjust it (returned in-place).
 
 Both paths call `update_droplets()` when microphysics is enabled.
 
@@ -47,9 +79,9 @@ Both paths call `update_droplets()` when microphysics is enabled.
 
 **Droplet Growth Model** (`src/DGM.f90`): Cash-Karp RK45 adaptive ODE integrator (Numerical Recipes heritage). The state vector `ystart(1:8)` carries: radius, qv, temperature, supersaturation, pressure, vertical velocity, height, liquid water. `set_aerosol_properties()` must be called before `integrate_ODE()` to configure solute type (`dmaxa`: 1=NaCl, 2=(NH4)2SO4, 3=ammonium bisulfate).
 
-**Module dependency chain:** `globals` → `microphysics` → `ODT` → `droplets` → `DGM`. Most state lives in `globals` as module-level variables. `special_effects` is optional and controlled by namelist flags.
+**Module dependency chain:** `globals` → `microphysics` → `ODT` → `droplets` → `DGM`. Shared state lives in `globals`; ODT-internal state (time conversion, eddy counters, integrated eddy values) is private to `ODT`. I/O timer accumulators live in their respective modules (`writeout`, `write_particle`). `special_effects` is optional and controlled by namelist flags.
 
-**Output:** Buffered NetCDF writes (`src/writeout.f90`) for profiles and droplet size distributions. Optional particle trajectory output (`src/write_particle.f90`) controlled by `write_trajectories` namelist flag.
+**Output:** Buffered NetCDF writes (`src/writeout.f90`) for profiles and droplet size distributions. Optional particle trajectory output (`src/write_particle.f90`) controlled by `write_trajectories` namelist flag. Timer accumulation and write logic are encapsulated inside `write_profiles()` and `write_trajectory_data()` respectively.
 
 ## Fortran Conventions
 

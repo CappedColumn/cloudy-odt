@@ -29,12 +29,23 @@ module ODT
 contains
 
     subroutine initialize_ODT(H_domain)
-        ! Initialize ODT module: set time conversion factor and initial dt_nd.
-        ! Must be called after namelist read, before time loop.
+        ! Initialize ODT module: set time conversion, timestep, and
+        ! eddy probability parameters. Must be called after namelist
+        ! read and thermodynamic boundary conditions are set.
         real(dp), intent(in) :: H_domain
 
         time_conv_nd = nu / (H_domain**2)
-        dt_nd = 1.0_dp / (1.0_dp * N * N)
+        dt_nd = 1.0 / (1.0 * N * N)
+
+        diffusion_step = H_domain**2 / (nu * 1.0 * N * N)
+        dt = diffusion_step
+
+        buoy_nd = (8. * g * alpha * Tvdiff * C2 * H_domain**3) / (27. * nu * nu)
+        LpD = 2 * Lprob
+        Co = exp(-LpD / (1.*Lmin))
+        Cm = exp(-LpD / (1.*Lmax))
+        prob_coeff = (exp(-LpD/(1.*Lmax)) - exp(-LpD/(1.*Lmin))) * (N/(3.*LpD))
+
     end subroutine initialize_ODT
 
     subroutine diffusion(ldelta_time)

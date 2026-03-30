@@ -137,14 +137,6 @@ contains
 
         if (simulation_mode == 'chamber') then
             call initialize_ODT(H)
-            diffusion_step = H**2 / (nu * 1.0_dp * N * N)
-            dt = diffusion_step
-
-            buoy_nd = (8. * g * alpha * Tvdiff * C2 * H * H * H)/(27. * nu * nu)
-            LpD = 2 * Lprob
-            Co = exp(-LpD/(1.*Lmin))
-            Cm = exp(-LpD/(1.*Lmax))
-            prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
         else if (simulation_mode == 'parcel') then
             call initialize_LEM(H)
         end if
@@ -163,25 +155,34 @@ contains
         ! Allocate scalar/vector fields
         write(*,*) 'Allocating arrays...'
         call allocate_zero_arrays(z, N)
-        call allocate_nondim_array(W_nd, N)
-        call allocate_nondim_array(T_nd, N)
-        call allocate_nondim_array(WV_nd, N)
-        call allocate_nondim_array(Tv_nd, N)
         call allocate_zero_arrays(T, N)
         call allocate_zero_arrays(WV, N)
         call allocate_zero_arrays(Tv, N)
         call allocate_zero_arrays(SS, N)
-        call allocate_zero_arrays(prob_eddy_length, N)
-
-        call initialize_linear_array(z)
-        call initialize_velocity_arrays(W_nd)
-        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-        call update_supersat(T, WV, SS, pres)
 
         ! Initialize positional array
         do k = 1, N
-            z(k) = H*k/N ! Grid cell position in meters
+            z(k) = H*k/N
         end do
+
+        if (simulation_mode == 'chamber') then
+            call allocate_nondim_array(W_nd, N)
+            call allocate_nondim_array(T_nd, N)
+            call allocate_nondim_array(WV_nd, N)
+            call allocate_nondim_array(Tv_nd, N)
+            call allocate_zero_arrays(prob_eddy_length, N)
+            call initialize_velocity_arrays(W_nd)
+            ! Nondim arrays initialized with linear profile; convert to dimensional
+            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        else if (simulation_mode == 'parcel') then
+            ! Uniform fields: saturated at Tref
+            T(:) = Tref
+            WV(:) = WVref
+            do k = 1, N
+                Tv(k) = virtual_temp(T(k), WV(k))
+            end do
+        end if
+        call update_supersat(T, WV, SS, pres)
 
         ! Build output paths:
         !   sim_output_dir = "{output_directory}/{simulation_name}/"

@@ -4,6 +4,7 @@ module initialize
     use microphysics
     use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT, &
                    odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
                 initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
@@ -32,6 +33,13 @@ contains
             turbulence_step    => odt_turbulence_step
             sync_after_physics => odt_sync_after_physics
             if ( do_turbulence ) call calc_eddy_length_cdf(prob_eddy_length)
+        else if (simulation_mode == 'parcel') then
+            diffuse_step       => lem_diffuse_step
+            turbulence_step    => lem_turbulence_step
+            sync_after_physics => lem_sync_after_physics
+        else
+            write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
+            stop 1
         end if
 
         if ( do_microphysics ) then
@@ -81,7 +89,8 @@ contains
         namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
         max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite
+        overwrite, simulation_mode, &
+        integral_length_scale, kolmogorov_length_scale, dissipation_rate
 
         ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'
@@ -114,6 +123,7 @@ contains
         time = 0.
         last_time_updated = 0.
 
+        dz_length = H/N
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N
 
@@ -135,6 +145,8 @@ contains
             Co = exp(-LpD/(1.*Lmin))
             Cm = exp(-LpD/(1.*Lmax))
             prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
+        else if (simulation_mode == 'parcel') then
+            call initialize_LEM(H)
         end if
 
         ! initialize randomness in the model
@@ -207,9 +219,6 @@ contains
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
-        
-        ! Length of a gridcell
-        dz_length = H/N
 
     end subroutine initialize_params
 

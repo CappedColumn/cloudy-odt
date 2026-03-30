@@ -1,5 +1,8 @@
 module ODT
     use globals
+    use microphysics, only: update_dim_scalars, update_nondim_scalars, update_supersat
+    use droplets, only: particles, move_particles_in_eddy
+    use writeout, only: write_eddy
     implicit none
 
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
@@ -7,7 +10,8 @@ module ODT
     ! the eddy rejection/acceptance method (the entire loop)
 
     private
-    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method, triplet_map
+    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method
+    public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
 
     ! Non-dimensional time variables
     real(dp) :: dt_nd             ! Non-dimensional time step
@@ -322,43 +326,6 @@ contains
     end subroutine implement_eddy
 
 
-    subroutine triplet_map(L, M, psi)
-        ! L - length of eddy (full length)
-        ! M - Location of Eddy
-        ! psi - scalar/vector array
-        integer(i4), intent(in) :: L, M
-        real(dp), intent(inout) :: psi(:)
-        real(dp), allocatable :: x(:)
-        integer(i4) :: j, k, Lseg
-
-        allocate(x(size(psi)))
-
-        ! These do loops implement the triplet map
-        ! and change the values of the array psi
-        Lseg = L/3 ! 1/3 of selected eddy
-        do j = 1, Lseg
-            k = M + 3 * (j-1)
-            x(j) = psi(k)
-        end do
-
-        do j = 1, Lseg
-            k = M + L + 1 - (3*j)
-            x(j+Lseg) = psi(k)
-        end do
-
-        do j = 1, Lseg
-            k = M + (3*j) - 1
-            x(j+Lseg+Lseg) = psi(k)
-        end do
-
-        do j = 1, L
-            k = M + j - 1
-            psi(k) = x(j)
-        end do
-
-    end subroutine triplet_map
-
-
     subroutine addK(L, M, ui, cui)
         ! Kernel adjustment for energy conservation
         integer(i4), intent(in) :: L, M
@@ -434,6 +401,57 @@ contains
         end do
 
     end subroutine tridiagonal
+
+
+    ! -----------------------------------------------
+    ! Controller subroutines matching abstract interfaces
+    ! in globals.f90 — called via procedure pointers
+    ! -----------------------------------------------
+
+    subroutine odt_diffuse_step(ldelta_time, fields_updated)
+        real(dp), intent(in) :: ldelta_time
+        logical, intent(out) :: fields_updated
+
+        if (ldelta_time < diffusion_step) then
+            fields_updated = .false.
+            return
+        end if
+
+        Nd = Nd + 1
+        call diffusion(ldelta_time)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        call update_supersat(T, WV, SS, pres)
+        fields_updated = .true.
+
+    end subroutine odt_diffuse_step
+
+
+    subroutine odt_turbulence_step(ldt, ltime, ldelta_time, &
+                                   leddy_accepted, eddy_loc, eddy_len)
+        real(dp), intent(inout) :: ldt
+        real(dp), intent(in) :: ltime, ldelta_time
+        logical, intent(out) :: leddy_accepted
+        integer(i4), intent(out) :: eddy_loc, eddy_len
+
+        call eddy_acceptance_method(ldt, eddy_loc, eddy_len, leddy_accepted)
+
+        if (.not. leddy_accepted) return
+
+        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
+
+        call diffusion(ldelta_time)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        call update_supersat(T, WV, SS, pres)
+
+        if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
+
+    end subroutine odt_turbulence_step
+
+
+    subroutine odt_sync_after_physics()
+        call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
+    end subroutine odt_sync_after_physics
+
 
 end module ODT
 

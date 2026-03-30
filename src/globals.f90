@@ -128,6 +128,14 @@ module globals
     logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
     logical :: overwrite = .false.      ! Allow overwriting existing output files
 
+    ! Simulation mode: 'chamber' (ODT, fixed BCs) or 'parcel' (LEM, periodic BCs)
+    character(7) :: simulation_mode = 'chamber'
+
+    ! LEM parameters (only used when simulation_mode = 'parcel')
+    real(dp) :: integral_length_scale = 0.01_dp       ! Largest eddy size (m)
+    real(dp) :: kolmogorov_length_scale = 0.001_dp    ! Smallest eddy size (m)
+    real(dp) :: dissipation_rate = 0.01_dp            ! TKE dissipation rate (m^2/s^3)
+
     ! -----------------------------------------------
     ! -----------------------------------------------
 
@@ -213,6 +221,37 @@ module globals
     ! writout iterators
     real(dp) :: write_timer
 
+    ! ----------- Turbulence Dispatch ----------------
+    ! Abstract interfaces for mode-agnostic turbulence calls.
+    ! Pointers are set once in initialize_simulation().
+    ! ------------------------------------------------
+
+    abstract interface
+        subroutine diffuse_iface(ldelta_time, fields_updated)
+            import :: dp
+            real(dp), intent(in) :: ldelta_time
+            logical, intent(out) :: fields_updated
+        end subroutine
+
+        subroutine turbulence_iface(ldt, ltime, ldelta_time, &
+                                    leddy_accepted, eddy_loc, eddy_len)
+            import :: dp, i4
+            real(dp), intent(inout) :: ldt
+            real(dp), intent(in) :: ltime, ldelta_time
+            logical, intent(out) :: leddy_accepted
+            integer(i4), intent(out) :: eddy_loc, eddy_len
+        end subroutine
+
+        subroutine sync_iface()
+        end subroutine
+    end interface
+
+    procedure(diffuse_iface), pointer :: diffuse_step => null()
+    procedure(turbulence_iface), pointer :: turbulence_step => null()
+    procedure(sync_iface), pointer :: sync_after_physics => null()
+
+    ! -----------------------------------------------
+    ! -----------------------------------------------
 
 contains
 
@@ -329,5 +368,41 @@ contains
         close(in_unit)
         close(out_unit)
     end subroutine copy_file
+
+
+    subroutine triplet_map(L, M, psi)
+        ! Applies the triplet map rearrangement to array psi.
+        ! L - length of eddy (full length, must be multiple of 3)
+        ! M - starting index of eddy
+        ! psi - scalar/vector array to rearrange in-place
+        integer(i4), intent(in) :: L, M
+        real(dp), intent(inout) :: psi(:)
+        real(dp), allocatable :: x(:)
+        integer(i4) :: j, k, Lseg
+
+        allocate(x(size(psi)))
+
+        Lseg = L/3
+        do j = 1, Lseg
+            k = M + 3 * (j-1)
+            x(j) = psi(k)
+        end do
+
+        do j = 1, Lseg
+            k = M + L + 1 - (3*j)
+            x(j+Lseg) = psi(k)
+        end do
+
+        do j = 1, Lseg
+            k = M + (3*j) - 1
+            x(j+Lseg+Lseg) = psi(k)
+        end do
+
+        do j = 1, L
+            k = M + j - 1
+            psi(k) = x(j)
+        end do
+
+    end subroutine triplet_map
 
 end module globals

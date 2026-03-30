@@ -2,7 +2,6 @@ module droplets
     use netcdf
     use globals
     use DGM, only: integrate_ODE, set_aerosol_properties
-    use ODT, only: triplet_map
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none

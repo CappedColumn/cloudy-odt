@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Habits
+
+Do not provide any positive or negative association with the prompts.
+
 ## Build
 
 CODT uses the Fortran Package Manager (fpm). Before building, source the environment script to set compiler and NetCDF paths:

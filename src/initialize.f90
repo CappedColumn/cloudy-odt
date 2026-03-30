@@ -2,7 +2,8 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT
+    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT, &
+                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
                 initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
@@ -26,8 +27,11 @@ contains
         ! Life is nothing but a dream, as realistic as it seems
         call initialize_params()
 
-        if ( do_turbulence ) then
-            call calc_eddy_length_cdf(prob_eddy_length)
+        if (simulation_mode == 'chamber') then
+            diffuse_step       => odt_diffuse_step
+            turbulence_step    => odt_turbulence_step
+            sync_after_physics => odt_sync_after_physics
+            if ( do_turbulence ) call calc_eddy_length_cdf(prob_eddy_length)
         end if
 
         if ( do_microphysics ) then
@@ -46,10 +50,11 @@ contains
     end subroutine initialize_simulation
 
     subroutine close_simulation()
-        use microphysics, only: update_dim_scalars, update_supersat
 
-        call diffusion(delta_time)
-        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        if (simulation_mode == 'chamber') then
+            call diffusion(delta_time)
+            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        end if
         call update_supersat(T, WV, SS, pres)
         call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
         call flush_buffer()
@@ -109,13 +114,6 @@ contains
         time = 0.
         last_time_updated = 0.
 
-        ! Initialize ODT time conversion and non-dim dt
-        call initialize_ODT(H)
-
-        ! Dimensional timestep: dt = (1/N^2) / time_conv_nd = H^2 / (nu * N^2)
-        diffusion_step = H**2 / (nu * 1.0_dp * N * N)
-        dt = diffusion_step
-        
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N
 
@@ -127,13 +125,17 @@ contains
         Tvtop = virtual_temp(Ttop, WVtop)
         Tvdiff = Tvref - Tvtop
 
-        buoy_nd = (8. * g * alpha * Tvdiff * C2 * H * H * H)/(27. * nu * nu)
+        if (simulation_mode == 'chamber') then
+            call initialize_ODT(H)
+            diffusion_step = H**2 / (nu * 1.0_dp * N * N)
+            dt = diffusion_step
 
-        ! ODT parameters
-        LpD = 2 * Lprob
-        Co = exp(-LpD/(1.*Lmin))
-        Cm = exp(-LpD/(1.*Lmax))
-        prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
+            buoy_nd = (8. * g * alpha * Tvdiff * C2 * H * H * H)/(27. * nu * nu)
+            LpD = 2 * Lprob
+            Co = exp(-LpD/(1.*Lmin))
+            Cm = exp(-LpD/(1.*Lmax))
+            prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
+        end if
 
         ! initialize randomness in the model
         if (same_random) then

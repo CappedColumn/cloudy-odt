@@ -2,15 +2,14 @@ program main
   use write_particle, only: write_trajectory_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_profiles, write_eddy
-  use microphysics
-  use ODT
-  use droplets, only: particles, move_particles_in_eddy, update_droplets, &
+  use writeout, only: write_profiles
+  use droplets, only: particles, update_droplets, &
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
   implicit none
 
   real(dp) :: t_start, t_end
+  logical :: fields_updated
   integer :: done_unit
   character(8) :: date_str
   character(10) :: time_str
@@ -65,55 +64,28 @@ program main
     if ( do_microphysics .and. write_trajectories ) call write_trajectory_data(particles, time, dt)
 
     ! ---------------------------------------------------------
-    ! Diffusion event
+    ! Diffusion
     ! ---------------------------------------------------------
-    if (delta_time .ge. diffusion_step) then
-      Nd = Nd + 1
-
-      call diffusion(delta_time)
-      call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-      call update_supersat(T, WV, SS, pres)
-
+    call diffuse_step(delta_time, fields_updated)
+    if ( fields_updated ) then
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
-
-      ! Sync nondim fields after physics modified dim arrays
-      if ( do_microphysics .or. do_special_effects ) then
-        call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
-      end if
-
+      if ( do_microphysics .or. do_special_effects ) call sync_after_physics()
       last_time_updated = time
     end if
 
     ! ---------------------------------------------------------
-    ! ODT eddy event (may adjust dt for next iteration)
+    ! Turbulence
     ! ---------------------------------------------------------
-    if ( do_turbulence ) then
-      call eddy_acceptance_method(dt, eddy_location, eddy_length, eddy_accepted)
-
-      if ( eddy_accepted ) then
-        if ( write_eddies ) call write_eddy(eddy_location, eddy_length, time)
-
-        call diffusion(delta_time)
-        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-        call update_supersat(T, WV, SS, pres)
-
-        if ( do_microphysics ) then
-          call move_particles_in_eddy(particles, eddy_location, eddy_length)
-          call update_droplets(time, delta_time)
-        end if
-
-        if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
-
-        ! Sync nondim fields after physics modified dim arrays
-        if ( do_microphysics .or. do_special_effects ) then
-          call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
-        end if
-
-        last_time_updated = time
-      end if
+    eddy_accepted = .false.
+    if ( do_turbulence ) call turbulence_step(dt, time, delta_time, &
+                                              eddy_accepted, eddy_location, eddy_length)
+    if ( eddy_accepted ) then
+      if ( do_microphysics ) call update_droplets(time, delta_time)
+      if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
+      if ( do_microphysics .or. do_special_effects ) call sync_after_physics()
+      last_time_updated = time
     end if
-
 
   end do
 

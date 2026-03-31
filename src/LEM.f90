@@ -7,6 +7,7 @@ module LEM
 
     private
     public :: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
+    public :: triplet_map_periodic
 
     ! Derived LEM parameters (set in initialize_LEM)
     integer(i4) :: maps_per_event        ! Triplet maps per eddy event

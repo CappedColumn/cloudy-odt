@@ -71,19 +71,31 @@ cp reftest_particles.nc reftest_particles_REF.nc
 
 ## Architecture
 
-**Dual representation of fields:** Scalar fields exist in both non-dimensional (for ODT numerics) and dimensional (for physics) forms. Non-dimensional arrays (`T_nd`, `WV_nd`, `Tv_nd`, `W_nd`) are used by ODT numerics; dimensional arrays (`T`, `WV`, `Tv`, `SS`) are used by physics. Always call `update_dim_scalars` after modifying non-dim fields, and `update_nondim_scalars` after physics modifies dim fields (both in `microphysics.f90`).
+**Simulation modes:** CODT supports two modes selected by the `simulation_mode` namelist parameter:
+- `'chamber'` (default) — ODT turbulence with Dirichlet BCs, nondimensional scalars, adaptive dt. Models Rayleigh-Benard convection (Pi-Chamber).
+- `'parcel'` — LEM turbulence with periodic BCs, dimensional scalars, fixed dt. Models internal structure of a rising air parcel (EMPM-style).
 
-**Time loop structure** (`app/main.f90`): Each iteration advances dimensional `time` by `dt`. Output is written first (before physics), then two event types trigger physics:
-1. **Diffusion step** — fires when `delta_time >= diffusion_step`. Runs Crank-Nicolson tridiagonal diffusion on all scalar fields, then updates particles.
-2. **Eddy step** — Monte-Carlo accept/reject of a triplet-map eddy. On acceptance: diffusion + triplet map + particle rearrangement. The `eddy_acceptance_method` converts `dt` to non-dimensional internally and may adjust it (returned in-place).
+**Turbulence dispatch:** Abstract interfaces (`diffuse_iface`, `turbulence_iface`, `sync_iface`) are defined in `globals.f90`. Procedure pointers (`diffuse_step`, `turbulence_step`, `sync_after_physics`) are set once at initialization and called from `main.f90`. Each turbulence module (ODT, LEM) provides controller subroutines matching these interfaces.
 
-Both paths call `update_droplets()` when microphysics is enabled.
+**Dual representation of fields (chamber mode):** Scalar fields exist in both non-dimensional (for ODT numerics) and dimensional (for physics) forms. Non-dimensional arrays (`T_nd`, `WV_nd`, `Tv_nd`, `W_nd`) are used by ODT numerics; dimensional arrays (`T`, `WV`, `Tv`, `SS`) are used by physics. The ODT controllers call `update_dim_scalars` and `update_nondim_scalars` (from `microphysics.f90`) internally. In parcel mode, only dimensional arrays exist.
+
+**Time loop structure** (`app/main.f90`): Each iteration advances dimensional `time` by `dt`. Output is written first (before physics), then physics runs through the procedure pointers:
+1. **Diffusion** — `call diffuse_step(delta_time, fields_updated)`. Chamber: fires when `delta_time >= diffusion_step`, runs Crank-Nicolson on nondim fields. Parcel: fires every step, runs periodic Crank-Nicolson on dimensional fields.
+2. **Turbulence** — `call turbulence_step(dt, time, delta_time, ...)`. Chamber: Monte-Carlo eddy accept/reject, may adjust dt. Parcel: deterministic eddy frequency from -5/3 spectrum, fixed dt.
+
+Both paths call `update_droplets()` and `sync_after_physics()` when microphysics/special_effects are enabled.
+
+**ODT module** (`src/ODT.f90`): Eddy acceptance/rejection, nondim Crank-Nicolson diffusion (Dirichlet BCs), triplet map + addK velocity kernel for energy conservation. Controller subroutines handle dim/nondim sync internally.
+
+**LEM module** (`src/LEM.f90`): Periodic Crank-Nicolson diffusion (Sherman-Morrison for cyclic tridiagonal), -5/3 inertial-subrange eddy size sampling, periodic triplet map via mod indexing, periodic particle movement with position wrapping. Operates entirely in dimensional space.
 
 **Particle system** (`src/droplets.f90`): `aerosol` base type holds solute properties; `particle` extends it with position, radius, thermodynamic state. Particles are stored in an allocatable array and track their grid cell index. Aerosol injection data (size distribution, chemistry, injection schedule) is read from `input/aerosol_input.nc` (NetCDF, `CODT_aerosol_input_v1` schema); droplet size binning uses `input/bin_data.txt`.
 
 **Droplet Growth Model** (`src/DGM.f90`): Cash-Karp RK45 adaptive ODE integrator (Numerical Recipes heritage). The state vector `ystart(1:8)` carries: radius, qv, temperature, supersaturation, pressure, vertical velocity, height, liquid water. `set_aerosol_properties()` must be called before `integrate_ODE()` to configure solute type (`dmaxa`: 1=NaCl, 2=(NH4)2SO4, 3=ammonium bisulfate).
 
-**Module dependency chain:** `globals` → `microphysics` → `ODT` → `droplets` → `DGM`. Shared state lives in `globals`; ODT-internal state (time conversion, eddy counters, integrated eddy values) is private to `ODT`. I/O timer accumulators live in their respective modules (`writeout`, `write_particle`). `special_effects` is optional and controlled by namelist flags.
+**Shared utilities in `globals.f90`:** `triplet_map` (non-periodic, used by ODT and droplets), abstract interfaces, procedure pointers, physical constants, helper functions (`nc_verify`, `parent_directory`, `resolve_path`, `copy_file`, `bin_data`).
+
+**Module dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. `ODT` and `LEM` both use `globals`, `microphysics`, `droplets`, and `writeout`. `special_effects` is optional and controlled by namelist flags. `initialize` uses all modules for setup and pointer assignment.
 
 **Output:** Buffered NetCDF writes (`src/writeout.f90`) for profiles and droplet size distributions. Optional particle trajectory output (`src/write_particle.f90`) controlled by `write_trajectories` namelist flag. Timer accumulation and write logic are encapsulated inside `write_profiles()` and `write_trajectory_data()` respectively.
 
@@ -123,6 +135,7 @@ codt <NAMELIST_PATH>
    parent directory (not CWD)
 5. If no argument is provided, print a usage message to stderr and
    `stop 1`
+
 
 ### Path Resolution Example
 
@@ -195,6 +208,16 @@ Add an `eddy_io.py` module to the Python `codt_tools` package to read
 `_eddies.bin` files. Should return the header as a dict and eddy records
 as a structured numpy array using `numpy.frombuffer`. Integrate into
 `CODTSimulation` as a `load_eddies()` method.
+
+### ~~9. Add LEM turbulence module~~ Done
+
+LEM turbulence module (`src/LEM.f90`) with periodic Crank-Nicolson
+diffusion (Sherman-Morrison), -5/3 inertial-subrange eddy size sampling,
+periodic triplet map via mod indexing, and periodic particle movement.
+Selected via `simulation_mode = 'parcel'` namelist parameter. Turbulence
+dispatch uses abstract interfaces and procedure pointers in `globals.f90`.
+New namelist parameters: `simulation_mode`, `integral_length_scale`,
+`kolmogorov_length_scale`, `dissipation_rate`.
 
 ---
 

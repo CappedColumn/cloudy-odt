@@ -37,6 +37,7 @@ program main
   ! Log simulation configuration
   write(*,*) '--- Simulation Configuration ---'
   write(*,*) 'Namelist: ', trim(namelist_path)
+  write(*,*) 'simulation_mode: ', trim(simulation_mode)
   write(*,*) 'N: ', N
   write(*,*) 'tmax (s): ', tmax
   write(*,*) 'Tdiff (K): ', Tdiff

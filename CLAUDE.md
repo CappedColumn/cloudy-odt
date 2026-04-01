@@ -54,7 +54,7 @@ source fpm_env && fpm run -- <reftest_input_dir>/params.nml
 
 **Compare:**
 ```bash
-python3 scripts/compare_reftest.py <reftest_output_dir>
+python3 scripts/compare_reftest_bitwise.py <reftest_output_dir>
 ```
 
 If all variables print `identical`, the change is safe. If any variable

@@ -370,37 +370,40 @@ contains
     end subroutine copy_file
 
 
-    subroutine triplet_map(L, M, psi)
-        ! Applies the triplet map rearrangement to array psi.
-        ! L - length of eddy (full length, must be multiple of 3)
-        ! M - starting index of eddy
-        ! psi - scalar/vector array to rearrange in-place
-        integer(i4), intent(in) :: L, M
-        real(dp), intent(inout) :: psi(:)
-        real(dp), allocatable :: x(:)
-        integer(i4) :: j, k, Lseg
+    subroutine triplet_map(eddy_length, eddy_start, field)
+        ! Applies the triplet map rearrangement to field.
+        ! Uses mod indexing so wrapping eddies on periodic domains are handled
+        ! automatically. For non-periodic domains the mod is a no-op.
+        integer(i4), intent(in) :: eddy_length, eddy_start
+        real(dp), intent(inout) :: field(:)
 
-        allocate(x(size(psi)))
+        real(dp) :: mapped_values(eddy_length)
+        integer(i4) :: j, source_index, dest_index, segment_length
 
-        Lseg = L/3
-        do j = 1, Lseg
-            k = M + 3 * (j-1)
-            x(j) = psi(k)
+        segment_length = eddy_length / 3
+
+        ! Segment 1: every 3rd element, forward
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*(j-1) - 1, N) + 1
+            mapped_values(j) = field(source_index)
         end do
 
-        do j = 1, Lseg
-            k = M + L + 1 - (3*j)
-            x(j+Lseg) = psi(k)
+        ! Segment 2: every 3rd element, reversed (block inversion)
+        do j = 1, segment_length
+            source_index = mod(eddy_start + eddy_length - 3*j, N) + 1
+            mapped_values(j + segment_length) = field(source_index)
         end do
 
-        do j = 1, Lseg
-            k = M + (3*j) - 1
-            x(j+Lseg+Lseg) = psi(k)
+        ! Segment 3: every 3rd element, forward offset by 2
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*j - 2, N) + 1
+            mapped_values(j + 2*segment_length) = field(source_index)
         end do
 
-        do j = 1, L
-            k = M + j - 1
-            psi(k) = x(j)
+        ! Write rearranged values back
+        do j = 1, eddy_length
+            dest_index = mod(eddy_start + j - 2, N) + 1
+            field(dest_index) = mapped_values(j)
         end do
 
     end subroutine triplet_map

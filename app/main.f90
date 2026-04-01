@@ -34,8 +34,16 @@ program main
 
   call initialize_simulation()
 
-  ! Log simulation configuration
-  write(*,*) '--- Simulation Configuration ---'
+  ! Log simulation header and configuration
+  call date_and_time(date=date_str, time=time_str)
+  write(*,'(a)') ''
+  write(*,'(a)') ' ============================================'
+  write(*,'(a)') '            :) C O D T :)                     '
+  write(*,'(a)') ' ============================================'
+  write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
+       ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+       ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
+  write(*,'(a)') ''
   write(*,*) 'Namelist: ', trim(namelist_path)
   write(*,*) 'simulation_mode: ', trim(simulation_mode)
   write(*,*) 'N: ', N
@@ -47,7 +55,7 @@ program main
   write(*,*) 'do_turbulence: ', do_turbulence
   write(*,*) 'do_microphysics: ', do_microphysics
   write(*,*) 'do_special_effects: ', do_special_effects
-  write(*,*) '--------------------------------'
+  write(*,'(a)') ' ============================================'
 
   ! -----------------------------
 

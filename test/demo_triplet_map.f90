@@ -1,6 +1,5 @@
 program demo_triplet_map
-    use globals, only: dp, i4, N
-    use LEM, only: triplet_map_periodic
+    use globals, only: dp, i4, N, triplet_map
     implicit none
 
     integer(i4) :: n_domain, eddy_len, eddy_start
@@ -40,7 +39,7 @@ contains
             before(k) = real(k, dp)
         end do
         after = before
-        call triplet_map_periodic(el, es, after)
+        call triplet_map(el, es, after)
 
         ! Header: n_domain eddy_length eddy_start
         write(unit_num, '(3i6)') nd, el, es

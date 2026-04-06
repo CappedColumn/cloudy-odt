@@ -1,6 +1,5 @@
 program test_triplet_map
     use globals, only: dp, i4, N, triplet_map
-    use LEM, only: triplet_map_periodic
     implicit none
 
     integer :: n_passed, n_failed
@@ -68,7 +67,7 @@ contains
         end do
 
         call triplet_map(9, 1, field_standard)
-        call triplet_map_periodic(9, 1, field_periodic)
+        call triplet_map(9, 1, field_periodic)
 
         call check_array("equivalence: eddy at start (L=9, M=1)", &
                           field_periodic, field_standard, N)
@@ -87,7 +86,7 @@ contains
         end do
 
         call triplet_map(6, 4, field_standard)
-        call triplet_map_periodic(6, 4, field_periodic)
+        call triplet_map(6, 4, field_periodic)
 
         call check_array("equivalence: eddy in middle (L=6, M=4)", &
                           field_periodic, field_standard, N)
@@ -106,7 +105,7 @@ contains
         end do
 
         call triplet_map(6, 13, field_standard)
-        call triplet_map_periodic(6, 13, field_periodic)
+        call triplet_map(6, 13, field_periodic)
 
         call check_array("equivalence: eddy at end (L=6, M=13)", &
                           field_periodic, field_standard, N)
@@ -129,7 +128,7 @@ contains
         expected = [30.0_dp, 120.0_dp, 10.0_dp, 40.0_dp, 50.0_dp, 60.0_dp, &
                     70.0_dp, 80.0_dp, 90.0_dp, 100.0_dp, 110.0_dp, 20.0_dp]
 
-        call triplet_map_periodic(6, 11, field)
+        call triplet_map(6, 11, field)
 
         call check_array("periodic wrap: eddy across boundary (start=11, L=6, N=12)", &
                           field, expected, N)
@@ -153,7 +152,7 @@ contains
         expected = [30.0_dp, 40.0_dp, 10.0_dp, 20.0_dp, 50.0_dp, 60.0_dp, &
                     70.0_dp, 80.0_dp, 90.0_dp, 100.0_dp, 110.0_dp, 120.0_dp]
 
-        call triplet_map_periodic(6, 12, field)
+        call triplet_map(6, 12, field)
 
         call check_array("periodic wrap: eddy starts at last cell (start=12, L=6, N=12)", &
                           field, expected, N)
@@ -173,7 +172,7 @@ contains
         end do
 
         call triplet_map(9, 1, field_standard)
-        call triplet_map_periodic(9, 1, field_periodic)
+        call triplet_map(9, 1, field_periodic)
 
         call check_array("periodic wrap: full domain eddy (L=N=9)", &
                           field_periodic, field_standard, N)

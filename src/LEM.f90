@@ -1,13 +1,12 @@
 module LEM
     use globals
     use microphysics, only: virtual_temp, update_supersat
-    use droplets, only: particle, particles, current_n_particles
+    use droplets, only: particle, particles, current_n_particles, move_particles_in_eddy
     use writeout, only: write_eddy
     implicit none
 
     private
     public :: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
-    public :: triplet_map_periodic
 
     ! Derived LEM parameters (set in initialize_LEM)
     integer(i4) :: maps_per_event        ! Triplet maps per eddy event
@@ -121,12 +120,12 @@ contains
             eddy_start = int(rand_position * N) + 1
 
             ! Apply periodic triplet map to dimensional scalars
-            call triplet_map_periodic(eddy_gridpoints, eddy_start, T)
-            call triplet_map_periodic(eddy_gridpoints, eddy_start, WV)
+            call triplet_map(eddy_gridpoints, eddy_start, T)
+            call triplet_map(eddy_gridpoints, eddy_start, WV)
 
             ! Move particles
             if (do_microphysics) then
-                call move_particles_in_eddy_periodic(particles, eddy_start, eddy_gridpoints)
+                call move_particles_in_eddy(particles, eddy_start, eddy_gridpoints)
             end if
 
             eddy_loc = eddy_start
@@ -227,87 +226,6 @@ contains
         end do
 
     end subroutine tridiagonal_periodic
-
-
-    subroutine triplet_map_periodic(eddy_length, eddy_start, field)
-        ! Triplet map with periodic wrapping via mod indexing.
-        integer(i4), intent(in) :: eddy_length, eddy_start
-        real(dp), intent(inout) :: field(:)
-
-        real(dp) :: mapped_values(eddy_length)
-        integer(i4) :: j, source_index, dest_index, segment_length
-
-        segment_length = eddy_length / 3
-
-        ! Segment 1: every 3rd element, forward
-        do j = 1, segment_length
-            source_index = mod(eddy_start + 3*(j-1) - 1, N) + 1
-            mapped_values(j) = field(source_index)
-        end do
-
-        ! Segment 2: every 3rd element, reversed (block inversion)
-        do j = 1, segment_length
-            source_index = mod(eddy_start + eddy_length - 3*j, N) + 1
-            mapped_values(j + segment_length) = field(source_index)
-        end do
-
-        ! Segment 3: every 3rd element, forward offset by 2
-        do j = 1, segment_length
-            source_index = mod(eddy_start + 3*j - 2, N) + 1
-            mapped_values(j + 2*segment_length) = field(source_index)
-        end do
-
-        ! Write rearranged values back to the periodic domain
-        do j = 1, eddy_length
-            dest_index = mod(eddy_start + j - 2, N) + 1
-            field(dest_index) = mapped_values(j)
-        end do
-
-    end subroutine triplet_map_periodic
-
-
-    subroutine move_particles_in_eddy_periodic(lparticles, eddy_start, eddy_length)
-        ! Move particles within a periodic eddy using position deltas.
-        type(particle), intent(inout) :: lparticles(:)
-        integer(i4), intent(in) :: eddy_start, eddy_length
-
-        real(dp) :: original_positions(eddy_length), rearranged_positions(eddy_length)
-        real(dp) :: position_delta(eddy_length)
-        integer(i4) :: eddy_cells(eddy_length)
-        integer(i4) :: j, k, particle_cell, segment_length
-
-        ! Build list of gridcells in the eddy (with periodic wrapping)
-        do k = 1, eddy_length
-            eddy_cells(k) = mod(eddy_start + k - 2, N) + 1
-            original_positions(k) = z(eddy_cells(k))
-        end do
-
-        ! Apply triplet map to position array (local indices, no wrapping needed)
-        segment_length = eddy_length / 3
-        rearranged_positions(1:segment_length) = &
-            original_positions(1:eddy_length:3)
-        rearranged_positions(segment_length+1:2*segment_length) = &
-            original_positions(eddy_length:1:-3)
-        rearranged_positions(2*segment_length+1:eddy_length) = &
-            original_positions(3:eddy_length:3)
-
-        ! Compute position deltas
-        position_delta = rearranged_positions - original_positions
-
-        ! Move particles that are in eddy gridcells
-        do j = 1, current_n_particles
-            particle_cell = lparticles(j)%gridcell
-            do k = 1, eddy_length
-                if (particle_cell == eddy_cells(k)) then
-                    lparticles(j)%position = lparticles(j)%position + position_delta(k)
-                    ! Wrap position to [0, H) for periodic domain
-                    lparticles(j)%position = modulo(lparticles(j)%position, H)
-                    exit
-                end if
-            end do
-        end do
-
-    end subroutine move_particles_in_eddy_periodic
 
 
     subroutine update_virtual_temperature()

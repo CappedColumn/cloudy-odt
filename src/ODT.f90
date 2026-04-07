@@ -419,20 +419,13 @@ contains
     ! in globals.f90 — called via procedure pointers
     ! -----------------------------------------------
 
-    subroutine odt_diffuse_step(ldelta_time, fields_updated)
+    subroutine odt_diffuse_step(ldelta_time)
         real(dp), intent(in) :: ldelta_time
-        logical, intent(out) :: fields_updated
-
-        if (ldelta_time < diffusion_step) then
-            fields_updated = .false.
-            return
-        end if
 
         Nd = Nd + 1
         call diffusion(ldelta_time)
         call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
-        fields_updated = .true.
 
     end subroutine odt_diffuse_step
 
@@ -449,10 +442,6 @@ contains
         if (.not. leddy_accepted) return
 
         if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
-
-        call diffusion(ldelta_time)
-        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-        call update_supersat(T, WV, SS, pres)
 
         if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
 

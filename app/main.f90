@@ -9,7 +9,6 @@ program main
   implicit none
 
   real(dp) :: t_start, t_end
-  logical :: fields_updated
   integer :: done_unit
   character(8) :: date_str
   character(10) :: time_str
@@ -67,32 +66,32 @@ program main
     delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------
-    ! Output (before physics — dt not yet adjusted by eddy method)
+    ! Output
     ! ---------------------------------------------------------
     call write_profiles(dt)
     if ( do_microphysics .and. write_trajectories ) call write_trajectory_data(particles, time, dt)
 
     ! ---------------------------------------------------------
-    ! Diffusion
+    ! Diffusion (backstop)
     ! ---------------------------------------------------------
-    call diffuse_step(delta_time, fields_updated)
-    if ( fields_updated ) then
+    if ( delta_time >= diffusion_step ) then
+      call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
-      if ( do_microphysics .or. do_special_effects ) call sync_after_physics()
+      call sync_after_physics()
       last_time_updated = time
     end if
 
     ! ---------------------------------------------------------
     ! Turbulence
     ! ---------------------------------------------------------
-    eddy_accepted = .false.
     if ( do_turbulence ) call turbulence_step(dt, time, delta_time, &
                                               eddy_accepted, eddy_location, eddy_length)
     if ( eddy_accepted ) then
+      call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
-      if ( do_microphysics .or. do_special_effects ) call sync_after_physics()
+      call sync_after_physics()
       last_time_updated = time
     end if
 

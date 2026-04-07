@@ -71,16 +71,14 @@ contains
     ! Controller subroutines matching abstract interfaces
     ! -----------------------------------------------
 
-    subroutine lem_diffuse_step(ldelta_time, fields_updated)
+    subroutine lem_diffuse_step(ldelta_time)
         real(dp), intent(in) :: ldelta_time
-        logical, intent(out) :: fields_updated
 
         Nd = Nd + 1
         call diffuse_scalar_periodic(T, thermal_diffusivity, ldelta_time)
         call diffuse_scalar_periodic(WV, vapor_diffusivity, ldelta_time)
         call update_virtual_temperature()
         call update_supersat(T, WV, SS, pres)
-        fields_updated = .true.
 
     end subroutine lem_diffuse_step
 
@@ -131,9 +129,6 @@ contains
             eddy_loc = eddy_start
             eddy_len = eddy_gridpoints
         end do
-
-        call update_virtual_temperature()
-        call update_supersat(T, WV, SS, pres)
 
         if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
         leddy_accepted = .true.

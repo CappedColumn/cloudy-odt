@@ -227,10 +227,9 @@ module globals
     ! ------------------------------------------------
 
     abstract interface
-        subroutine diffuse_iface(ldelta_time, fields_updated)
+        subroutine diffuse_iface(ldelta_time)
             import :: dp
             real(dp), intent(in) :: ldelta_time
-            logical, intent(out) :: fields_updated
         end subroutine
 
         subroutine turbulence_iface(ldt, ltime, ldelta_time, &

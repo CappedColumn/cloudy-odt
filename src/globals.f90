@@ -210,7 +210,7 @@ module globals
     real(dp), allocatable :: SS(:)
 
     ! Statistics
-    real(dp) :: statistics(5) ! N, Na, Nu, r_bar, LWC
+    real(dp) :: statistics(7) ! N, Na, Nu, r_bar, LWC, N_coll, N_coal
 
     ! -----------------------------------------------
     ! -----------------------------------------------

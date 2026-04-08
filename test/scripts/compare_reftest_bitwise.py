@@ -30,15 +30,29 @@ def compare_files(test_path, ref_path, label=""):
     test = nc.Dataset(test_path)
     all_match = True
 
-    for var in ref.variables:
+    # Compare variables common to both files
+    common_vars = set(ref.variables) & set(test.variables)
+    ref_only = set(ref.variables) - set(test.variables)
+    test_only = set(test.variables) - set(ref.variables)
+
+    for var in sorted(common_vars):
         r = ref[var][:]
         t = test[var][:]
+        if r.shape != t.shape:
+            print(f"  {label}{var}: SHAPE MISMATCH  ref={r.shape} test={t.shape}")
+            all_match = False
+            continue
         if np.array_equal(r, t):
             print(f"  {label}{var}: identical")
         else:
             diff = np.abs(r - t)
             print(f"  {label}{var}: DIFFERS  max_diff={np.nanmax(diff)}")
             all_match = False
+
+    for var in sorted(ref_only):
+        print(f"  {label}{var}: SKIP (ref only)")
+    for var in sorted(test_only):
+        print(f"  {label}{var}: NEW (test only)")
 
     ref.close()
     test.close()

@@ -1,25 +1,65 @@
 module ODT
     use globals
-    use microphysics, only: update_dim_scalars, update_supersat
+    use microphysics, only: update_dim_scalars, update_nondim_scalars, update_supersat
+    use droplets, only: particles, move_particles_in_eddy
+    use writeout, only: write_eddy
     implicit none
 
-    public 
-
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
-    ! of the model. This includes calculating the eddy probabilities, sizes, location, and 
+    ! of the model. This includes calculating the eddy probabilities, sizes, location, and
     ! the eddy rejection/acceptance method (the entire loop)
+
+    private
+    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method
+    public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+
+    ! Non-dimensional time variables
+    real(dp) :: dt_nd             ! Non-dimensional time step
+    real(dp) :: time_conv_nd      ! Conversion factor: dimensional -> non-dim time (nu/H^2)
+
+    ! Eddy acceptance/rejection counters
+    integer(i4) :: Np = 0       ! Number of eddy probs. calculated
+    integer(i4) :: Na = 0       ! Number of accepted eddies
+    real(dp) :: Pa = 0.         ! Total acceptance probabilities
+
+    ! Integrated eddy values (set in eddy_acceptance_prob, used in implement_eddy)
+    real(dp) :: wK, TvK
+    real(dp) :: pot_energy       ! Potential energy
 
 contains
 
-    subroutine diffusion()
-        ! Interface for main.f90. Diffuses the non-dim scalar fields, and updates the dimensional
-        ! fields, as well as supersaturation.
+    subroutine initialize_ODT(H_domain)
+        ! Initialize ODT module: set time conversion, timestep, and
+        ! eddy probability parameters. Must be called after namelist
+        ! read and thermodynamic boundary conditions are set.
+        real(dp), intent(in) :: H_domain
 
-        call diffuse_scalar(W, Ndnu)
-        call diffuse_scalar(T, Pr)
-        call diffuse_scalar(WV, Sc)
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
-        call update_supersat(Tdim, WVdim, SS, pres)
+        time_conv_nd = nu / (H_domain**2)
+        dt_nd = 1.0 / (1.0 * N * N)
+
+        diffusion_step = H_domain**2 / (nu * 1.0 * N * N)
+        dt = diffusion_step
+
+        buoy_nd = (8. * g * alpha * Tvdiff * C2 * H_domain**3) / (27. * nu * nu)
+        LpD = 2 * Lprob
+        Co = exp(-LpD / (1.*Lmin))
+        Cm = exp(-LpD / (1.*Lmax))
+        prob_coeff = (exp(-LpD/(1.*Lmax)) - exp(-LpD/(1.*Lmin))) * (N/(3.*LpD))
+
+    end subroutine initialize_ODT
+
+    subroutine diffusion(ldelta_time)
+        ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
+        ! Takes dimensional delta_time (seconds) and converts to non-dim internally.
+        ! Caller is responsible for syncing dim/nondim fields afterward.
+        real(dp), intent(in) :: ldelta_time
+        real(dp) :: delta_time_nd
+
+        delta_time_nd = ldelta_time * time_conv_nd
+
+        call diffuse_scalar(W_nd, Ndnu, delta_time_nd)
+        call diffuse_scalar(T_nd, Pr, delta_time_nd)
+        call diffuse_scalar(WV_nd, Sc, delta_time_nd)
 
     end subroutine diffusion
 
@@ -48,8 +88,6 @@ contains
 
         integer :: L
         real(dp) :: lC, lz
-        ! Co = dexp(-LpD/(1.d0*Lmin))
-        ! Cm = dexp(-LpD/(1.d0*Lmax))
         lC = 0.d0
         do L = Lmin, Lmax
             lz = dexp(-LpD/(1.d0*L))*(dexp(LpD/(L*(L+1.d0)))-1.d0)
@@ -128,8 +166,8 @@ contains
         Lnd = (1.*L)/(1.*N)
 
         ! Integrate values across the eddy
-        wK = integrate_eddy(L, M, w)
-        TvK = -integrate_eddy(L, M, Tv)
+        wK = integrate_eddy(L, M, W_nd)
+        TvK = -integrate_eddy(L, M, Tv_nd)
 
         ! Calculate energies
         pot_energy = buoy_nd * TvK * Lnd
@@ -194,17 +232,25 @@ contains
     end subroutine raise_dt
 
 
-    subroutine eddy_acceptance_method(M, L, eddy_flag)
+    subroutine eddy_acceptance_method(ldt, M, L, eddy_flag)
         ! After sampling eddy size/length (L) and eddy location (M),
         ! computes an expected acceptance rate based on the current
         ! state of the velocity/vector fields.
 
-        ! The acceptance probability is then tested, if too high an 
-        ! adjustment is made with by lowering the timestep
+        ! The acceptance probability is then tested, if too high an
+        ! adjustment is made with by lowering the timestep.
+        !
+        ! Takes dimensional dt, converts to non-dim internally,
+        ! and returns the (possibly adjusted) dimensional dt.
 
+        real(dp), intent(inout) :: ldt
         integer(i4), intent(out) :: M, L
         logical, intent(out) :: eddy_flag
         real(dp) :: rand_num(3)
+        real(dp) :: accept_prob
+
+        ! Sync non-dim dt from dimensional input
+        dt_nd = ldt * time_conv_nd
 
         ! Get 3 random numbers from a uniform distribution
         call random_number(rand_num)
@@ -213,31 +259,27 @@ contains
         M = sample_eddy_location(N, L, rand_num(2))
         ! Calculated the probability of the randomly selected eddy
         call eddy_acceptance_prob(M, L, accept_prob)
-        
+
         !if ( accept_prob > 0.0 ) write(*,*) accept_prob, L, M
 
         call lower_dt(accept_prob)
-
-        ! write(*,*) rand_num(3), accept_prob, dt_nd/nu
 
         ! Monte-Carlo test for this eddy
         if (rand_num(3) .lt. accept_prob) then
             ! Success
             eddy_flag = .true.
-            ! M = eddy_loc
-            ! L = eddy_len
             call implement_eddy(L, M)
-    
+
             Na = Na + 1
-            !last_time = time_nd ! In main loop now to pass to droplet growth model
 
         else
             eddy_flag = .false.
         end if
-    
+
         if (Np > 1e4) call raise_dt()
-    
-        !call flush()
+
+        ! Convert adjusted dt_nd back to dimensional
+        ldt = dt_nd / time_conv_nd
 
     end subroutine eddy_acceptance_method
 
@@ -286,50 +328,13 @@ contains
         end if
 
         ! Create triplet copies
-        call triplet_map(L, M, w)
-        call triplet_map(L, M, T)
-        call triplet_map(L, M, WV)
+        call triplet_map(L, M, W_nd)
+        call triplet_map(L, M, T_nd)
+        call triplet_map(L, M, WV_nd)
         ! Scale for energy conservation
-        call addK(L, M, w, cw)
+        call addK(L, M, W_nd, cw)
         
     end subroutine implement_eddy
-
-
-    subroutine triplet_map(L, M, psi)
-        ! L - length of eddy (full length)
-        ! M - Location of Eddy
-        ! psi - scalar/vector array
-        integer(i4), intent(in) :: L, M
-        real(dp), intent(inout) :: psi(:)
-        real(dp), allocatable :: x(:)
-        integer(i4) :: j, k, Lseg
-
-        allocate(x(size(psi)))
-
-        ! These do loops implement the triplet map
-        ! and change the values of the array psi
-        Lseg = L/3 ! 1/3 of selected eddy
-        do j = 1, Lseg
-            k = M + 3 * (j-1)
-            x(j) = psi(k)
-        end do
-
-        do j = 1, Lseg
-            k = M + L + 1 - (3*j)
-            x(j+Lseg) = psi(k)
-        end do
-
-        do j = 1, Lseg
-            k = M + (3*j) - 1
-            x(j+Lseg+Lseg) = psi(k)
-        end do
-
-        do j = 1, L
-            k = M + j - 1
-            psi(k) = x(j)
-        end do
-
-    end subroutine triplet_map
 
 
     subroutine addK(L, M, ui, cui)
@@ -355,13 +360,14 @@ contains
 
     end subroutine addK
 
-    subroutine diffuse_scalar(sclr, dim_num)
+    subroutine diffuse_scalar(sclr, dim_num, ldelta_time_nd)
         real(dp), intent(in) :: dim_num
+        real(dp), intent(in) :: ldelta_time_nd
         real(dp), intent(inout) :: sclr(:)
         real(dp) :: De, l(N+1), d(N+1), r(N+1), xsc(N+1)
         integer(i4) :: k
 
-        De = (delta_time_nd*(N+1)*(N+1))/(2.*dim_num)
+        De = (ldelta_time_nd*(N+1)*(N+1))/(2.*dim_num)
 
         l(1) = 0.
         d(1) = 1. + (2.*De)
@@ -406,6 +412,46 @@ contains
         end do
 
     end subroutine tridiagonal
+
+
+    ! -----------------------------------------------
+    ! Controller subroutines matching abstract interfaces
+    ! in globals.f90 — called via procedure pointers
+    ! -----------------------------------------------
+
+    subroutine odt_diffuse_step(ldelta_time)
+        real(dp), intent(in) :: ldelta_time
+
+        Nd = Nd + 1
+        call diffusion(ldelta_time)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        call update_supersat(T, WV, SS, pres)
+
+    end subroutine odt_diffuse_step
+
+
+    subroutine odt_turbulence_step(ldt, ltime, ldelta_time, &
+                                   leddy_accepted, eddy_loc, eddy_len)
+        real(dp), intent(inout) :: ldt
+        real(dp), intent(in) :: ltime, ldelta_time
+        logical, intent(out) :: leddy_accepted
+        integer(i4), intent(out) :: eddy_loc, eddy_len
+
+        call eddy_acceptance_method(ldt, eddy_loc, eddy_len, leddy_accepted)
+
+        if (.not. leddy_accepted) return
+
+        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
+
+        if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
+
+    end subroutine odt_turbulence_step
+
+
+    subroutine odt_sync_after_physics()
+        call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
+    end subroutine odt_sync_after_physics
+
 
 end module ODT
 

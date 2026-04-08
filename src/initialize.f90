@@ -2,7 +2,9 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: calc_eddy_length_cdf, diffusion
+    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT, &
+                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
                 initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
@@ -13,8 +15,9 @@ module initialize
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
     
-    private :: allocate_zero_arrays, initialize_velocity_arrays, initialize_params
-    public :: initialize_simulation
+    private :: allocate_zero_arrays, allocate_nondim_array, initialize_linear_array, &
+               initialize_velocity_arrays, initialize_params
+    public :: initialize_simulation, close_simulation
     
 contains
 
@@ -25,8 +28,18 @@ contains
         ! Life is nothing but a dream, as realistic as it seems
         call initialize_params()
 
-        if ( do_turbulence ) then
-            call calc_eddy_length_cdf(prob_eddy_length)
+        if (simulation_mode == 'chamber') then
+            diffuse_step       => odt_diffuse_step
+            turbulence_step    => odt_turbulence_step
+            sync_after_physics => odt_sync_after_physics
+            if ( do_turbulence ) call calc_eddy_length_cdf(prob_eddy_length)
+        else if (simulation_mode == 'parcel') then
+            diffuse_step       => lem_diffuse_step
+            turbulence_step    => lem_turbulence_step
+            sync_after_physics => lem_sync_after_physics
+        else
+            write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
+            stop 1
         end if
 
         if ( do_microphysics ) then
@@ -40,14 +53,18 @@ contains
             call initialize_special_effects()
         end if
 
-        call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
 
     end subroutine initialize_simulation
 
     subroutine close_simulation()
 
-        call diffusion()
-        call add_to_profile_buffer(time, Tdim, WVdim, Tvdim, SS, Wdim, size_distribution, statistics)
+        if (simulation_mode == 'chamber') then
+            call diffusion(delta_time)
+            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        end if
+        call update_supersat(T, WV, SS, pres)
+        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
         call flush_buffer()
         call close_netcdf(ncid)
         if ( do_microphysics .and. write_trajectories ) then
@@ -72,7 +89,8 @@ contains
         namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
         max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite
+        overwrite, simulation_mode, &
+        integral_length_scale, kolmogorov_length_scale, dissipation_rate
 
         ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'
@@ -101,15 +119,11 @@ contains
         write(*,*) 'Setting domain variables...'
         Tref = Tref + Tice ! Convert to Kelvin
         Ttop = Tref - Tdiff
-        time_conv_nd = nu / (H**2)
-        tmax_nd = tmax * time_conv_nd
         Lmax = int(N / 3)
-        time_nd = 0.
         time = 0.
-        last_time = 0.
-        dt_nd = 1. / (1. * N * N) ! initial timestep
-        diffusion_step = 1. / (1.*N*N) ! Diffusional timestep (fixed)
-        
+        last_time_updated = 0.
+
+        dz_length = H/N
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N
 
@@ -121,14 +135,11 @@ contains
         Tvtop = virtual_temp(Ttop, WVtop)
         Tvdiff = Tvref - Tvtop
 
-        buoy_nd = (8. * g * alpha * Tvdiff * C2 * H * H * H)/(27. * nu * nu)
-
-        ! ODT parameters
-        LpD = 2 * Lprob
-        Co = exp(-LpD/(1.*Lmin))
-        Cm = exp(-LpD/(1.*Lmax))
-        prob_coeff = (exp(-LpD/(1.*Lmax))-exp(-LpD/(1.*Lmin)))*(N/(3.*LpD))
-        w_dim_factor = nu / (H * C)
+        if (simulation_mode == 'chamber') then
+            call initialize_ODT(H)
+        else if (simulation_mode == 'parcel') then
+            call initialize_LEM(H)
+        end if
 
         ! initialize randomness in the model
         if (same_random) then
@@ -144,30 +155,34 @@ contains
         ! Allocate scalar/vector fields
         write(*,*) 'Allocating arrays...'
         call allocate_zero_arrays(z, N)
-        call allocate_nondim_array(W, N)
-        call allocate_nondim_array(T, N)
-        call allocate_nondim_array(WV, N)
-        call allocate_nondim_array(Tv, N)
-        call allocate_zero_arrays(Tdim, N)
-        call allocate_zero_arrays(WVdim, N)
-        call allocate_zero_arrays(Tvdim, N)
+        call allocate_zero_arrays(T, N)
+        call allocate_zero_arrays(WV, N)
+        call allocate_zero_arrays(Tv, N)
         call allocate_zero_arrays(SS, N)
-        call allocate_zero_arrays(Wdim, N)
-        call allocate_zero_arrays(prob_eddy_length, N)
-
-        ! Initialize scalar/vector fields with some random perturbation
-        ! NOTE THIS ONLY HAS POSITIVE PERTURBATIONS - NONDIMENSIONAL???
-        !W = W + random_array(W)*2.e-10
-
-        call initialize_linear_array(z)
-        call initialize_velocity_arrays(W)
-        call update_dim_scalars(W, T, WV, Tv, Wdim, Tdim, WVdim, Tvdim)
-        call update_supersat(Tdim, WVdim, SS, pres)
 
         ! Initialize positional array
         do k = 1, N
-            z(k) = H*k/N ! Grid cell position in meters
+            z(k) = H*k/N
         end do
+
+        if (simulation_mode == 'chamber') then
+            call allocate_nondim_array(W_nd, N)
+            call allocate_nondim_array(T_nd, N)
+            call allocate_nondim_array(WV_nd, N)
+            call allocate_nondim_array(Tv_nd, N)
+            call allocate_zero_arrays(prob_eddy_length, N)
+            call initialize_velocity_arrays(W_nd)
+            ! Nondim arrays initialized with linear profile; convert to dimensional
+            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+        else if (simulation_mode == 'parcel') then
+            ! Uniform fields: saturated at Tref
+            T(:) = Tref
+            WV(:) = WVref
+            do k = 1, N
+                Tv(k) = virtual_temp(T(k), WV(k))
+            end do
+        end if
+        call update_supersat(T, WV, SS, pres)
 
         ! Build output paths:
         !   sim_output_dir = "{output_directory}/{simulation_name}/"
@@ -199,18 +214,12 @@ contains
         ! Create main netCDF output file
         call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
 
-        ! Writeout parameters
-        write_time_iter = 0.
-
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_file(file_prefix)
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
-        
-        ! Length of a gridcell
-        dz_length = H/N
 
     end subroutine initialize_params
 
@@ -251,18 +260,18 @@ contains
 
     end subroutine initialize_linear_array
 
-    subroutine initialize_velocity_arrays(lw)
+    subroutine initialize_velocity_arrays(lw_nd)
         ! Initializes velcoity arrays with some noise. This prevents a numerical issue from
         ! occuring when calculating the kinetic energy (i.e. KE != 0)
-        real(dp), intent(inout), allocatable :: lw(:)
+        real(dp), intent(inout), allocatable :: lw_nd(:)
         real(dp) :: rand_num
         integer(i4) :: k
 
         do k = 1, N
             call random_number(rand_num)
-            lw(k) = 2.e-10 * (rand_num - 0.5)
+            lw_nd(k) = 2.e-10 * (rand_num - 0.5)
         end do
-        lw(N+1) = 0.
+        lw_nd(N+1) = 0.
 
     end subroutine initialize_velocity_arrays
 

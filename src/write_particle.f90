@@ -1,12 +1,12 @@
 module write_particle
     use netcdf
-    use droplets, only: particle, particles, current_n_particles, write_trajectories, trajectory_start, trajectory_end, trajectory_timer
+    use droplets, only: particle, particles, current_n_particles, &
+                        trajectory_start, trajectory_end, trajectory_timer
     use globals
     use writeout, only: nc_verify
     implicit none
 
-    ! tracking state management
-    logical :: tracking_activated = .false.
+    ! Trajectory write timer accumulator
     real(dp) :: trajectory_time_iter = 0.
 
     ! NetCDF particle output state
@@ -23,26 +23,19 @@ module write_particle
 
 contains
 
-    subroutine write_trajectory_controller(lparticles, ltime, ldt)
-
-        type(particle), intent(inout) :: lparticles(:)
+    subroutine write_trajectory_data(lparticles, ltime, ldt)
+        ! Accumulates the trajectory timer and writes particle data when the interval is reached.
+        type(particle), intent(in) :: lparticles(:)
         real(dp), intent(in) :: ltime, ldt
 
-        if ( .not. tracking_activated ) then
-            if (ltime >= trajectory_start .and. ltime < trajectory_end) then
-                tracking_activated = .true.
-            end if
-        end if
-
         trajectory_time_iter = trajectory_time_iter + ldt
-        if ( trajectory_start <= ltime .and. trajectory_end > ltime ) then
-            if ( trajectory_time_iter >= trajectory_timer ) then
-                call write_particle_data_nc(lparticles, ltime)
+        if (trajectory_start <= ltime .and. ltime < trajectory_end) then
+            if (trajectory_time_iter >= trajectory_timer) then
+                call write_particle_data(lparticles, ltime)
                 trajectory_time_iter = mod(trajectory_time_iter, trajectory_timer)
             end if
         end if
-
-    end subroutine write_trajectory_controller
+    end subroutine write_trajectory_data
 
     subroutine initialize_write_particle(filename)
 
@@ -144,7 +137,7 @@ contains
 
     end subroutine create_particle_netcdf
 
-    subroutine write_particle_data_nc(lparticles, ltime)
+    subroutine write_particle_data(lparticles, ltime)
         ! Writes one time step of particle data to the _particles.nc file.
         ! Extracts fields into temporary 1D arrays and appends to the
         ! record and time_step dimensions.
@@ -227,7 +220,7 @@ contains
             call nc_verify( nf90_sync(pnc_id) )
         end if
 
-    end subroutine write_particle_data_nc
+    end subroutine write_particle_data
 
     subroutine close_particle_netcdf()
 

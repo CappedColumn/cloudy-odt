@@ -2,7 +2,6 @@ module droplets
     use netcdf
     use globals
     use DGM, only: integrate_ODE, set_aerosol_properties
-    use ODT, only: triplet_map
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -105,15 +104,14 @@ contains
 
     subroutine update_droplets(ltime, ldt)
         ! Interface subroutine to main.f90. Does aerosol injection, settling,
-        ! droplet-environment property update, droplet growth and scalar field
-        ! updates (after droplet growth)
+        ! droplet-environment property update, and droplet growth.
+        ! Caller is responsible for syncing nondim fields afterward.
         real(dp), intent(in) :: ltime, ldt
 
         call injection_controller(time, particles)
         call move_particles_by_gravity(particles, ldt)
-        call update_all_particles(particles, Tdim, WVdim, Tvdim, SS)
+        call update_all_particles(particles, T, WV, Tv, SS)
         call droplet_growth_model(particles, ltime, ldt)
-        call update_nondim_scalars(Tdim, WVdim, Tvdim, T, WV, Tv)
 
     end subroutine update_droplets
 
@@ -144,7 +142,7 @@ contains
             ! Determine number of particles to inject
             inject_n = int(time_since_last_injection / injection_dt)
             do i = 1, inject_n
-                call inject_particle(lparticles, Tdim, WVdim, Tvdim, SS, aerosols(1))
+                call inject_particle(lparticles, T, WV, Tv, SS, aerosols(1))
                 n_injected = n_injected + 1
             end do
 
@@ -400,38 +398,24 @@ contains
     end function calculate_terminal_velocity
 
     subroutine move_particles_in_eddy(lparticles, M, L)
-        ! Given an array of particle types, an eddy location and and eddy length,
-        ! the positions of all particles located within the eddy will be changed 
-        ! based on the triplet map.
-        !
-        ! Input:
-        ! lparticles - array of particle types
-        ! M - starting index of eddy
-        ! L - length of eddy, in # gridpoints
-        !
-        ! Output:
-        ! lparticles - array of particle types with each particle position updated
-
+        ! Move particles within an eddy based on the triplet map.
+        ! The triplet map moves gridcell z1 -> z2. A particle at pz1 in that
+        ! cell carries its offset: pz2 = z2 + (pz1 - z1), then wraps periodic.
         type(particle), intent(inout) :: lparticles(:)
         integer(i4), intent(in) :: M, L
-        real(dp) :: position_eddy_map(N)
-        integer :: i, j
+        real(dp) :: mapped_z(N)
+        integer :: i, gc
 
-        ! Copy z-coordinates to array to be triplet mapped
-        position_eddy_map = z
-        ! Determine the new positions of the triplet mapped gridcells
-        call triplet_map(L, M, position_eddy_map)
-        position_eddy_map = position_eddy_map - z ! change in z-position for location
+        mapped_z = z
+        call triplet_map(L, M, mapped_z)
 
-        ! For eddies which reside in eddy's gridcells, update particle positions
-        do concurrent (i = 1:current_n_particles, j = M:M+L-1)
-            if ( lparticles(i)%gridcell == j ) then
-                lparticles(i)%position = lparticles(i)%position + position_eddy_map(j)
+        do i = 1, current_n_particles
+            gc = lparticles(i)%gridcell
+            if (mapped_z(gc) /= z(gc)) then
+                lparticles(i)%position = modulo( &
+                    mapped_z(gc) + (lparticles(i)%position - z(gc)), H)
             end if
         end do
-
-        ! Note: particle movement by eddies is always followed by call to settling
-        ! routine. The particle gridcell is updated after settling has occured.
 
     end subroutine move_particles_in_eddy
 
@@ -615,7 +599,7 @@ contains
             call update_particle(lparticles(i))
             call single_droplet_growth(lparticles(i), ltime, ldt)
             !call lparticles(i)%verify_radius()
-            call update_scalar_fields_DGM(lparticles(i), Tdim, WVdim, Tvdim, SS)
+            call update_scalar_fields_DGM(lparticles(i), T, WV, Tv, SS)
         end do
 
     end subroutine droplet_growth_model
@@ -693,11 +677,11 @@ contains
     end subroutine single_droplet_growth
 
 
-    subroutine update_scalar_fields_DGM(droplet, lTdim, lWVdim, lTvdim, lSS)
+    subroutine update_scalar_fields_DGM(droplet, lT, lWV, lTv, lSS)
         ! Once droplet growth model is complete/solved, scalar fields need to be updated
         ! to values determine from DGM
         type(particle), intent(in) :: droplet
-        real(dp), intent(inout) :: lTdim(:), lWVdim(:), lTvdim(:), lSS(:)
+        real(dp), intent(inout) :: lT(:), lWV(:), lTv(:), lSS(:)
 
         integer(i4) :: idx
 
@@ -705,10 +689,10 @@ contains
         idx = droplet%gridcell
 
         ! Update scalar fields for the gridcell
-        lTdim(idx) = droplet%temperature
-        lWVdim(idx) = droplet%water_vapor
+        lT(idx) = droplet%temperature
+        lWV(idx) = droplet%water_vapor
         lSS(idx) = droplet%supersaturation
-        lTvdim(idx) = droplet%virt_temp
+        lTv(idx) = droplet%virt_temp
 
     end subroutine update_scalar_fields_DGM
 
@@ -743,7 +727,7 @@ contains
         integer :: idx
 
         idx = lparticle%gridcell
-        call lparticle%update_scalars(Tdim(idx), WVdim(idx), Tvdim(idx), SS(idx))
+        call lparticle%update_scalars(T(idx), WV(idx), Tv(idx), SS(idx))
         call lparticle%verify_activation
 
     end subroutine update_particle
@@ -842,7 +826,7 @@ contains
         ! Initialize particles in each gridpoint (approximately)
         if ( init_drop_each_gridpoint ) then
             do i = 1, N
-                call inject_particle(particles, Tdim, WVdim, Tv, SS, aerosols(1))
+                call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
             end do
         end if
 

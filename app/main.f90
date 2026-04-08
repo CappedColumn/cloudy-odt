@@ -1,12 +1,10 @@
 program main
-  use write_particle, only: write_trajectory_controller
+  use write_particle, only: write_trajectory_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_data, write_eddy
-  use microphysics
-  use ODT
-  use droplets!, only: aerosols, particles, move_particles_in_eddy, move_particles_by_gravity, &
-               !       total_n_fellout, current_n_particles, droplet_growth_model, update_particle_properties, injection_controller
+  use writeout, only: write_profiles
+  use droplets, only: particles, update_droplets, &
+                      total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
   implicit none
 
@@ -35,9 +33,18 @@ program main
 
   call initialize_simulation()
 
-  ! Log simulation configuration
-  write(*,*) '--- Simulation Configuration ---'
+  ! Log simulation header and configuration
+  call date_and_time(date=date_str, time=time_str)
+  write(*,'(a)') ''
+  write(*,'(a)') ' ============================================'
+  write(*,'(a)') '            :) C O D T :)                     '
+  write(*,'(a)') ' ============================================'
+  write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
+       ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+       ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
+  write(*,'(a)') ''
   write(*,*) 'Namelist: ', trim(namelist_path)
+  write(*,*) 'simulation_mode: ', trim(simulation_mode)
   write(*,*) 'N: ', N
   write(*,*) 'tmax (s): ', tmax
   write(*,*) 'Tdiff (K): ', Tdiff
@@ -47,80 +54,46 @@ program main
   write(*,*) 'do_turbulence: ', do_turbulence
   write(*,*) 'do_microphysics: ', do_microphysics
   write(*,*) 'do_special_effects: ', do_special_effects
-  write(*,*) '--------------------------------'
+  write(*,'(a)') ' ============================================'
 
   ! -----------------------------
 
-  do while (time_nd .le. tmax_nd)
+  do while (time .le. tmax)
 
     ! Update iterators and timing
     Nt = Nt + 1
-    time_nd = time_nd + dt_nd
-    dt = dt_nd/time_conv_nd
-    time = time_nd/time_conv_nd
-    write_time_iter = write_time_iter + dt
-    delta_time_nd = time_nd - last_time
-    delta_time = delta_time_nd/time_conv_nd
+    time = time + dt
+    delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------
+    ! Output
     ! ---------------------------------------------------------
-    ! Ensure timesteps do not surpass diffusion scheme
-    if (delta_time_nd .ge. diffusion_step) then
-      Nd = Nd + 1
+    call write_profiles(dt)
+    if ( do_microphysics .and. write_trajectories ) call write_trajectory_data(particles, time, dt)
 
-      call diffusion()
-
-      ! Update particle positions
+    ! ---------------------------------------------------------
+    ! Diffusion (backstop)
+    ! ---------------------------------------------------------
+    if ( delta_time >= diffusion_step ) then
+      call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
-
-      ! Implement Special Effects
-      if ( do_special_effects ) then
-        call run_special_effects(Tdim, WVdim, delta_time)
-      end if
-
-      last_time = time_nd ! Remember last "event" call
-    end if
-    ! ---------------------------------------------------------
-    ! ---------------------------------------------------------
-
-    ! ---------------------------------------------------------
-    ! ---------------------------------------------------------
-    ! One-Dimensional Turbulence Scheme
-    if ( do_turbulence ) then
-      ! Set and eddy length, location and acceptance probability
-      ! Then either accepts or rejects the tested eddy
-      call eddy_acceptance_method(eddy_location, eddy_length, eddy_accepted)
-      
-      if ( eddy_accepted ) then
-        if ( write_eddies ) then
-          call write_eddy(eddy_location, eddy_length, time)
-        end if
-
-        call diffusion()
-
-        if ( do_microphysics ) then
-          call move_particles_in_eddy(particles, eddy_location, eddy_length) ! Eddy movement
-          call update_droplets(time, delta_time)
-        end if
-
-        ! Implement Special Effects
-        if ( do_special_effects ) then
-          call run_special_effects(Tdim, WVdim, delta_time)
-        end if
-        
-        last_time = time_nd ! Remember last "event" call
-      end if
+      if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
+      call sync_after_physics()
+      last_time_updated = time
     end if
 
-    ! Ensure nondim and dim scalars are 
     ! ---------------------------------------------------------
+    ! Turbulence
     ! ---------------------------------------------------------
-
-    ! Write to netCDF buffer
-    if ( write_time_iter >= write_timer ) call write_data()
-
-    if ( do_microphysics .and. write_trajectories ) call write_trajectory_controller(particles, time, dt)
-
+    if ( do_turbulence ) call turbulence_step(dt, time, delta_time, &
+                                              eddy_accepted, eddy_location, eddy_length)
+    if ( eddy_accepted ) then
+      call diffuse_step(delta_time)
+      if ( do_microphysics ) call update_droplets(time, delta_time)
+      if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
+      call sync_after_physics()
+      last_time_updated = time
+    end if
 
   end do
 

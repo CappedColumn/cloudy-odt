@@ -67,7 +67,6 @@ module globals
     real(dp), parameter :: alpha = 3.5e-3           ! Thermal Expansion Coefficient
     real(dp), parameter :: C2 = 1.5e3                ! Turbulent strength in ODT (dimensionless, squared): see Eq. 2.9 - Wunsch and Kerstein 2005
     real(dp), parameter :: C = sqrt(C2)
-    real(dp) :: w_dim_factor
     real(dp), parameter :: ZC2 = 1.0e5                 ! ODT viscous cut-off parameter (dimensionless): see same equation/paper
 
     ! Aerosol Calculations/Constants
@@ -129,6 +128,14 @@ module globals
     logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
     logical :: overwrite = .false.      ! Allow overwriting existing output files
 
+    ! Simulation mode: 'chamber' (ODT, fixed BCs) or 'parcel' (LEM, periodic BCs)
+    character(7) :: simulation_mode = 'chamber'
+
+    ! LEM parameters (only used when simulation_mode = 'parcel')
+    real(dp) :: integral_length_scale = 0.01_dp       ! Largest eddy size (m)
+    real(dp) :: kolmogorov_length_scale = 0.001_dp    ! Smallest eddy size (m)
+    real(dp) :: dissipation_rate = 0.01_dp            ! TKE dissipation rate (m^2/s^3)
+
     ! -----------------------------------------------
     ! -----------------------------------------------
 
@@ -160,21 +167,13 @@ module globals
     ! -----------------------------------------------
 
     real(dp) :: tmax = 30            ! Maximum simulation time (seconds)
-    real(dp) :: tmax_nd     ! Maxmimum simulation time (non-dimensional, params.nml)
     real(dp) :: time    ! Dimensional time
-    real(dp) :: time_nd        ! Non-dimensional time
-    real(dp) :: last_time       ! Time lagging by dt
+    real(dp) :: last_time_updated  ! Time of last physics update (diffusion/eddy event)
     real(dp) :: dt                 ! Dimensional time step
-    real(dp) :: dt_nd             ! Non-Dimensional time step
-    real(dp) :: delta_time_nd
-    real(dp) :: delta_time
-    real(dp) :: diffusion_step             ! Difussive Time Step
+    real(dp) :: delta_time         ! Dimensional time since last diffusion
+    real(dp) :: diffusion_step     ! Diffusive time step (dimensional, seconds)
     integer(i4) :: Nt = 0       ! Number of timesteps
     integer(i4) :: Nd = 0       ! Number of Diffusion Calls
-
-    integer(i4) :: Np = 0       ! Number of eddy probs. calculated (acc/rej method)
-    integer(i4) :: Na = 0       ! Number of accepted eddies
-    real(dp) :: Pa = 0.         ! Total acceptance probabilitiess
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -187,18 +186,12 @@ module globals
 
     integer(i4) :: Lmax      ! Largest Eddy Size (1/3 of domain, in gridpoints)
     integer(i4) :: LpD          ! Twice the most probable length
-    real(dp) :: time_conv_nd ! Convert between dimensional and nd-time
     real(dp) :: buoy_nd           ! Dimensionless Buoyancy
     real(dp) :: prob_coeff          ! Used in calculation of eddy acceptance probability
     real(dp) :: Co, Cm              ! Used for initial eddy sample guess
-    real(dp) :: t_diff       ! Diffusion Time Step
 
     ! Eddy acceptance/rejection related
     real(dp), allocatable :: prob_eddy_length(:)      ! Probability of eddy sizes
-    real(dp) :: accept_prob                 ! Eddy Acceptance Prob. for eddy w/ (L, M)
-    real(dp) :: pot_energy                  ! Potential Energy
-    real(dp) :: tot_accept_prob             ! Tracker of the aggregate acceptance probabilities
-    integer(i4) :: num_accept_prob          ! Tracker of the number of probabilities calculated
     
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -206,32 +199,58 @@ module globals
     ! ------------------- ARRAYS --------------------
 
     ! Velocity arrays
-    real(dp), allocatable :: W(:), Wdim(:)   ! Velocity components
+    real(dp), allocatable :: W_nd(:)   ! ODT velocity (nondim, energy conservation)
 
     ! Positional arrays
     real(dp), allocatable :: z(:)
 
     ! Scalar arrays
     ! Temperature, Water Vapor (dim and non-dim) and Virt. Temp, Supersaturation
-    real(dp), allocatable :: T(:), WV(:), Tv(:), Tdim(:), WVdim(:), Tvdim(:)
+    real(dp), allocatable :: T_nd(:), WV_nd(:), Tv_nd(:), T(:), WV(:), Tv(:)
     real(dp), allocatable :: SS(:)
 
     ! Statistics
     real(dp) :: statistics(5) ! N, Na, Nu, r_bar, LWC
-
-    ! Integrated Eddy Values
-    real(dp) :: wK, TvK
 
     ! -----------------------------------------------
     ! -----------------------------------------------
 
     ! Read/Write Arrays
 
-    integer :: ncid, ncid_particles
+    integer :: ncid
     ! writout iterators
-    real(dp) :: write_time_iter = 0. ! iterator for write out
     real(dp) :: write_timer
 
+    ! ----------- Turbulence Dispatch ----------------
+    ! Abstract interfaces for mode-agnostic turbulence calls.
+    ! Pointers are set once in initialize_simulation().
+    ! ------------------------------------------------
+
+    abstract interface
+        subroutine diffuse_iface(ldelta_time)
+            import :: dp
+            real(dp), intent(in) :: ldelta_time
+        end subroutine
+
+        subroutine turbulence_iface(ldt, ltime, ldelta_time, &
+                                    leddy_accepted, eddy_loc, eddy_len)
+            import :: dp, i4
+            real(dp), intent(inout) :: ldt
+            real(dp), intent(in) :: ltime, ldelta_time
+            logical, intent(out) :: leddy_accepted
+            integer(i4), intent(out) :: eddy_loc, eddy_len
+        end subroutine
+
+        subroutine sync_iface()
+        end subroutine
+    end interface
+
+    procedure(diffuse_iface), pointer :: diffuse_step => null()
+    procedure(turbulence_iface), pointer :: turbulence_step => null()
+    procedure(sync_iface), pointer :: sync_after_physics => null()
+
+    ! -----------------------------------------------
+    ! -----------------------------------------------
 
 contains
 
@@ -348,5 +367,44 @@ contains
         close(in_unit)
         close(out_unit)
     end subroutine copy_file
+
+
+    subroutine triplet_map(eddy_length, eddy_start, field)
+        ! Applies the triplet map rearrangement to field.
+        ! Uses mod indexing so wrapping eddies on periodic domains are handled
+        ! automatically. For non-periodic domains the mod is a no-op.
+        integer(i4), intent(in) :: eddy_length, eddy_start
+        real(dp), intent(inout) :: field(:)
+
+        real(dp) :: mapped_values(eddy_length)
+        integer(i4) :: j, source_index, dest_index, segment_length
+
+        segment_length = eddy_length / 3
+
+        ! Segment 1: every 3rd element, forward
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*(j-1) - 1, N) + 1
+            mapped_values(j) = field(source_index)
+        end do
+
+        ! Segment 2: every 3rd element, reversed (block inversion)
+        do j = 1, segment_length
+            source_index = mod(eddy_start + eddy_length - 3*j, N) + 1
+            mapped_values(j + segment_length) = field(source_index)
+        end do
+
+        ! Segment 3: every 3rd element, forward offset by 2
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*j - 2, N) + 1
+            mapped_values(j + 2*segment_length) = field(source_index)
+        end do
+
+        ! Write rearranged values back
+        do j = 1, eddy_length
+            dest_index = mod(eddy_start + j - 2, N) + 1
+            field(dest_index) = mapped_values(j)
+        end do
+
+    end subroutine triplet_map
 
 end module globals

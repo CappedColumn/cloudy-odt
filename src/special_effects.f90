@@ -1,6 +1,6 @@
 module special_effects
     use globals
-    use microphysics, only: saturation_mixing_ratio, update_nondim_scalars
+    use microphysics, only: saturation_mixing_ratio
 
     ! Sidewall Parameters
     logical :: do_sidewalls = .false.
@@ -20,7 +20,8 @@ module special_effects
 contains
 
     subroutine run_special_effects(Tarr, WVarr, delta_t)
-        ! Interface subroutine to main.f90 to run special effects
+        ! Interface subroutine to main.f90 to run special effects.
+        ! Caller is responsible for syncing nondim fields afterward.
         real(dp), intent(in) :: delta_t
         real(dp), intent(inout) :: Tarr(:), WVarr(:)
 
@@ -30,7 +31,6 @@ contains
             if ( sw_iter >= sw_nudging_time ) then
                 call sidewall_fluxes(Tarr, WVarr, sw_iter)
                 sw_iter = 0.
-                call update_nondim_scalars(Tarr, WVarr, Tvdim, T, WV, Tv)
             end if
         end if
 

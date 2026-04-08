@@ -45,6 +45,11 @@ module particle_types
         logical :: activated = .false.
         logical :: fellout = .false.
 
+        ! Collision-coalescence history
+        integer(i4) :: n_collisions = 0              ! times this particle has collided
+        integer(i4) :: n_coalescences = 0            ! times this particle was the keeper in a merge
+        real(dp)    :: radius_before_coalescence = 0.0  ! radius before most recent coalescence
+
     contains
         ! All type-bound procedures begin with "particle_"
         ! Renamed for ease of reading when calling procedures

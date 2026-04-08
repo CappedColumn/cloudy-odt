@@ -10,9 +10,8 @@ module collision_coalescence
     !   - Otherwise: swap adjacency order
     !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
-    use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, H, domain_width, volume_scaling
+    use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling
     use particle_types, only: particle, calculate_terminal_velocity
-    ! use writeout, only: write_collision  ! TODO: uncomment when write_collision is implemented
     implicit none
     private
 
@@ -25,7 +24,10 @@ module collision_coalescence
     integer(i4), public :: collisions_this_step = 0
     integer(i4), public :: coalescences_this_step = 0
 
-    public :: collision_coalescence_step
+    ! Collision output file unit (unformatted stream binary)
+    integer(i4) :: collision_unit
+
+    public :: collision_coalescence_step, initialize_collision_file
 
     ! Event types
     integer, parameter :: EV_PAIR = 1
@@ -205,10 +207,10 @@ contains
                 zcur(keep) = zcur(i)
                 tstamp(keep) = tcur
 
-                ! TODO: Write collision event log when write_collision is implemented
-                ! if (write_collisions) call write_collision( &
-                !     lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                !     r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur)
+                ! Write collision event log
+                if (write_collisions) call write_collision( &
+                    lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
+                    r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur)
 
                 ! Remove killed particle from linked list
                 call unlink_particle(kill, alive, prev, next, head)
@@ -608,5 +610,35 @@ contains
         n_particles = n_particles - n_dead
 
     end subroutine compact_particles
+
+
+    ! =========================================================================
+    ! Collision event binary output
+    ! =========================================================================
+
+    subroutine initialize_collision_file(filename)
+        character(*), intent(in) :: filename
+        integer(i4) :: ierr
+
+        open(newunit=collision_unit, file=trim(filename)//'_collisions.bin', &
+             form='unformatted', access='stream', status='replace', iostat=ierr)
+        if (ierr /= 0) then
+            print *, "Error opening collision data file."
+            stop 1
+        end if
+
+        ! Header: grid size, domain height, domain width, volume scaling
+        write(collision_unit) N, H, domain_width, volume_scaling
+
+    end subroutine initialize_collision_file
+
+
+    subroutine write_collision(id_keep, id_kill, r_keep_m, r_kill_m, r_after_m, position_m, time_s)
+        integer(i4), intent(in) :: id_keep, id_kill
+        real(dp), intent(in) :: r_keep_m, r_kill_m, r_after_m, position_m, time_s
+
+        write(collision_unit) id_keep, id_kill, r_keep_m, r_kill_m, r_after_m, position_m, time_s
+
+    end subroutine write_collision
 
 end module collision_coalescence

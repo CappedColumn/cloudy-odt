@@ -20,6 +20,7 @@ module writeout
     ! Eddy output file unit (unformatted stream binary)
     integer(i4) :: eddy_unit
 
+
     ! Namelist metadata for global attributes (set by create_netcdf)
     character(100) :: nc_simulation_name
     integer(i4) :: nc_write_buffer

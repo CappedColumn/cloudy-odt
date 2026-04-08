@@ -2,6 +2,7 @@ module write_particle
     use netcdf
     use droplets, only: particle, particles, current_n_particles, &
                         trajectory_start, trajectory_end, trajectory_timer
+    use collision_coalescence, only: do_collision_coalescence
     use globals
     use writeout, only: nc_verify
     implicit none
@@ -19,6 +20,8 @@ module write_particle
     integer :: vid_temperature, vid_water_vapor, vid_supersaturation, vid_radius
     integer :: vid_solute_radius, vid_activated, vid_aerosol_category
     integer :: vid_time, vid_row_sizes
+    ! Collision-coalescence trajectory variables (only defined when CC is on)
+    integer :: vid_n_collisions, vid_n_coalescences, vid_radius_before_coalescence
     integer, parameter :: sync_interval = 10
 
 contains
@@ -119,6 +122,25 @@ contains
                          deflate_level=1, shuffle=.true.) )
         call nc_verify( nf90_put_att(pnc_id, vid_aerosol_category, "long_name", "Aerosol Category") )
 
+        ! --- Collision-coalescence variables (only when CC is enabled) ---
+        if (do_collision_coalescence) then
+            call nc_verify( nf90_def_var(pnc_id, "n_collisions", NF90_INT, rec_dimid, vid_n_collisions, &
+                             deflate_level=1, shuffle=.true.) )
+            call nc_verify( nf90_put_att(pnc_id, vid_n_collisions, "long_name", &
+                             "Number of Collisions Experienced") )
+
+            call nc_verify( nf90_def_var(pnc_id, "n_coalescences", NF90_INT, rec_dimid, vid_n_coalescences, &
+                             deflate_level=1, shuffle=.true.) )
+            call nc_verify( nf90_put_att(pnc_id, vid_n_coalescences, "long_name", &
+                             "Number of Coalescences as Keeper") )
+
+            call nc_verify( nf90_def_var(pnc_id, "radius_before_coalescence", NF90_FLOAT, rec_dimid, &
+                             vid_radius_before_coalescence, deflate_level=1, shuffle=.true.) )
+            call nc_verify( nf90_put_att(pnc_id, vid_radius_before_coalescence, "long_name", &
+                             "Radius Before Most Recent Coalescence") )
+            call nc_verify( nf90_put_att(pnc_id, vid_radius_before_coalescence, "units", "um") )
+        end if
+
         ! --- Per-time-step variables (on time_step dimension) ---
 
         call nc_verify( nf90_def_var(pnc_id, "time", NF90_DOUBLE, ts_dimid, vid_time, &
@@ -209,6 +231,19 @@ contains
         ! aerosol_category
         do i = 1, np; int_buf(i) = lparticles(i)%aerosol_category; end do
         call nc_verify( nf90_put_var(pnc_id, vid_aerosol_category, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+        ! Collision-coalescence fields (only when CC is enabled)
+        if (do_collision_coalescence) then
+            do i = 1, np; int_buf(i) = lparticles(i)%n_collisions; end do
+            call nc_verify( nf90_put_var(pnc_id, vid_n_collisions, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+            do i = 1, np; int_buf(i) = lparticles(i)%n_coalescences; end do
+            call nc_verify( nf90_put_var(pnc_id, vid_n_coalescences, int_buf, start=(/record_count+1/), count=(/np/)) )
+
+            do i = 1, np; float_buf(i) = real(lparticles(i)%radius_before_coalescence * um_per_m); end do
+            call nc_verify( nf90_put_var(pnc_id, vid_radius_before_coalescence, float_buf, &
+                             start=(/record_count+1/), count=(/np/)) )
+        end if
 
         deallocate(int_buf, float_buf)
 

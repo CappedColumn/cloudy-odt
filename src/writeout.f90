@@ -27,7 +27,7 @@ module writeout
 
     ! Cached NetCDF variable IDs (populated by create_netcdf)
     integer :: varid_time, varid_T, varid_QV, varid_Tv, varid_S
-    integer :: varid_stats(5)  ! Np, Nact, Nun, Ravg, LWC
+    integer :: varid_stats(7)  ! Np, Nact, Nun, Ravg, LWC, N_collisions, N_coalescences
     integer :: varid_budgets(n_budgets)
 
     public  :: create_netcdf, initialize_buffers, initialize_particle_buffers, &
@@ -70,7 +70,7 @@ contains
         allocate(buffer_Tv(N_grid, buff_len))
         allocate(buffer_SS(N_grid, buff_len))
         allocate(buffer_time(buff_len))
-        allocate(buffer_stats(5, buff_len))
+        allocate(buffer_stats(7, buff_len))
         allocate(buffer_budgets(n_budgets, buff_len))
 
         buffer_T = 0.
@@ -291,6 +291,18 @@ contains
                             deflate_level=1, shuffle=.true.), "nf90_def_var: LWC" )
             call nc_verify( nf90_put_att(lncid, varid_stats(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
             call nc_verify( nf90_put_att(lncid, varid_stats(5), "units", "g/m3"), "nf90_put_att: LWC units")
+
+            call nc_verify( nf90_def_var(lncid, "N_collisions", NF90_INT, t_dimid, varid_stats(6), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: N_collisions" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(6), "long_name", "Number of Collisions Since Last Write"), &
+                            "nf90_put_att: N_collisions, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(6), "units", "#"), "nf90_put_att: N_collisions units")
+
+            call nc_verify( nf90_def_var(lncid, "N_coalescences", NF90_INT, t_dimid, varid_stats(7), &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: N_coalescences" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(7), "long_name", "Number of Coalescences Since Last Write"), &
+                            "nf90_put_att: N_coalescences, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(7), "units", "#"), "nf90_put_att: N_coalescences units")
         end if
 
         ! Budget variables (time dimension only, defined unconditionally)
@@ -348,7 +360,7 @@ contains
 
         if ( do_microphysics ) then
             ! Particle statistics
-            do i = 1, 5
+            do i = 1, 7
                 call nc_verify( nf90_put_var(lncid, varid_stats(i), lstats(i,:), start=(/nc_write_iter/)) )
             end do
 

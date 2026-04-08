@@ -11,6 +11,7 @@ module initialize
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
+    use collision_coalescence, only: write_collisions, initialize_collision_file
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -217,6 +218,7 @@ contains
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_file(file_prefix)
+        if ( write_collisions ) call initialize_collision_file(file_prefix)
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(file_prefix)//'.nml')

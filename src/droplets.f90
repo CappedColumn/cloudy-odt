@@ -2,7 +2,8 @@ module droplets
     use netcdf
     use globals
     use particle_types
-    use collision_coalescence, only: do_collision_coalescence, collision_coalescence_step, wmax_collision
+    use collision_coalescence, only: do_collision_coalescence, collision_coalescence_step, wmax_collision, &
+                                     write_collisions, collisions_this_step, coalescences_this_step
     use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
@@ -12,6 +13,10 @@ module droplets
     integer(i4) :: current_n_particles = 0
     integer(i4) :: total_n_particles = 0
     integer(i4) :: total_n_fellout = 0
+
+    ! Collision-coalescence accumulators (accumulate between writes, reset on stats output)
+    integer(i4) :: collisions_since_write = 0
+    integer(i4) :: coalescences_since_write = 0
     real(dp), allocatable :: particle_bin_edges(:), particle_bins(:)
     integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
     integer(i4) :: n_DSD_bins, n_aer_category
@@ -63,7 +68,11 @@ contains
         call injection_controller(time, particles)
         call move_particles_by_gravity(particles, ldt)
         call update_all_particles(particles, T, WV, Tv, SS)
-        if (do_collision_coalescence) call collision_coalescence_step(particles, current_n_particles, ldt)
+        if (do_collision_coalescence) then
+            call collision_coalescence_step(particles, current_n_particles, ldt)
+            collisions_since_write = collisions_since_write + collisions_this_step
+            coalescences_since_write = coalescences_since_write + coalescences_this_step
+        end if
         call droplet_growth_model(particles, ltime, ldt)
 
     end subroutine update_droplets
@@ -589,7 +598,7 @@ contains
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
-        do_collision_coalescence, wmax_collision
+        do_collision_coalescence, wmax_collision, write_collisions
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -924,6 +933,12 @@ contains
         stats(3) = current_n_particles - Nact ! Unactivated N
         stats(4) = (r_sum / current_n_particles) * um_per_m ! r_bar
         stats(5) = lwc_sum * g_per_kg / domain_volume ! g/m3
+
+        ! Collision-coalescence counts since last write (0 when CC is off)
+        stats(6) = collisions_since_write
+        stats(7) = coalescences_since_write
+        collisions_since_write = 0
+        coalescences_since_write = 0
 
     end subroutine calculate_droplet_statistics
 

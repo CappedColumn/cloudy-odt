@@ -64,15 +64,26 @@ contains
         ! droplet-environment property update, and droplet growth.
         ! Caller is responsible for syncing nondim fields afterward.
         real(dp), intent(in) :: ltime, ldt
+        integer :: i
 
         call injection_controller(time, particles)
-        call move_particles_by_gravity(particles, ldt)
-        call update_all_particles(particles, T, WV, Tv, SS)
+
         if (do_collision_coalescence) then
+            ! CC owns settling across the ldt window (writes back final
+            ! particle positions). Fallout removal and gridcell updates
+            ! match the tail of move_particles_by_gravity.
             call collision_coalescence_step(particles, current_n_particles, ldt)
             collisions_since_write = collisions_since_write + collisions_this_step
             coalescences_since_write = coalescences_since_write + coalescences_this_step
+            call verify_particle_fallout(particles, current_n_particles)
+            do i = 1, current_n_particles
+                call particles(i)%update_gridcell()
+            end do
+        else
+            call move_particles_by_gravity(particles, ldt)
         end if
+
+        call update_all_particles(particles, T, WV, Tv, SS)
         call droplet_growth_model(particles, ltime, ldt)
 
     end subroutine update_droplets

@@ -10,7 +10,8 @@ module collision_coalescence
     !   - Otherwise: swap adjacency order
     !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
-    use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling
+    use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling, &
+                       simulation_mode
     use particle_types, only: particle, calculate_terminal_velocity
     implicit none
     private
@@ -60,11 +61,23 @@ contains
         type(Event), allocatable :: heap(:)
         integer :: hsize
         type(Event) :: ev
+        logical :: is_periodic
 
         n = n_particles
         collisions_this_step = 0
         coalescences_this_step = 0
-        if (n <= 1) return
+
+        ! Periodic boundary: parcel mode wraps via modulo(z, H); no fallout.
+        is_periodic = (trim(simulation_mode) == 'parcel')
+
+        if (n <= 1) then
+            ! Nothing to collide — still advance settling so CC owns this path
+            do i = 1, n
+                call lparticles(i)%settling(ldt)
+                if (is_periodic) lparticles(i)%position = modulo(lparticles(i)%position, H)
+            end do
+            return
+        end if
 
         ! Cross-sectional area of the statistical volume
         A = domain_width**2 * volume_scaling
@@ -126,8 +139,20 @@ contains
             end if
         end do
 
-        ! Compact particle array: remove dead particles
-        call compact_particles(lparticles, alive, n_particles)
+        ! Position writeback: CC now owns settling.
+        ! Step 1 (isolation stubs): no merges/fallout inside CC, so a single-step
+        ! settling advance on the original particle position is bitwise identical
+        ! to what move_particles_by_gravity used to do. Dead particles (from
+        ! handle_fall_event in chamber mode) get z<0 so verify_particle_fallout
+        ! can remove them in the caller.
+        do i = 1, n
+            if (alive(i)) then
+                call lparticles(i)%settling(ldt)
+                if (is_periodic) lparticles(i)%position = modulo(lparticles(i)%position, H)
+            else
+                lparticles(i)%position = -1.0_dp
+            end if
+        end do
 
         deallocate(zcur, w_fall, tstamp, alive, ord, prev, next, heap)
 
@@ -587,33 +612,6 @@ contains
             k = smallest
         end do
     end subroutine heap_pop
-
-
-    ! =========================================================================
-    ! Particle array compaction
-    ! =========================================================================
-
-    subroutine compact_particles(lparticles, alive, n_particles)
-        ! Remove dead particles by compacting the array.
-        ! Same pattern as verify_particle_fallout in droplets.f90
-        type(particle), intent(inout) :: lparticles(:)
-        logical, intent(in) :: alive(:)
-        integer(i4), intent(inout) :: n_particles
-        integer :: i, n_dead
-
-        n_dead = 0
-        do i = 1, n_particles
-            if (.not. alive(i)) then
-                n_dead = n_dead + 1
-            else
-                if (n_dead > 0) then
-                    lparticles(i - n_dead) = lparticles(i)
-                end if
-            end if
-        end do
-        n_particles = n_particles - n_dead
-
-    end subroutine compact_particles
 
 
     ! =========================================================================

@@ -73,6 +73,40 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 
 Executable invocation: `codt <NAMELIST_PATH>`. Relative paths (`aerosol_file`, `bin_data_file`) resolve from namelist's parent directory. `output_directory` must be absolute. No argument → error + `stop 1`. Corresponding spec in `~/dev/CODT_tools/CLAUDE.md`.
 
+## Known Fragilities / Future Cleanup
+
+### Collision-coalescence ↔ droplet fallout interface
+
+`collision_coalescence_step` communicates "this particle fell out" to
+`verify_particle_fallout` by setting `lparticles(i)%position = -1.0_dp`
+in its writeback loop. `verify_particle_fallout` then detects `position
+< 0` and finishes the bookkeeping (sets `%fellout`, compacts the array,
+bumps `total_n_fellout`). This works, but is fragile:
+
+- **Order-of-calls coupling.** Nothing between CC's writeback and the
+  `verify_particle_fallout` call is allowed to read `%fellout` (still
+  `.false.` at that point) or `%position` (sentinel `-1.0` would look
+  like a bogus location) without knowing about the contract. Any new
+  step inserted in `update_droplets` between CC and
+  `verify_particle_fallout` would need to respect or update this.
+- **`do_random_fallout` override.** When CC's `handle_fall_event` marks
+  a particle dead and the writeback sets `position = -1`,
+  `verify_particle_fallout` may instead recycle that particle to the
+  top of the domain via `random_fallout` (if `do_random_fallout =
+  .true.`). That's the special effect's design, but it means CC's
+  decision can be "undone" by a downstream module. CC has no awareness
+  of `do_random_fallout`.
+- **`total_n_fellout` counter lives in droplets.** CC increments its
+  own `collisions_this_step` / `coalescences_this_step`, but the
+  fellout counter is bumped by `verify_particle_fallout`. Two
+  mechanisms in two modules for closely-related events.
+
+Future cleanup idea: give CC a proper "event → particle state" sink
+interface (e.g. a subroutine it calls for each removal/merge) instead
+of piggy-backing on `position < 0` sentinels. That would make the
+contract explicit and the code easier to read without having to trace
+the whole call chain.
+
 ## Planned Modifications
 
 ### 7. Add predetermined eddies mode

@@ -24,6 +24,7 @@ module collision_coalescence
     ! Per-step counters (reset each call to collision_coalescence_step)
     integer(i4), public :: collisions_this_step = 0
     integer(i4), public :: coalescences_this_step = 0
+    integer(i4), public :: fall_events_this_step = 0
 
     ! Collision output file unit (unformatted stream binary)
     integer(i4) :: collision_unit
@@ -66,6 +67,7 @@ contains
         n = n_particles
         collisions_this_step = 0
         coalescences_this_step = 0
+        fall_events_this_step = 0
 
         ! Periodic boundary: parcel mode wraps via modulo(z, H); no fallout.
         is_periodic = (trim(simulation_mode) == 'parcel')
@@ -108,11 +110,13 @@ contains
         ! Seed event queue with pair-passing events
         call push_all_pair_events(heap, hsize, zcur, tstamp, w_fall, alive, next, head, n, ldt, tcur)
 
-        ! Seed fallout events (non-periodic domain, z=0 is bottom)
-        ! TEMP: isolation test — skip fallout seeding so CC mutates no particle state
-        ! do i = 1, n
-        !     call push_fall_event(heap, hsize, i, zcur, tstamp, w_fall, alive, ldt, tcur)
-        ! end do
+        ! Seed fallout events (chamber mode only; parcel mode wraps via
+        ! modulo at writeback and no particle exits the domain).
+        if (.not. is_periodic) then
+            do i = 1, n
+                call push_fall_event(heap, hsize, i, zcur, tstamp, w_fall, alive, ldt, tcur)
+            end do
+        end if
 
         ! Main event loop
         do
@@ -139,16 +143,19 @@ contains
             end if
         end do
 
-        ! Position writeback: CC now owns settling.
-        ! Step 1 (isolation stubs): no merges/fallout inside CC, so a single-step
-        ! settling advance on the original particle position is bitwise identical
-        ! to what move_particles_by_gravity used to do. Dead particles (from
-        ! handle_fall_event in chamber mode) get z<0 so verify_particle_fallout
-        ! can remove them in the caller.
+        ! Position writeback: CC owns settling. Use update_working_pos to
+        ! advance each alive particle's internal position (zcur) to t=ldt,
+        ! accounting for piecewise velocity changes at merge events. Dead
+        ! particles (from handle_fall_event) get z<0 so verify_particle_fallout
+        ! removes them in the caller.
         do i = 1, n
             if (alive(i)) then
-                call lparticles(i)%settling(ldt)
-                if (is_periodic) lparticles(i)%position = modulo(lparticles(i)%position, H)
+                call update_working_pos(i, ldt, zcur, tstamp, w_fall)
+                if (is_periodic) then
+                    lparticles(i)%position = modulo(zcur(i), H)
+                else
+                    lparticles(i)%position = zcur(i)
+                end if
             else
                 lparticles(i)%position = -1.0_dp
             end if
@@ -197,7 +204,7 @@ contains
 
             ! Stage 2: Coalescence check (collection efficiency E)
             ! E = 1.0 for now (all collisions coalesce)
-            E_coal = 0.0  ! TEMP: E=0 isolation test — collisions detected, no merges
+            E_coal = 0.0  ! TEMP: E=0 isolation test
 
             if (E_coal >= 1.0) then
                 ! Coalescence: merge particles, conserving mass
@@ -299,6 +306,7 @@ contains
         ip = prev(i)
         call unlink_particle(i, alive, prev, next, head)
         alive(i) = .false.
+        fall_events_this_step = fall_events_this_step + 1
 
         ! Reschedule neighbor pair
         if (ip > 0) call push_pair_for_i(ip, heap, hsize, zcur, tstamp, w_fall, alive, next, dt, tcur)

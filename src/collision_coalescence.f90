@@ -27,7 +27,7 @@ module collision_coalescence
     ! Collision output file unit (unformatted stream binary)
     integer(i4) :: collision_unit
 
-    public :: collision_coalescence_step, initialize_collision_file
+    public :: collision_coalescence_step, initialize_collision_file, seed_cc_rng
 
     ! Event types
     integer, parameter :: EV_PAIR = 1
@@ -38,6 +38,9 @@ module collision_coalescence
         integer  :: typ     ! EV_PAIR or EV_FALL
         integer  :: i, j    ! particle indices (j=0 for fall events)
     end type Event
+
+    ! Independent xoshiro256** PRNG state (does not affect global random_number)
+    integer(8) :: rng_s(4) = [123456789_8, 362436069_8, 521288629_8, 88675123_8]
 
 contains
 
@@ -93,9 +96,10 @@ contains
         call push_all_pair_events(heap, hsize, zcur, tstamp, w_fall, alive, next, head, n, ldt, tcur)
 
         ! Seed fallout events (non-periodic domain, z=0 is bottom)
-        do i = 1, n
-            call push_fall_event(heap, hsize, i, zcur, tstamp, w_fall, alive, ldt, tcur)
-        end do
+        ! TEMP: isolation test — skip fallout seeding so CC mutates no particle state
+        ! do i = 1, n
+        !     call push_fall_event(heap, hsize, i, zcur, tstamp, w_fall, alive, ldt, tcur)
+        ! end do
 
         ! Main event loop
         do
@@ -158,7 +162,7 @@ contains
         p_coll = pi * (lparticles(i)%radius + lparticles(j)%radius)**2 / A
         if (p_coll > 1.0) p_coll = 1.0
 
-        call random_number(u_coll)
+        u_coll = cc_random()
 
         if (u_coll < p_coll) then
             ! Collision occurred
@@ -168,7 +172,7 @@ contains
 
             ! Stage 2: Coalescence check (collection efficiency E)
             ! E = 1.0 for now (all collisions coalesce)
-            E_coal = 1.0
+            E_coal = 0.0  ! TEMP: E=0 isolation test — collisions detected, no merges
 
             if (E_coal >= 1.0) then
                 ! Coalescence: merge particles, conserving mass
@@ -640,5 +644,49 @@ contains
         write(collision_unit) id_keep, id_kill, r_keep_m, r_kill_m, r_after_m, position_m, time_s
 
     end subroutine write_collision
+
+
+    ! =========================================================================
+    ! Independent PRNG (xoshiro256** — does not affect global random_number)
+    ! =========================================================================
+
+    subroutine seed_cc_rng(seed_val)
+        ! Seed the CC PRNG from a single integer. Uses splitmix64 to fill state.
+        integer(8), intent(in) :: seed_val
+        integer(8) :: z
+        integer :: k
+
+        z = seed_val
+        do k = 1, 4
+            z = z + 6364136223846793005_8
+            z = ieor(z, ishft(z, -30)) * (-4658895280553007687_8)
+            z = ieor(z, ishft(z, -27)) * (-7723592293110705685_8)
+            z = ieor(z, ishft(z, -31))
+            rng_s(k) = z
+        end do
+    end subroutine seed_cc_rng
+
+
+    function cc_random() result(u)
+        ! Return a uniform random number in [0, 1) from the CC-private PRNG.
+        real(dp) :: u
+        integer(8) :: res, t
+
+        res = rng_s(2) * 5_8
+        res = ior(ishft(res, 7), ishft(res, -57)) * 9_8
+
+        t = ishft(rng_s(2), 17)
+
+        rng_s(3) = ieor(rng_s(3), rng_s(1))
+        rng_s(4) = ieor(rng_s(4), rng_s(2))
+        rng_s(2) = ieor(rng_s(2), rng_s(3))
+        rng_s(1) = ieor(rng_s(1), rng_s(4))
+
+        rng_s(3) = ieor(rng_s(3), t)
+        rng_s(4) = ior(ishft(rng_s(4), 45), ishft(rng_s(4), -19))
+
+        ! Convert to [0, 1): use upper 53 bits for double precision
+        u = real(ishft(res, -11), dp) * (1.0 / 9007199254740992.0)
+    end function cc_random
 
 end module collision_coalescence

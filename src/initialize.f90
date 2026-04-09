@@ -48,6 +48,7 @@ contains
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
             if ( write_trajectories ) call initialize_write_particle(file_prefix)
+            if ( write_collisions ) call initialize_collision_file(file_prefix)
         end if
 
         if ( do_special_effects ) then
@@ -218,7 +219,6 @@ contains
         ! Initialize buffers for writing to netCDF
         call initialize_buffers(write_buffer, N)
         if ( write_eddies ) call initialize_eddy_file(file_prefix)
-        if ( write_collisions ) call initialize_collision_file(file_prefix)
 
         ! Copy original namelist file to output directory
         call copy_file(namelist_path, trim(file_prefix)//'.nml')

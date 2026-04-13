@@ -68,6 +68,10 @@ module droplets
     integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
     integer(i4) :: n_DSD_bins, n_aer_category
 
+    ! Cached NetCDF variable IDs for DSD variables
+    integer :: dsd_varid
+    integer, allocatable :: aerDSD_varids(:)
+
     ! Arrays to hold all particles and aerosol types
     type(particle), allocatable :: particles(:) ! allocated in initialize_microphysics()
     type(aerosol), allocatable :: aerosols(:) ! allocated in read_aerosol_netcdf()
@@ -853,7 +857,7 @@ contains
         integer, intent(in) :: lncid
         real(dp), intent(in) :: r_bins(:)
 
-        integer :: t_dimid, r_dimid, r_varid, dsd_varid, nbins, dimids(2)
+        integer :: t_dimid, r_dimid, r_varid, nbins, dimids(2)
         integer :: re_dimid, re_varid
 
         nbins = size(r_bins)
@@ -896,7 +900,7 @@ contains
         integer :: i
         character(100) :: name, strint
 
-        integer :: t_dimid, r_dimid, dsd_varid, nbins, dimids(2)
+        integer :: t_dimid, r_dimid, nbins, dimids(2)
 
         ! Get dimension IDs
         call nc_verify( nf90_inq_dimid(lncid, "time", t_dimid))
@@ -905,14 +909,15 @@ contains
         ! Open netcdf in definition mode, and create a DSD for each aerosol partition
         dimids = (/ r_dimid, t_dimid /)
         call nc_verify( nf90_redef(lncid), "nf90_redef: DSD_aerr" )
+        allocate(aerDSD_varids(n_DSDs))
         do i = 1, n_DSDs
             write(strint,*) i
             name = "DSD_" // adjustl(strint)
-            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid, &
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, aerDSD_varids(i), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: DSD_aer" )
             name = "Droplet Size Distribution - " // adjustl(strint)
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
+            call nc_verify( nf90_put_att(lncid, aerDSD_varids(i), "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, aerDSD_varids(i), "units", "#"), "nf90_put_att: DSD_aer, units")
 
         end do
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD_aer")

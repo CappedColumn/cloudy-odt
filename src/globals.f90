@@ -224,6 +224,7 @@ module globals
     ! ----------- Budget Accumulators -----------------
     ! Accumulated over each write interval, then reset.
     ! -------------------------------------------------
+    integer(i4), parameter :: n_budgets = 12
     real(dp) :: budget_inject_solute_mass = 0.0
     real(dp) :: budget_inject_liquid_mass = 0.0
     real(dp) :: budget_fallout_liquid_mass = 0.0

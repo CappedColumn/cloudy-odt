@@ -620,11 +620,16 @@ contains
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: time_start, time_stop, time_iterate
         real(dp) :: y_arr(8), y_before(8), inverse_grid_mass, grid_rho
+        real(dp) :: wl_before, T_before
         logical :: substep_flag
 
         ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
         inverse_grid_mass = 1.0 / (gridcell_volume*grid_rho)
+
+        ! Save pre-growth state for budget tracking
+        wl_before = droplet%water_liquid
+        T_before = droplet%temperature
 
         ! set odeint parameters for different aerosol mass of each droplet
         call set_aerosol_properties(1, droplet%solute_gross_mass, inverse_grid_mass)
@@ -680,6 +685,10 @@ contains
         droplet%water_liquid = y_arr(8)
         droplet%supersaturation = calc_supersat(droplet%temperature, droplet%water_vapor, pres)
         droplet%virt_temp = virtual_temp(droplet%temperature, droplet%water_vapor)
+
+        ! Accumulate condensation/evaporation budget
+        budget_condensation = budget_condensation + (droplet%water_liquid - wl_before)
+        budget_dgm_delta_T = budget_dgm_delta_T + (droplet%temperature - T_before)
 
     end subroutine single_droplet_growth
 

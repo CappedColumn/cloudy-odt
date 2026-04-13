@@ -421,11 +421,18 @@ contains
 
     subroutine odt_diffuse_step(ldelta_time)
         real(dp), intent(in) :: ldelta_time
+        real(dp) :: T_sum_before, WV_sum_before
+
+        T_sum_before = sum(T)
+        WV_sum_before = sum(WV)
 
         Nd = Nd + 1
         call diffusion(ldelta_time)
         call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         call update_supersat(T, WV, SS, pres)
+
+        budget_diffusion_delta_T = budget_diffusion_delta_T + (sum(T) - T_sum_before)
+        budget_diffusion_delta_WV = budget_diffusion_delta_WV + (sum(WV) - WV_sum_before)
 
     end subroutine odt_diffuse_step
 

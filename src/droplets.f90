@@ -218,6 +218,11 @@ contains
 
         call injected_particle%update_gridcell()
 
+        ! Accumulate budget
+        budget_inject_solute_mass = budget_inject_solute_mass + injected_particle%solute_gross_mass
+        budget_inject_liquid_mass = budget_inject_liquid_mass + injected_particle%water_liquid
+        budget_n_injected = budget_n_injected + 1
+
         ! Index newly injected particle object into array of current particles
         lparticles_array(current_n_particles) = injected_particle
 
@@ -332,7 +337,9 @@ contains
             if ( lparticle_array(i)%fellout ) then
                 total_n_fellout = total_n_fellout + 1
                 n_just_fellout = n_just_fellout + 1
-                ! FUTURE: Get statistics of particles that fellout
+                budget_fallout_liquid_mass = budget_fallout_liquid_mass + lparticle_array(i)%water_liquid
+                budget_fallout_solute_mass = budget_fallout_solute_mass + lparticle_array(i)%solute_gross_mass
+                budget_n_fellout = budget_n_fellout + 1
             else
                 ! Reassign array position of particles still in domain to 
                 ! fill in gaps of particles that fell out, saves space 

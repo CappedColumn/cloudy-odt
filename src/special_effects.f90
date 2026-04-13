@@ -94,11 +94,14 @@ contains
     end subroutine initialize_sidewalls
 
     subroutine sidewall_fluxes(Tarr, WVarr, delta_t)
-        ! Nudges scalar fields be the sidewall values
+        ! Nudges scalar fields by the sidewall values
         real(dp), intent(inout) :: Tarr(:), WVarr(:)
         real(dp), intent(in) :: delta_t
-        real(dp) :: time_ratio
+        real(dp) :: time_ratio, T_sum_before, WV_sum_before
         integer :: k
+
+        T_sum_before = sum(Tarr)
+        WV_sum_before = sum(WVarr)
 
         time_ratio = delta_t * tau_sw
 
@@ -106,6 +109,9 @@ contains
             Tarr(k) = Tarr(k) + (T_sw - Tarr(k)) * time_ratio
             WVarr(k) = WVarr(k) + (WV_sw - WVarr(k)) * time_ratio
         end do
+
+        budget_sidewall_delta_T = budget_sidewall_delta_T + (sum(Tarr) - T_sum_before)
+        budget_sidewall_delta_WV = budget_sidewall_delta_WV + (sum(WVarr) - WV_sum_before)
 
     end subroutine sidewall_fluxes
 

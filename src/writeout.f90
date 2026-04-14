@@ -4,7 +4,8 @@ module writeout
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
                         size_distribution, n_aer_category, init_drop_each_gridpoint, &
                         expected_Ndrops_per_gridpoint, write_trajectories, trajectory_start, &
-                        trajectory_end, trajectory_timer, initial_wet_radius
+                        trajectory_end, trajectory_timer, initial_wet_radius, &
+                        dsd_varid, aerDSD_varids
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     implicit none
@@ -13,6 +14,7 @@ module writeout
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)
     real(dp), allocatable :: buffer_SS(:,:), buffer_time(:), buffer_stats(:,:)
+    real(dp), allocatable :: buffer_budgets(:,:) ! (n_budgets, buffer_size)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
     ! Eddy output file unit (unformatted stream binary)
@@ -21,6 +23,11 @@ module writeout
     ! Namelist metadata for global attributes (set by create_netcdf)
     character(100) :: nc_simulation_name
     integer(i4) :: nc_write_buffer
+
+    ! Cached NetCDF variable IDs (populated by create_netcdf)
+    integer :: varid_time, varid_T, varid_QV, varid_Tv, varid_S
+    integer :: varid_stats(5)  ! Np, Nact, Nun, Ravg, LWC
+    integer :: varid_budgets(n_budgets)
 
     public  :: create_netcdf, initialize_buffers, initialize_particle_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
@@ -42,6 +49,7 @@ contains
                 call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
             end if
             call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+            call reset_budgets()
             write_time_iter = mod(write_time_iter, write_timer)
         end if
 
@@ -62,6 +70,7 @@ contains
         allocate(buffer_SS(N_grid, buff_len))
         allocate(buffer_time(buff_len))
         allocate(buffer_stats(5, buff_len))
+        allocate(buffer_budgets(n_budgets, buff_len))
 
         buffer_T = 0.
         buffer_WV = 0.
@@ -69,6 +78,7 @@ contains
         buffer_SS = 0.
         buffer_time = 0.
         buffer_stats = 0.
+        buffer_budgets = 0.
 
     end subroutine initialize_buffers
     
@@ -105,6 +115,18 @@ contains
             buffer_SS(:, buffer_count) = lSS
             buffer_stats(:, buffer_count) = lstats
             buffer_DSD(:, :, buffer_count) = lDSD
+            buffer_budgets(1,  buffer_count) = budget_inject_solute_mass
+            buffer_budgets(2,  buffer_count) = budget_inject_liquid_mass
+            buffer_budgets(3,  buffer_count) = budget_fallout_liquid_mass
+            buffer_budgets(4,  buffer_count) = budget_fallout_solute_mass
+            buffer_budgets(5,  buffer_count) = budget_condensation
+            buffer_budgets(6,  buffer_count) = budget_dgm_delta_T
+            buffer_budgets(7,  buffer_count) = budget_diffusion_delta_T
+            buffer_budgets(8,  buffer_count) = budget_diffusion_delta_WV
+            buffer_budgets(9,  buffer_count) = budget_sidewall_delta_T
+            buffer_budgets(10, buffer_count) = budget_sidewall_delta_WV
+            buffer_budgets(11, buffer_count) = real(budget_n_injected, dp)
+            buffer_budgets(12, buffer_count) = real(budget_n_fellout, dp)
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
@@ -137,6 +159,17 @@ contains
 
     end subroutine write_eddy
 
+    subroutine define_budget_var(lncid, t_dimid, idx, varname, long_name, units)
+        integer, intent(in) :: lncid, t_dimid, idx
+        character(*), intent(in) :: varname, long_name, units
+
+        call nc_verify( nf90_def_var(lncid, varname, NF90_DOUBLE, t_dimid, varid_budgets(idx), &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: "//varname )
+        call nc_verify( nf90_put_att(lncid, varid_budgets(idx), "long_name", long_name), "nf90_put_att: "//varname//", name" )
+        call nc_verify( nf90_put_att(lncid, varid_budgets(idx), "units", units), "nf90_put_att: "//varname//", units" )
+
+    end subroutine define_budget_var
+
     subroutine flush_buffer()
         ! writes the buffer to the netCDF file and resets buffer position
         call write_netcdf_profiles(ncid, buffer_time(1:buffer_count), &
@@ -145,7 +178,8 @@ contains
                                         buffer_Tv(:, 1:buffer_count), &
                                         buffer_SS(:, 1:buffer_count), &
                                         buffer_DSD(:, :, 1:buffer_count), &
-                                        buffer_stats(:, 1:buffer_count))
+                                        buffer_stats(:, 1:buffer_count), &
+                                        buffer_budgets(:, 1:buffer_count))
         call nc_verify( nf90_sync(ncid) )
         buffer_count = 0
 
@@ -162,10 +196,7 @@ contains
         logical :: file_exists
         integer :: old_nc, stat
         integer :: t_dimid, z_dimid, dimids(2)
-        ! Variable initialization
-        integer :: t_varid, z_varid
-        integer :: tc_varid, qv_varid, s_varid, tv_varid
-        integer :: statids(5)
+        integer :: z_varid
         integer :: j, k, nz, nbins
 
         nz = size(z_m)
@@ -203,63 +234,77 @@ contains
                         deflate_level=1, shuffle=.true.), "nf90_def_var: z" )
         call nc_verify( nf90_put_att(lncid, z_varid, "long_name", "Height"), "nf90_put_att: z, name" )
         call nc_verify( nf90_put_att(lncid, z_varid, "units", "meters"), "nf90_put_att: z, units" )
-        call nc_verify( nf90_def_var(lncid, "time", NF90_FLOAT, t_dimid, t_varid, &
+        call nc_verify( nf90_def_var(lncid, "time", NF90_FLOAT, t_dimid, varid_time, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: time" )
-        call nc_verify( nf90_put_att(lncid, t_varid, "long_name", "Time"), "nf90_put_att: time, name" )
-        call nc_verify( nf90_put_att(lncid, t_varid, "units", "seconds"), "nf90_put_att: time, units" )
+        call nc_verify( nf90_put_att(lncid, varid_time, "long_name", "Time"), "nf90_put_att: time, name" )
+        call nc_verify( nf90_put_att(lncid, varid_time, "units", "seconds"), "nf90_put_att: time, units" )
 
-    
+
         ! Note, netCDF will write out variables in (time, height) order
         dimids = (/ z_dimid, t_dimid /) ! Standard time/height dimensions
-        call nc_verify( nf90_def_var(lncid, "T", NF90_FLOAT, dimids, tc_varid, &
+        call nc_verify( nf90_def_var(lncid, "T", NF90_FLOAT, dimids, varid_T, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: T" )
-        call nc_verify( nf90_put_att(lncid, tc_varid, "long_name", "Temperature"), "nf90_put_att: T, name" )
-        call nc_verify( nf90_put_att(lncid, tc_varid, "units", "celsius"), "nf90_put_att: T, units" )
-        
-        call nc_verify( nf90_def_var(lncid, "QV", NF90_FLOAT, dimids, qv_varid, &
-                        deflate_level=1, shuffle=.true.), "nf90_def_var: QV" )
-        call nc_verify( nf90_put_att(lncid, qv_varid, "long_name", "Water Vapor Mixing Ratio"), "nf90_put_att: QV, name" )
-        call nc_verify( nf90_put_att(lncid, qv_varid, "units", "g/kg"), "nf90_put_att: QV, units")
+        call nc_verify( nf90_put_att(lncid, varid_T, "long_name", "Temperature"), "nf90_put_att: T, name" )
+        call nc_verify( nf90_put_att(lncid, varid_T, "units", "celsius"), "nf90_put_att: T, units" )
 
-        call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, tv_varid, &
+        call nc_verify( nf90_def_var(lncid, "QV", NF90_FLOAT, dimids, varid_QV, &
+                        deflate_level=1, shuffle=.true.), "nf90_def_var: QV" )
+        call nc_verify( nf90_put_att(lncid, varid_QV, "long_name", "Water Vapor Mixing Ratio"), "nf90_put_att: QV, name" )
+        call nc_verify( nf90_put_att(lncid, varid_QV, "units", "g/kg"), "nf90_put_att: QV, units")
+
+        call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, varid_Tv, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: Tv" )
-        call nc_verify( nf90_put_att(lncid, tv_varid, "long_name", "Virtual Temperature"), "nf90_put_att: Tv, name" )
-        call nc_verify( nf90_put_att(lncid, tv_varid, "units", "celsius"), "nf90_put_att: Tv, units")
-        
-        call nc_verify( nf90_def_var(lncid, "S", NF90_FLOAT, dimids, s_varid, &
+        call nc_verify( nf90_put_att(lncid, varid_Tv, "long_name", "Virtual Temperature"), "nf90_put_att: Tv, name" )
+        call nc_verify( nf90_put_att(lncid, varid_Tv, "units", "celsius"), "nf90_put_att: Tv, units")
+
+        call nc_verify( nf90_def_var(lncid, "S", NF90_FLOAT, dimids, varid_S, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: S" )
-        call nc_verify( nf90_put_att(lncid, s_varid, "long_name", "Supersaturation"), "nf90_put_att: S, name" )
-        call nc_verify( nf90_put_att(lncid, s_varid, "units", "%"), "nf90_put_att: S, units")
+        call nc_verify( nf90_put_att(lncid, varid_S, "long_name", "Supersaturation"), "nf90_put_att: S, name" )
+        call nc_verify( nf90_put_att(lncid, varid_S, "units", "%"), "nf90_put_att: S, units")
 
 
 
         ! Particle statistic variables (only when microphysics is enabled)
         if ( do_microphysics ) then
-            call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, statids(1), &
+            call nc_verify( nf90_def_var(lncid, "Np", NF90_INT, t_dimid, varid_stats(1), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Np" )
-            call nc_verify( nf90_put_att(lncid, statids(1), "long_name", "Number of Particles"), "nf90_put_att: Np, name" )
-            call nc_verify( nf90_put_att(lncid, statids(1), "units", "#"), "nf90_put_att: Np units")
+            call nc_verify( nf90_put_att(lncid, varid_stats(1), "long_name", "Number of Particles"), "nf90_put_att: Np, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(1), "units", "#"), "nf90_put_att: Np units")
 
-            call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, statids(2), &
+            call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, varid_stats(2), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Nact" )
-            call nc_verify( nf90_put_att(lncid, statids(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
-            call nc_verify( nf90_put_att(lncid, statids(2), "units", "#"), "nf90_put_att: Nact units")
+            call nc_verify( nf90_put_att(lncid, varid_stats(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(2), "units", "#"), "nf90_put_att: Nact units")
 
-            call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, statids(3), &
+            call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, varid_stats(3), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Nun" )
-            call nc_verify( nf90_put_att(lncid, statids(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
-            call nc_verify( nf90_put_att(lncid, statids(3), "units", "#"), "nf90_put_att: Nun units")
+            call nc_verify( nf90_put_att(lncid, varid_stats(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(3), "units", "#"), "nf90_put_att: Nun units")
 
-            call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, statids(4), &
+            call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, varid_stats(4), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Ravg" )
-            call nc_verify( nf90_put_att(lncid, statids(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
-            call nc_verify( nf90_put_att(lncid, statids(4), "units", "um"), "nf90_put_att: Ravg units")
+            call nc_verify( nf90_put_att(lncid, varid_stats(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(4), "units", "um"), "nf90_put_att: Ravg units")
 
-            call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, statids(5), &
+            call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, varid_stats(5), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: LWC" )
-            call nc_verify( nf90_put_att(lncid, statids(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
-            call nc_verify( nf90_put_att(lncid, statids(5), "units", "g/m3"), "nf90_put_att: LWC units")
+            call nc_verify( nf90_put_att(lncid, varid_stats(5), "long_name", "Liquid Water Content"), "nf90_put_att: LWC, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(5), "units", "g/m3"), "nf90_put_att: LWC units")
         end if
+
+        ! Budget variables (time dimension only, defined unconditionally)
+        call define_budget_var(lncid, t_dimid, 1,  "budget_inject_solute_mass",  "Accumulated injected solute mass",          "kg")
+        call define_budget_var(lncid, t_dimid, 2,  "budget_inject_liquid_mass",  "Accumulated injected liquid water mass",    "kg")
+        call define_budget_var(lncid, t_dimid, 3,  "budget_fallout_liquid_mass", "Accumulated liquid water removed by fallout","kg")
+        call define_budget_var(lncid, t_dimid, 4,  "budget_fallout_solute_mass", "Accumulated solute mass removed by fallout","kg")
+        call define_budget_var(lncid, t_dimid, 5,  "budget_condensation",        "Net liquid water change from cond/evap",    "kg")
+        call define_budget_var(lncid, t_dimid, 6,  "budget_dgm_delta_T",         "Sum of per-droplet temperature changes from DGM", "K")
+        call define_budget_var(lncid, t_dimid, 7,  "budget_diffusion_delta_T",   "Domain-sum T change from diffusion",        "K")
+        call define_budget_var(lncid, t_dimid, 8,  "budget_diffusion_delta_WV",  "Domain-sum WV change from diffusion",       "kg/kg")
+        call define_budget_var(lncid, t_dimid, 9,  "budget_sidewall_delta_T",    "Domain-sum T change from sidewall nudging", "K")
+        call define_budget_var(lncid, t_dimid, 10, "budget_sidewall_delta_WV",   "Domain-sum WV change from sidewall nudging","kg/kg")
+        call define_budget_var(lncid, t_dimid, 11, "budget_n_injected",          "Number of particles injected",              "#")
+        call define_budget_var(lncid, t_dimid, 12, "budget_n_fellout",           "Number of particles fallen out",            "#")
 
         ! Exit define mode, however netCDF is still open
         call nc_verify( nf90_enddef(lncid), "nf90_enddef" )
@@ -272,15 +317,14 @@ contains
     end subroutine create_netcdf
 
 
-    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lDSD, lstats)
+    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lDSD, lstats, lbudgets)
         integer(i4), intent(in) :: lncid
         real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lstats(:,:)
+        real(dp), intent(in) :: lbudgets(:,:)
         integer(i4), intent(in) :: lDSD(:,:,:)
 
-        integer :: varids(5), DSDid, i
-        integer :: statids(5), time_len, z_len, bin_len
+        integer :: i, time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
-        character(100) :: varname, strint
 
         ! netCDF profile variables are (time, height) dimensions
         time_len = size(ltime,1)
@@ -294,53 +338,43 @@ contains
         count_dim = (/z_len, time_len/)
         start_dim = (/1, nc_write_iter/)
 
-        ! Get variable IDs
-        call nc_verify( nf90_inq_varid(lncid, "time", varids(1)) )
-        call nc_verify( nf90_inq_varid(lncid, "T", varids(2)) )
-        call nc_verify( nf90_inq_varid(lncid, "QV", varids(3)) )
-        call nc_verify( nf90_inq_varid(lncid, "Tv", varids(4)) )
-        call nc_verify( nf90_inq_varid(lncid, "S", varids(5)) )
-
-        ! Write to variable slots
-        call nc_verify( nf90_put_var(lncid, varids(1), ltime, start=(/nc_write_iter/)) )
-        call nc_verify( nf90_put_var(lncid, varids(2), lT, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(lncid, varids(3), lWV, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(lncid, varids(4), lTv, start=start_dim, count=count_dim) )
-        call nc_verify( nf90_put_var(lncid, varids(5), lSS, start=start_dim, count=count_dim) )
+        ! Write profile variables using cached varids
+        call nc_verify( nf90_put_var(lncid, varid_time, ltime, start=(/nc_write_iter/)) )
+        call nc_verify( nf90_put_var(lncid, varid_T,  lT,  start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varid_QV, lWV, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varid_Tv, lTv, start=start_dim, count=count_dim) )
+        call nc_verify( nf90_put_var(lncid, varid_S,  lSS, start=start_dim, count=count_dim) )
 
         if ( do_microphysics ) then
             ! Particle statistics
-            call nc_verify( nf90_inq_varid(lncid, "Np", statids(1)) )
-            call nc_verify( nf90_inq_varid(lncid, "Nact", statids(2)) )
-            call nc_verify( nf90_inq_varid(lncid, "Nun", statids(3)) )
-            call nc_verify( nf90_inq_varid(lncid, "Ravg", statids(4)) )
-            call nc_verify( nf90_inq_varid(lncid, "LWC", statids(5)) )
-            call nc_verify( nf90_put_var(lncid, statids(1), lstats(1,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(lncid, statids(2), lstats(2,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(lncid, statids(3), lstats(3,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(lncid, statids(4), lstats(4,:), start=(/nc_write_iter/)) )
-            call nc_verify( nf90_put_var(lncid, statids(5), lstats(5,:), start=(/nc_write_iter/)) )
+            do i = 1, 5
+                call nc_verify( nf90_put_var(lncid, varid_stats(i), lstats(i,:), start=(/nc_write_iter/)) )
+            end do
 
             ! Write total DSD
-            call nc_verify( nf90_inq_varid(lncid, "DSD", DSDid ))
             count_dim = (/ bin_len, time_len /)
-            call nc_verify( nf90_put_var(lncid, DSDid, lDSD(1,:,:), start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(lncid, dsd_varid, lDSD(1,:,:), start=start_dim, count=count_dim) )
 
             ! Write the subcategory DSDs
             if ( n_aer_category > 1 ) then
                 do i = 1, n_aer_category
-                    write(strint,*) i
-                    varname = "DSD_" // adjustl(strint)
-                    call nc_verify( nf90_inq_varid(lncid, trim(varname), DSDid ))
-                    call nc_verify( nf90_put_var(lncid, DSDid, lDSD(i+1,:,:), start=start_dim, count=count_dim) )
+                    call nc_verify( nf90_put_var(lncid, aerDSD_varids(i), lDSD(i+1,:,:), &
+                                    start=start_dim, count=count_dim) )
                 end do
             end if
         end if
+
+        ! Write budget time series using cached varids
+        do i = 1, n_budgets
+            call nc_verify( nf90_put_var(lncid, varid_budgets(i), lbudgets(i,:), &
+                            start=(/nc_write_iter/)) )
+        end do
 
         ! Move 'start' time location to end of buffer for next write
         nc_write_iter = nc_write_iter + buffer_count
 
     end subroutine write_netcdf_profiles
+
 
     subroutine close_netcdf(lncid)
         integer, intent(in) :: lncid

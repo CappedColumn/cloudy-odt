@@ -68,6 +68,10 @@ module droplets
     integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
     integer(i4) :: n_DSD_bins, n_aer_category
 
+    ! Cached NetCDF variable IDs for DSD variables
+    integer :: dsd_varid
+    integer, allocatable :: aerDSD_varids(:)
+
     ! Arrays to hold all particles and aerosol types
     type(particle), allocatable :: particles(:) ! allocated in initialize_microphysics()
     type(aerosol), allocatable :: aerosols(:) ! allocated in read_aerosol_netcdf()
@@ -218,6 +222,11 @@ contains
 
         call injected_particle%update_gridcell()
 
+        ! Accumulate budget
+        budget_inject_solute_mass = budget_inject_solute_mass + injected_particle%solute_gross_mass
+        budget_inject_liquid_mass = budget_inject_liquid_mass + injected_particle%water_liquid
+        budget_n_injected = budget_n_injected + 1
+
         ! Index newly injected particle object into array of current particles
         lparticles_array(current_n_particles) = injected_particle
 
@@ -332,7 +341,9 @@ contains
             if ( lparticle_array(i)%fellout ) then
                 total_n_fellout = total_n_fellout + 1
                 n_just_fellout = n_just_fellout + 1
-                ! FUTURE: Get statistics of particles that fellout
+                budget_fallout_liquid_mass = budget_fallout_liquid_mass + lparticle_array(i)%water_liquid
+                budget_fallout_solute_mass = budget_fallout_solute_mass + lparticle_array(i)%solute_gross_mass
+                budget_n_fellout = budget_n_fellout + 1
             else
                 ! Reassign array position of particles still in domain to 
                 ! fill in gaps of particles that fell out, saves space 
@@ -613,11 +624,16 @@ contains
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: time_start, time_stop, time_iterate
         real(dp) :: y_arr(8), y_before(8), inverse_grid_mass, grid_rho
+        real(dp) :: wl_before, T_before
         logical :: substep_flag
 
         ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
         inverse_grid_mass = 1.0 / (gridcell_volume*grid_rho)
+
+        ! Save pre-growth state for budget tracking
+        wl_before = droplet%water_liquid
+        T_before = droplet%temperature
 
         ! set odeint parameters for different aerosol mass of each droplet
         call set_aerosol_properties(1, droplet%solute_gross_mass, inverse_grid_mass)
@@ -673,6 +689,10 @@ contains
         droplet%water_liquid = y_arr(8)
         droplet%supersaturation = calc_supersat(droplet%temperature, droplet%water_vapor, pres)
         droplet%virt_temp = virtual_temp(droplet%temperature, droplet%water_vapor)
+
+        ! Accumulate condensation/evaporation budget
+        budget_condensation = budget_condensation + (droplet%water_liquid - wl_before)
+        budget_dgm_delta_T = budget_dgm_delta_T + (droplet%temperature - T_before)
 
     end subroutine single_droplet_growth
 
@@ -837,7 +857,7 @@ contains
         integer, intent(in) :: lncid
         real(dp), intent(in) :: r_bins(:)
 
-        integer :: t_dimid, r_dimid, r_varid, dsd_varid, nbins, dimids(2)
+        integer :: t_dimid, r_dimid, r_varid, nbins, dimids(2)
         integer :: re_dimid, re_varid
 
         nbins = size(r_bins)
@@ -880,7 +900,7 @@ contains
         integer :: i
         character(100) :: name, strint
 
-        integer :: t_dimid, r_dimid, dsd_varid, nbins, dimids(2)
+        integer :: t_dimid, r_dimid, nbins, dimids(2)
 
         ! Get dimension IDs
         call nc_verify( nf90_inq_dimid(lncid, "time", t_dimid))
@@ -889,14 +909,15 @@ contains
         ! Open netcdf in definition mode, and create a DSD for each aerosol partition
         dimids = (/ r_dimid, t_dimid /)
         call nc_verify( nf90_redef(lncid), "nf90_redef: DSD_aerr" )
+        allocate(aerDSD_varids(n_DSDs))
         do i = 1, n_DSDs
             write(strint,*) i
             name = "DSD_" // adjustl(strint)
-            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, dsd_varid, &
+            call nc_verify( nf90_def_var(lncid, trim(name), NF90_INT, dimids, aerDSD_varids(i), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: DSD_aer" )
             name = "Droplet Size Distribution - " // adjustl(strint)
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
-            call nc_verify( nf90_put_att(lncid, dsd_varid, "units", "#"), "nf90_put_att: DSD_aer, units")
+            call nc_verify( nf90_put_att(lncid, aerDSD_varids(i), "long_name", trim(name)), "nf90_put_att: DSD_aer, name")
+            call nc_verify( nf90_put_att(lncid, aerDSD_varids(i), "units", "#"), "nf90_put_att: DSD_aer, units")
 
         end do
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: DSD_aer")

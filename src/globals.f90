@@ -221,6 +221,23 @@ module globals
     ! writout iterators
     real(dp) :: write_timer
 
+    ! ----------- Budget Accumulators -----------------
+    ! Accumulated over each write interval, then reset.
+    ! -------------------------------------------------
+    integer(i4), parameter :: n_budgets = 12
+    real(dp) :: budget_inject_solute_mass = 0.0
+    real(dp) :: budget_inject_liquid_mass = 0.0
+    real(dp) :: budget_fallout_liquid_mass = 0.0
+    real(dp) :: budget_fallout_solute_mass = 0.0
+    real(dp) :: budget_condensation = 0.0
+    real(dp) :: budget_dgm_delta_T = 0.0
+    real(dp) :: budget_diffusion_delta_T = 0.0
+    real(dp) :: budget_diffusion_delta_WV = 0.0
+    real(dp) :: budget_sidewall_delta_T = 0.0
+    real(dp) :: budget_sidewall_delta_WV = 0.0
+    integer(i4) :: budget_n_injected = 0
+    integer(i4) :: budget_n_fellout = 0
+
     ! ----------- Turbulence Dispatch ----------------
     ! Abstract interfaces for mode-agnostic turbulence calls.
     ! Pointers are set once in initialize_simulation().
@@ -406,5 +423,21 @@ contains
         end do
 
     end subroutine triplet_map
+
+
+    subroutine reset_budgets()
+        budget_inject_solute_mass = 0.0
+        budget_inject_liquid_mass = 0.0
+        budget_fallout_liquid_mass = 0.0
+        budget_fallout_solute_mass = 0.0
+        budget_condensation = 0.0
+        budget_dgm_delta_T = 0.0
+        budget_diffusion_delta_T = 0.0
+        budget_diffusion_delta_WV = 0.0
+        budget_sidewall_delta_T = 0.0
+        budget_sidewall_delta_WV = 0.0
+        budget_n_injected = 0
+        budget_n_fellout = 0
+    end subroutine reset_budgets
 
 end module globals

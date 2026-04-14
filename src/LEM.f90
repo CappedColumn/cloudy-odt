@@ -73,12 +73,20 @@ contains
 
     subroutine lem_diffuse_step(ldelta_time)
         real(dp), intent(in) :: ldelta_time
+        real(dp) :: T_sum_before, WV_sum_before
+
+        T_sum_before = sum(T)
+        WV_sum_before = sum(WV)
 
         Nd = Nd + 1
         call diffuse_scalar_periodic(T, thermal_diffusivity, ldelta_time)
         call diffuse_scalar_periodic(WV, vapor_diffusivity, ldelta_time)
         call update_virtual_temperature()
         call update_supersat(T, WV, SS, pres)
+
+        ! Should be ~0 for periodic BCs; kept for validation
+        budget_diffusion_delta_T = budget_diffusion_delta_T + (sum(T) - T_sum_before)
+        budget_diffusion_delta_WV = budget_diffusion_delta_WV + (sum(WV) - WV_sum_before)
 
     end subroutine lem_diffuse_step
 

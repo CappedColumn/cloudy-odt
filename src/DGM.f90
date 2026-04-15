@@ -9,7 +9,7 @@ module DGM
     integer(i4), parameter :: nvar = 8
     
     ! Mani sets these using "set_odeint_dgm_params()"
-    integer(i4)            :: dmaxa, ndmax = 1!, err_dgm
+    integer(i4)            :: dmaxa
     real(dp)               :: grid_scale, solute_mass
     real(dp)               :: r_floor
     real(dp), parameter    :: eps_r = 1.0e-2_dp
@@ -326,7 +326,6 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
       x    = x+h
       DO i=1,n
          y(i) = ytemp(i)
-    IF ((i .LE. ndmax) .AND. (y(i) .LE. 0.0)) y(i) = 1.d-8
       END DO
       RETURN
    END IF

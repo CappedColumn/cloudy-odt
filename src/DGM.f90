@@ -11,6 +11,8 @@ module DGM
     ! Mani sets these using "set_odeint_dgm_params()"
     integer(i4)            :: dmaxa, ndmax = 1!, err_dgm
     real(dp)               :: grid_scale, solute_mass
+    real(dp)               :: r_floor
+    real(dp), parameter    :: eps_r = 1.0e-2_dp
     
     ! From DGM-const.f90
     real(dp)               :: Lcond_temp ! Temp. dependent latent heat
@@ -25,15 +27,16 @@ module DGM
 
 contains
 
-subroutine set_aerosol_properties(dmax, m0_aerosol, gscale)
+subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
     ! Set aerosol properties
     integer(i4), intent(in) :: dmax
-    real(dp), intent(in) :: m0_aerosol, gscale
+    real(dp), intent(in) :: m0_aerosol, r0_solute, gscale
 
     ! Set the global variables
     dmaxa = dmax
     solute_mass = m0_aerosol
     grid_scale = gscale
+    r_floor = r0_solute * (1.0_dp + eps_r)
 
 end subroutine set_aerosol_properties
 
@@ -163,6 +166,12 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     nions   = 0.0d0
 
     radius  = drop_radius(1)
+    ! Floor radius at r_floor = solute_radius*(1+eps_r) for derivative
+    ! evaluation. RK substages (with coefficients up to ~2.5) can transiently
+    ! push ytemp below the dry radius even when the final combined step
+    ! stays above it; without this clamp the cr denominator flips sign and
+    ! pollutes yerr. rkqs enforces the floor on accepted steps separately.
+    if (radius < r_floor) radius = r_floor
     qv      = drop_radius(2)
     temp    = drop_radius(3)
     s       = drop_radius(4)
@@ -290,6 +299,11 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
    END DO
 
    errmax = errmax/eps
+
+   ! Force step rejection if the proposed radius would cross the dry-solute
+   ! floor. This prevents the ODE from entering the region where the solute
+   ! (cr) denominator changes sign and drdt(1) runs away.
+   IF (ytemp(1) .LT. r_floor) errmax = MAX(errmax, 2.0_dp)
 
    IF (errmax .GT. 1.0) THEN
       h = safety*h*(errmax**pshrnk)

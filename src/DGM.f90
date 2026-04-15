@@ -19,8 +19,11 @@ module DGM
     real(dp)               :: Ktemp, D   ! Temp. dependent diffusivities
     real(dp)               :: cpm     ! Specific heat of...
 
-    ! Error tolerance
-    real(dp), parameter :: hmin = 0.0
+    ! Minimum step size — bail early if rkqs collapses h below this
+    ! threshold. 1e-12 s is ~10 orders of magnitude below a physical dt,
+    ! so any trip here indicates the solver is genuinely stuck rather
+    ! than a false positive.
+    real(dp), parameter :: hmin = 1.0e-12_dp
 
     public :: integrate_ODE, set_aerosol_properties
     private

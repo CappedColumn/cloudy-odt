@@ -54,13 +54,13 @@ end subroutine set_aerosol_properties
 
 SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
 
-   INTEGER       :: i, kmax, kmaxx, kount, maxstp
+   INTEGER       :: i, maxstp
    INTEGER       :: nbad, nok, nstp
    REAL(dp)        :: eps, h1, x1, x2, TINY
-   PARAMETER (maxstp=10000,kmaxx=200,TINY=1.e-30)
+   PARAMETER (maxstp=10000,TINY=1.e-30)
    REAL(dp)        :: dydx(nmax), ystart(nvar)
-   REAL(dp)        :: dxsav, h, hdid, hnext, x, xsav
-   REAL(dp)        :: xp(kmaxx), y(nmax), yp(nmax,kmaxx), yscal(nmax)
+   REAL(dp)        :: h, hdid, hnext, x
+   REAL(dp)        :: y(nmax), yscal(nmax)
 
    eps = 1e-4 ! Error tolerance
 
@@ -70,14 +70,10 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
    h     = SIGN(h1,x2-x1)
    nok   = 0
    nbad  = 0
-   kount = 0
-   kmax  = 0
 
    DO i=1,nvar
       y(i) = ystart(i)
    END DO
-
-   IF (kmax .GT. 0) xsav=x-2.*dxsav
 
    DO nstp=1,maxstp
       CALL fcnkb(x,y,dydx)
@@ -85,19 +81,6 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
       DO i=1,nvar
          yscal(i) = ABS(y(i))+ABS(h*dydx(i))+TINY
       END DO
-
-      IF (kmax .GT. 0) THEN
-         IF (ABS(x-xsav) .GT. ABS(dxsav)) THEN
-            IF (kount .LT. kmax-1) THEN
-               kount     = kount+1
-               xp(kount) = x
-               DO i=1,nvar
-                  yp(i,kount) = y(i)
-               END DO
-               xsav = x
-            END IF
-         END IF
-      END IF
 
       IF ((x+h-x2)*(x+h-x1) .GT. 0.0) h=x2-x
 
@@ -113,14 +96,6 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
          DO i=1,nvar
             ystart(i)=y(i)
          END DO
-
-         IF (kmax .NE. 0) THEN
-            kount=kount+1
-            xp(kount)=x
-            DO i=1,nvar
-               yp(i,kount)=y(i)
-            END DO
-         END IF
          RETURN
       END IF
 

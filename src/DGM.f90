@@ -13,6 +13,15 @@ module DGM
     real(dp)               :: grid_scale, solute_mass
     real(dp)               :: r_floor
     real(dp), parameter    :: eps_r = 1.0e-2_dp
+
+    ! Species-specific constants — set once per droplet in
+    ! set_aerosol_properties instead of re-branched every fcnkb call.
+    real(dp)               :: Ms_sp      ! molar mass of solute (kg/mol)
+    real(dp)               :: c7_sp      ! density factor
+    real(dp)               :: nions_sp   ! ions per solute molecule
+
+    real(dp), parameter :: c7am   = 0.4363021
+    real(dp), parameter :: c7nacl = 0.5381062
     
     ! From DGM-const.f90
     real(dp)               :: Lcond_temp ! Temp. dependent latent heat
@@ -40,6 +49,24 @@ subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
     solute_mass = m0_aerosol
     grid_scale = gscale
     r_floor = r0_solute * (1.0_dp + eps_r)
+
+    select case (dmax)
+    case (1)  ! sodium chloride (NaCl)
+        Ms_sp    = 58.4428e-3
+        c7_sp    = c7nacl
+        nions_sp = 2.0
+    case (2)  ! ammonium sulphate (NH4)2SO4
+        Ms_sp    = 132.1395e-3
+        c7_sp    = c7am
+        nions_sp = 3.0
+    case (3)  ! ammonium bisulphate NH4HSO4
+        Ms_sp    = 115.11e-3
+        c7_sp    = c7am
+        nions_sp = 2.0
+    case default
+        write(*,*) "set_aerosol_properties: Error: aerosol type unknown"
+        stop 1
+    end select
 
 end subroutine set_aerosol_properties
 
@@ -127,21 +154,13 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     real(dp)  :: e, es
     real(dp)  :: falpha, fbeta, rho, rhol
 
-    ! -- molecular weight of the solute (NaCl, (NH4)2SO4, ...)
-    real(dp)  :: Ms
-
-    real(dp)  :: radius, qv, temp, s, press, ver_vel, height, ql, nions
+    real(dp)  :: radius, qv, temp, s, press, ver_vel, height, ql
 
     real(dp)  :: lalpha, lbeta
     real(dp), parameter :: alph = 1
     real(dp), parameter :: beta = 0.04
 
-    real(dp)  :: c7
-    real(dp), parameter :: c7am   = 0.4363021
-    real(dp), parameter :: c7nacl = 0.5381062
     real(dp), parameter :: sigma  = 7.392730e-2
-
-    nions   = 0.0d0
 
     radius  = drop_radius(1)
     ! Floor radius at r_floor = solute_radius*(1+eps_r) for derivative
@@ -198,38 +217,16 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     lalpha  = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*press*(cv+R_univ/2.0))
     lbeta   = SQRT(2.0*pi*Mw/(Rv*temp))*D/beta
 
-    !Mani:dmaxa is used from the module array
-    !so set the value before calling odeint
-    if (dmaxa == 1) then     
-      !sodium cholride NaCl
-       Ms = 58.4428e-3 ! kg/m3
-       c7 = c7nacl
-       nions = 2.0d0
-    else if(dmaxa == 2) then
-      !Ammonium sulphate
-       Ms = 132.1395e-3
-       !density of Ammonium bisulphate and sulphate are similar so using the same density factor
-       c7 = c7am
-       nions = 3.0d0
-    else if(dmaxa == 3) then
-      !Ammonium bisulphate
-        Ms = 115.11e03
-        !density of Ammonium bisulphate and sulphate are similar so using the same density factor
-        c7 = c7am
-        nions = 2.0d0
-    else  
-      write(*,*) "fcnkb: Error: aerosol type unknown"
-      stop 1
-    end if
-
+    ! Species constants (Ms_sp, c7_sp, nions_sp) are set once per droplet
+    ! in set_aerosol_properties — no per-substage branching here.
 
     falpha  = radius/(radius+lalpha)
     fbeta   = radius/(radius+lbeta)
-    rhol    = (radius**3*pi_43*rho_l+solute_mass*c7)/(radius**3*pi_43)
+    rhol    = (radius**3*pi_43*rho_l+solute_mass*c7_sp)/(radius**3*pi_43)
 
     ! -- calculate drdt
     ck      = (2*sigma/(Rv*temp*rhol*radius))
-    cr      = nions*(Mw/Ms)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
+    cr      = nions_sp*(Mw/Ms_sp)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
     denom   = rhol*(Rv*temp/(fbeta*D*es)+Lcond_temp**2/(falpha*Ktemp*Rv*temp**2))
     drdt(1) = 1.0/radius*(s-ck+cr)/denom
     !write(*,*) "drdt(1): ", drdt(1)

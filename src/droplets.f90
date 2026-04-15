@@ -636,7 +636,7 @@ contains
         T_before = droplet%temperature
 
         ! set odeint parameters for different aerosol mass of each droplet
-        call set_aerosol_properties(1, droplet%solute_gross_mass, inverse_grid_mass)
+        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, inverse_grid_mass)
 
         ! Package droplet properties into an array for ode solver
         y_arr(1) = droplet%radius

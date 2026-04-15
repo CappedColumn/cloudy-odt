@@ -9,31 +9,64 @@ module DGM
     integer(i4), parameter :: nvar = 8
     
     ! Mani sets these using "set_odeint_dgm_params()"
-    integer(i4)            :: dmaxa, ndmax = 1!, err_dgm
+    integer(i4)            :: dmaxa
     real(dp)               :: grid_scale, solute_mass
+    real(dp)               :: r_floor
+    real(dp), parameter    :: eps_r = 1.0e-2_dp
+
+    ! Species-specific constants — set once per droplet in
+    ! set_aerosol_properties instead of re-branched every fcnkb call.
+    real(dp)               :: Ms_sp      ! molar mass of solute (kg/mol)
+    real(dp)               :: c7_sp      ! density factor
+    real(dp)               :: nions_sp   ! ions per solute molecule
+
+    real(dp), parameter :: c7am   = 0.4363021
+    real(dp), parameter :: c7nacl = 0.5381062
     
     ! From DGM-const.f90
     real(dp)               :: Lcond_temp ! Temp. dependent latent heat
     real(dp)               :: Ktemp, D   ! Temp. dependent diffusivities
     real(dp)               :: cpm     ! Specific heat of...
 
-    ! Error tolerance
-    real(dp), parameter :: hmin = 0.0
+    ! Minimum step size — bail early if rkqs collapses h below this
+    ! threshold. 1e-12 s is ~10 orders of magnitude below a physical dt,
+    ! so any trip here indicates the solver is genuinely stuck rather
+    ! than a false positive.
+    real(dp), parameter :: hmin = 1.0e-12_dp
 
     public :: integrate_ODE, set_aerosol_properties
     private
 
 contains
 
-subroutine set_aerosol_properties(dmax, m0_aerosol, gscale)
+subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
     ! Set aerosol properties
     integer(i4), intent(in) :: dmax
-    real(dp), intent(in) :: m0_aerosol, gscale
+    real(dp), intent(in) :: m0_aerosol, r0_solute, gscale
 
     ! Set the global variables
     dmaxa = dmax
     solute_mass = m0_aerosol
     grid_scale = gscale
+    r_floor = r0_solute * (1.0_dp + eps_r)
+
+    select case (dmax)
+    case (1)  ! sodium chloride (NaCl)
+        Ms_sp    = 58.4428e-3
+        c7_sp    = c7nacl
+        nions_sp = 2.0
+    case (2)  ! ammonium sulphate (NH4)2SO4
+        Ms_sp    = 132.1395e-3
+        c7_sp    = c7am
+        nions_sp = 3.0
+    case (3)  ! ammonium bisulphate NH4HSO4
+        Ms_sp    = 115.11e-3
+        c7_sp    = c7am
+        nions_sp = 2.0
+    case default
+        write(*,*) "set_aerosol_properties: Error: aerosol type unknown"
+        stop 1
+    end select
 
 end subroutine set_aerosol_properties
 
@@ -51,13 +84,13 @@ end subroutine set_aerosol_properties
 
 SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
 
-   INTEGER       :: i, kmax, kmaxx, kount, maxstp
+   INTEGER       :: i, maxstp
    INTEGER       :: nbad, nok, nstp
    REAL(dp)        :: eps, h1, x1, x2, TINY
-   PARAMETER (maxstp=10000,kmaxx=200,TINY=1.e-30)
+   PARAMETER (maxstp=10000,TINY=1.e-30)
    REAL(dp)        :: dydx(nmax), ystart(nvar)
-   REAL(dp)        :: dxsav, h, hdid, hnext, x, xsav
-   REAL(dp)        :: xp(kmaxx), y(nmax), yp(nmax,kmaxx), yscal(nmax)
+   REAL(dp)        :: h, hdid, hnext, x
+   REAL(dp)        :: y(nmax), yscal(nmax)
 
    eps = 1e-4 ! Error tolerance
 
@@ -67,14 +100,10 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
    h     = SIGN(h1,x2-x1)
    nok   = 0
    nbad  = 0
-   kount = 0
-   kmax  = 0
 
    DO i=1,nvar
       y(i) = ystart(i)
    END DO
-
-   IF (kmax .GT. 0) xsav=x-2.*dxsav
 
    DO nstp=1,maxstp
       CALL fcnkb(x,y,dydx)
@@ -82,19 +111,6 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
       DO i=1,nvar
          yscal(i) = ABS(y(i))+ABS(h*dydx(i))+TINY
       END DO
-
-      IF (kmax .GT. 0) THEN
-         IF (ABS(x-xsav) .GT. ABS(dxsav)) THEN
-            IF (kount .LT. kmax-1) THEN
-               kount     = kount+1
-               xp(kount) = x
-               DO i=1,nvar
-                  yp(i,kount) = y(i)
-               END DO
-               xsav = x
-            END IF
-         END IF
-      END IF
 
       IF ((x+h-x2)*(x+h-x1) .GT. 0.0) h=x2-x
 
@@ -110,14 +126,6 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
          DO i=1,nvar
             ystart(i)=y(i)
          END DO
-
-         IF (kmax .NE. 0) THEN
-            kount=kount+1
-            xp(kount)=x
-            DO i=1,nvar
-               yp(i,kount)=y(i)
-            END DO
-         END IF
          RETURN
       END IF
 
@@ -146,23 +154,21 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     real(dp)  :: e, es
     real(dp)  :: falpha, fbeta, rho, rhol
 
-    ! -- molecular weight of the solute (NaCl, (NH4)2SO4, ...)
-    real(dp)  :: Ms
-
-    real(dp)  :: radius, qv, temp, s, press, ver_vel, height, ql, nions
+    real(dp)  :: radius, qv, temp, s, press, ver_vel, height, ql
 
     real(dp)  :: lalpha, lbeta
     real(dp), parameter :: alph = 1
     real(dp), parameter :: beta = 0.04
 
-    real(dp)  :: c7
-    real(dp), parameter :: c7am   = 0.4363021
-    real(dp), parameter :: c7nacl = 0.5381062
     real(dp), parameter :: sigma  = 7.392730e-2
 
-    nions   = 0.0d0
-
     radius  = drop_radius(1)
+    ! Floor radius at r_floor = solute_radius*(1+eps_r) for derivative
+    ! evaluation. RK substages (with coefficients up to ~2.5) can transiently
+    ! push ytemp below the dry radius even when the final combined step
+    ! stays above it; without this clamp the cr denominator flips sign and
+    ! pollutes yerr. rkqs enforces the floor on accepted steps separately.
+    if (radius < r_floor) radius = r_floor
     qv      = drop_radius(2)
     temp    = drop_radius(3)
     s       = drop_radius(4)
@@ -211,38 +217,16 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     lalpha  = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*press*(cv+R_univ/2.0))
     lbeta   = SQRT(2.0*pi*Mw/(Rv*temp))*D/beta
 
-    !Mani:dmaxa is used from the module array
-    !so set the value before calling odeint
-    if (dmaxa == 1) then     
-      !sodium cholride NaCl
-       Ms = 58.4428e-3 ! kg/m3
-       c7 = c7nacl
-       nions = 2.0d0
-    else if(dmaxa == 2) then
-      !Ammonium sulphate
-       Ms = 132.1395e-3
-       !density of Ammonium bisulphate and sulphate are similar so using the same density factor
-       c7 = c7am
-       nions = 3.0d0
-    else if(dmaxa == 3) then
-      !Ammonium bisulphate
-        Ms = 115.11e03
-        !density of Ammonium bisulphate and sulphate are similar so using the same density factor
-        c7 = c7am
-        nions = 2.0d0
-    else  
-      write(*,*) "fcnkb: Error: aerosol type unknown"
-      stop 1
-    end if
-
+    ! Species constants (Ms_sp, c7_sp, nions_sp) are set once per droplet
+    ! in set_aerosol_properties — no per-substage branching here.
 
     falpha  = radius/(radius+lalpha)
     fbeta   = radius/(radius+lbeta)
-    rhol    = (radius**3*pi_43*rho_l+solute_mass*c7)/(radius**3*pi_43)
+    rhol    = (radius**3*pi_43*rho_l+solute_mass*c7_sp)/(radius**3*pi_43)
 
     ! -- calculate drdt
     ck      = (2*sigma/(Rv*temp*rhol*radius))
-    cr      = nions*(Mw/Ms)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
+    cr      = nions_sp*(Mw/Ms_sp)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
     denom   = rhol*(Rv*temp/(fbeta*D*es)+Lcond_temp**2/(falpha*Ktemp*Rv*temp**2))
     drdt(1) = 1.0/radius*(s-ck+cr)/denom
     !write(*,*) "drdt(1): ", drdt(1)
@@ -291,6 +275,11 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
 
    errmax = errmax/eps
 
+   ! Force step rejection if the proposed radius would cross the dry-solute
+   ! floor. This prevents the ODE from entering the region where the solute
+   ! (cr) denominator changes sign and drdt(1) runs away.
+   IF (ytemp(1) .LT. r_floor) errmax = MAX(errmax, 2.0_dp)
+
    IF (errmax .GT. 1.0) THEN
       h = safety*h*(errmax**pshrnk)
       IF (h .LT. 0.1*h) THEN
@@ -312,7 +301,6 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
       x    = x+h
       DO i=1,n
          y(i) = ytemp(i)
-    IF ((i .LE. ndmax) .AND. (y(i) .LE. 0.0)) y(i) = 1.d-8
       END DO
       RETURN
    END IF

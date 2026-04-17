@@ -169,33 +169,35 @@ def t4_determinism(log_a: pathlib.Path, log_b: pathlib.Path):
     return (ba == bb), f"sizes {len(ba)} vs {len(bb)}"
 
 
-def t5_water_mass_closure(sim: CODTSimulation, tol=0.25):
-    """Column-integrated LWC drift should match budget injection/fallout/
-    condensation to within ``tol`` of the total budget magnitude. Uses a
-    column-mean proxy (no per-cell area weighting), so the tolerance is
-    loose — this catches order-of-magnitude leaks, not tight closure.
-    """
-    LWC = sim.LWC.values  # may be (time,) or (time, z)
-    if LWC.ndim == 2:
-        lwc_col = LWC.mean(axis=1)
-    else:
-        lwc_col = LWC
+def t5_water_mass_closure(sim: CODTSimulation, tol=1e-6):
+    """Liquid water mass closure: QC(final) = QC(init) + injected - fallout + condensation.
 
-    init = float(lwc_col[0])
-    final = float(lwc_col[-1])
+    All terms in kg. domain_volume = volume_scaling * domain_width^2 * H,
+    where domain_width = 0.001 m (hardcoded in globals.f90).
+    """
+    DOMAIN_WIDTH = 0.001  # m, from globals.f90
+    ds = sim._ds
+    H = float(ds.attrs.get("PARAMETERS.H", ds.attrs.get("H")))
+    vs = float(ds.attrs.get("PARAMETERS.volume_scaling", ds.attrs.get("volume_scaling")))
+    domain_volume = vs * DOMAIN_WIDTH**2 * H
+
+    LWC = sim.LWC.values
+    qc_init = float(LWC[0]) * 1e-3 * domain_volume   # g/m3 -> kg
+    qc_final = float(LWC[-1]) * 1e-3 * domain_volume
+
     inj = float(sim.budget_inject_liquid_mass.values.sum())
     fel = float(sim.budget_fallout_liquid_mass.values.sum())
     cond = float(sim.budget_condensation.values.sum())
 
-    delta_lwc = final - init
+    delta_qc = qc_final - qc_init
     delta_budget = inj - fel + cond
+    residual = delta_qc - delta_budget
     scale = abs(inj) + abs(fel) + abs(cond) + 1e-30
-    residual = delta_lwc * 1e-3 - delta_budget  # LWC g/m3 -> kg/m3 rough scale
     rel = abs(residual) / scale
     ok = rel < tol
     msg = (
-        f"ΔLWC_col={delta_lwc:.3e} g/m3, Σbudget={delta_budget:.3e} kg, "
-        f"residual/scale={rel:.2e} (tol {tol})"
+        f"ΔQC={delta_qc:.3e} kg, Σ(inj-fel+cond)={delta_budget:.3e} kg, "
+        f"rel_err={rel:.2e} (tol {tol:.0e})"
     )
     return ok, msg
 

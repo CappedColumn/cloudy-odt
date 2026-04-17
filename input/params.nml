@@ -47,6 +47,14 @@ initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 aerosol_file = "aerosol_input.nc"
 bin_data_file = "bin_data.txt"
 
+! --- Collision-Coalescence Parameters ---
+
+do_collisions = .false.
+do_coalescence = .true.
+coalescence_kernel = 'hall'
+wmax_collision = 10.0
+write_collisions = .false.
+
 ! --- Droplet Writeout Parameters ---
 
 write_trajectories = .false.

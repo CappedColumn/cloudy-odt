@@ -2,8 +2,10 @@ module droplets
     use netcdf
     use globals
     use particle_types
-    use collision_coalescence, only: do_collision_coalescence, collision_coalescence_step, wmax_collision, &
+    use collision_coalescence, only: do_collisions, do_coalescence, &
+                                     collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
+    use collection_efficiency, only: coalescence_kernel, set_kernel_selector
     use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
@@ -68,7 +70,7 @@ contains
 
         call injection_controller(time, particles)
 
-        if (do_collision_coalescence) then
+        if (do_collisions) then
             ! CC owns settling across the ldt window (writes back final
             ! particle positions). Fallout removal and gridcell updates
             ! match the tail of move_particles_by_gravity.
@@ -611,7 +613,7 @@ contains
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
-        do_collision_coalescence, wmax_collision, write_collisions
+        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -629,6 +631,21 @@ contains
             stop 1
         end if
         close(nml_unit)
+
+        call set_kernel_selector()
+
+        ! Collision-coalescence consistency checks
+        if (do_coalescence .and. .not. do_collisions) then
+            write(0,*) 'ERROR: do_coalescence requires do_collisions.'
+            stop 1
+        end if
+        if (write_collisions .and. .not. do_collisions) then
+            write(0,*) 'ERROR: write_collisions requires do_collisions.'
+            stop 1
+        end if
+        if (do_collisions .and. .not. do_coalescence) then
+            write(*,*) 'NOTE: Collisions enabled without coalescence (collisions-only mode).'
+        end if
 
         ! Namelist is copied to output directory in initialize_params
         

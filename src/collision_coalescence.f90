@@ -13,11 +13,13 @@ module collision_coalescence
     use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling, &
                        simulation_mode
     use particle_types, only: particle, calculate_terminal_velocity
+    use collection_efficiency, only: collection_efficiency_E
     implicit none
     private
 
     ! Namelist-controlled parameters
-    logical, public :: do_collision_coalescence = .false.
+    logical, public :: do_collisions = .false.
+    logical, public :: do_coalescence = .true.
     logical, public :: write_collisions = .false.
     real(dp), public :: wmax_collision = 10.0
 
@@ -200,66 +202,68 @@ contains
             lparticles(j)%n_collisions = lparticles(j)%n_collisions + 1
 
             ! Stage 2: Coalescence check (collection efficiency E)
-            ! E = 1.0 for now (all collisions coalesce)
-            E_coal = 0.5
+            if (do_coalescence) then
+                E_coal = collection_efficiency_E(lparticles(i)%radius, lparticles(j)%radius)
 
-            call random_number(u_coll)
-            if (u_coll <= E_coal) then
-                ! Coalescence: merge particles, conserving mass
-                ncoll = ncoll + 1
-                coalescences_this_step = coalescences_this_step + 1
-                keep = i
-                kill = j
+                call random_number(u_coll)
+                if (u_coll <= E_coal) then
+                    ! Coalescence: merge particles, conserving mass
+                    ncoll = ncoll + 1
+                    coalescences_this_step = coalescences_this_step + 1
+                    keep = i
+                    kill = j
 
-                r_keep = lparticles(keep)%radius
-                r_kill = lparticles(kill)%radius
+                    r_keep = lparticles(keep)%radius
+                    r_kill = lparticles(kill)%radius
 
-                ! Record pre-coalescence state
-                lparticles(keep)%radius_before_coalescence = r_keep
-                lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
+                    ! Record pre-coalescence state
+                    lparticles(keep)%radius_before_coalescence = r_keep
+                    lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
 
-                ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
-                lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)
+                    ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
+                    lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)
 
-                ! Conserve liquid water mass
-                lparticles(keep)%water_liquid = lparticles(keep)%water_liquid + lparticles(kill)%water_liquid
+                    ! Conserve liquid water mass
+                    lparticles(keep)%water_liquid = lparticles(keep)%water_liquid &
+                                                   + lparticles(kill)%water_liquid
 
-                ! Conserve solute mass and recompute solute radius
-                lparticles(keep)%solute_gross_mass = lparticles(keep)%solute_gross_mass &
-                                                    + lparticles(kill)%solute_gross_mass
-                if (lparticles(keep)%solute_type%solute_density > 0.0) then
-                    lparticles(keep)%solute_radius = &
-                        (3.0_dp * lparticles(keep)%solute_gross_mass / &
-                         (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
+                    ! Conserve solute mass and recompute solute radius
+                    lparticles(keep)%solute_gross_mass = lparticles(keep)%solute_gross_mass &
+                                                        + lparticles(kill)%solute_gross_mass
+                    if (lparticles(keep)%solute_type%solute_density > 0.0) then
+                        lparticles(keep)%solute_radius = &
+                            (3.0_dp * lparticles(keep)%solute_gross_mass / &
+                             (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
+                    end if
+
+                    ! Recalculate terminal velocity for merged droplet
+                    w_fall(keep) = abs(calculate_terminal_velocity(lparticles(keep)))
+                    if (w_fall(keep) > wmax_collision) w_fall(keep) = wmax_collision
+
+                    ! Update working position
+                    zcur(keep) = zcur(i)
+                    tstamp(keep) = tcur
+
+                    ! Write collision event log
+                    if (write_collisions) call write_collision( &
+                        lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
+                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur)
+
+                    ! Remove killed particle from linked list
+                    call unlink_particle(kill, alive, prev, next, head)
+                    alive(kill) = .false.
+                    lparticles(kill)%coalesced = .true.
+
+                    ! Reschedule events for survivor and its neighbors
+                    ip = prev(keep)
+                    jn = next(keep)
+                    call push_pair_for_i(keep, heap, hsize, zcur, tstamp, w_fall, alive, next, dt, tcur)
+                    if (ip > 0) call push_pair_for_i(ip, heap, hsize, zcur, tstamp, w_fall, alive, next, dt, tcur)
+
+                    ! Reschedule fallout for survivor
+                    call push_fall_event(heap, hsize, keep, zcur, tstamp, w_fall, alive, dt, tcur)
+                    return
                 end if
-
-                ! Recalculate terminal velocity for merged droplet
-                w_fall(keep) = abs(calculate_terminal_velocity(lparticles(keep)))
-                if (w_fall(keep) > wmax_collision) w_fall(keep) = wmax_collision
-
-                ! Update working position
-                zcur(keep) = zcur(i)
-                tstamp(keep) = tcur
-
-                ! Write collision event log
-                if (write_collisions) call write_collision( &
-                    lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                    r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur)
-
-                ! Remove killed particle from linked list
-                call unlink_particle(kill, alive, prev, next, head)
-                alive(kill) = .false.
-                lparticles(kill)%coalesced = .true.
-
-                ! Reschedule events for survivor and its neighbors
-                ip = prev(keep)
-                jn = next(keep)
-                call push_pair_for_i(keep, heap, hsize, zcur, tstamp, w_fall, alive, next, dt, tcur)
-                if (ip > 0) call push_pair_for_i(ip, heap, hsize, zcur, tstamp, w_fall, alive, next, dt, tcur)
-
-                ! Reschedule fallout for survivor
-                call push_fall_event(heap, hsize, keep, zcur, tstamp, w_fall, alive, dt, tcur)
-                return
             end if
         end if
 

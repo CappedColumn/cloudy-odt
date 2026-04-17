@@ -55,12 +55,21 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 - `LEM.f90` — periodic Crank-Nicolson (Sherman-Morrison), -5/3 eddy sampling, periodic triplet map
 - `microphysics.f90` — thermodynamic functions, dim/nondim conversion
 - `droplets.f90` — `aerosol`→`particle` type hierarchy, Lagrangian tracking
+- `collision_coalescence.f90` — event-driven 1D collision-coalescence (min-heap, linked list)
+- `collection_efficiency.f90` — coalescence kernels: Hall (1980) tabulated, Long (1974) analytical, unity
 - `DGM.f90` — Cash-Karp RK45 ODE integrator for droplet growth
 - `writeout.f90` — buffered NetCDF output
 - `write_particle.f90` — particle trajectory NetCDF output
 - `initialize.f90` — namelist I/O, domain setup, pointer assignment
 
-**Dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
+**Dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
+
+**Collision-coalescence namelist parameters** (in `&MICROPHYSICS`):
+- `do_collisions` — enable collision detection (default `.false.`)
+- `do_coalescence` — enable coalescence on collision (default `.true.`, requires `do_collisions`)
+- `coalescence_kernel` — `'hall'` (tabulated, default `'long'`), `'long'` (analytical), or `'unity'` (E=1)
+- `wmax_collision` — terminal velocity cap in CC kernel (default 10.0 m/s)
+- `write_collisions` — write binary collision event log (requires `do_collisions`)
 
 ## Fortran Conventions
 
@@ -127,6 +136,7 @@ Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_p
 |------|--------|-------------|
 | `{name}.nc` | netCDF4 | Profiles + time series |
 | `{name}_particles.nc` | netCDF4 | Particle data (if `write_trajectories=.true.`) |
+| `{name}_collisions.bin` | Binary stream | Collision events (if `write_collisions=.true.`) |
 | `{name}_eddies.bin` | Binary stream | Eddy events (if `write_eddies=.true.`) |
 | `{name}.nml` | ASCII | Namelist copy |
 

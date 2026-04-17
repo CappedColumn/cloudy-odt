@@ -2,7 +2,7 @@ module write_particle
     use netcdf
     use droplets, only: particle, particles, current_n_particles, &
                         trajectory_start, trajectory_end, trajectory_timer
-    use collision_coalescence, only: do_collision_coalescence
+    use collision_coalescence, only: do_collisions
     use globals
     use writeout, only: nc_verify
     implicit none
@@ -123,7 +123,7 @@ contains
         call nc_verify( nf90_put_att(pnc_id, vid_aerosol_category, "long_name", "Aerosol Category") )
 
         ! --- Collision-coalescence variables (only when CC is enabled) ---
-        if (do_collision_coalescence) then
+        if (do_collisions) then
             call nc_verify( nf90_def_var(pnc_id, "n_collisions", NF90_INT, rec_dimid, vid_n_collisions, &
                              deflate_level=1, shuffle=.true.) )
             call nc_verify( nf90_put_att(pnc_id, vid_n_collisions, "long_name", &
@@ -233,7 +233,7 @@ contains
         call nc_verify( nf90_put_var(pnc_id, vid_aerosol_category, int_buf, start=(/record_count+1/), count=(/np/)) )
 
         ! Collision-coalescence fields (only when CC is enabled)
-        if (do_collision_coalescence) then
+        if (do_collisions) then
             do i = 1, np; int_buf(i) = lparticles(i)%n_collisions; end do
             call nc_verify( nf90_put_var(pnc_id, vid_n_collisions, int_buf, start=(/record_count+1/), count=(/np/)) )
 

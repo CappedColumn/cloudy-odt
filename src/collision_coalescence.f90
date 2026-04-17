@@ -201,9 +201,10 @@ contains
 
             ! Stage 2: Coalescence check (collection efficiency E)
             ! E = 1.0 for now (all collisions coalesce)
-            E_coal = 0.0  ! TEMP: E=0 isolation test
+            E_coal = 0.5
 
-            if (E_coal >= 1.0) then
+            call random_number(u_coll)
+            if (u_coll <= E_coal) then
                 ! Coalescence: merge particles, conserving mass
                 ncoll = ncoll + 1
                 coalescences_this_step = coalescences_this_step + 1
@@ -248,6 +249,7 @@ contains
                 ! Remove killed particle from linked list
                 call unlink_particle(kill, alive, prev, next, head)
                 alive(kill) = .false.
+                lparticles(kill)%coalesced = .true.
 
                 ! Reschedule events for survivor and its neighbors
                 ip = prev(keep)

@@ -44,6 +44,7 @@ module particle_types
 
         logical :: activated = .false.
         logical :: fellout = .false.
+        logical :: coalesced = .false.
 
         ! Collision-coalescence history
         integer(i4) :: n_collisions = 0              ! times this particle has collided

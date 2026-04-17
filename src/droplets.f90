@@ -249,11 +249,14 @@ contains
         ! of active particles which remain in the domain
         type(particle), intent(inout) :: lparticle_array(:)
         integer(i4), intent(inout) :: n_particles
-        integer :: i, n_just_fellout
+        integer :: i, n_removed
         real(dp) :: r, new_position
 
         ! Update fallout flag for particles which settled out of the domain
+        ! Coalesced particles (killed by CC) are already marked and skip
+        ! the random_fallout pathway since their mass is in the survivor.
         do i = 1, n_particles
+            if ( lparticle_array(i)%coalesced ) cycle
             if ( lparticle_array(i)%position < 0.0_dp ) then
                 ! I contemplate this immortal outcome
                 ! A timeless trace of future times to come
@@ -268,29 +271,28 @@ contains
             end if
         end do
 
-        ! Count the number of particles that fellout
-        ! and reassign array positions for particles still in domain
-        n_just_fellout = 0 ! How many particles fellout since last check
+        ! Remove dead particles (fellout or coalesced) and compact array.
+        ! Budget counters are incremented separately for each removal type.
+        n_removed = 0
         do i = 1, n_particles
-            ! If particle fellout, increment counters
-            if ( lparticle_array(i)%fellout ) then
+            if ( lparticle_array(i)%coalesced ) then
+                n_removed = n_removed + 1
+                budget_n_coalesced = budget_n_coalesced + 1
+            else if ( lparticle_array(i)%fellout ) then
                 total_n_fellout = total_n_fellout + 1
-                n_just_fellout = n_just_fellout + 1
+                n_removed = n_removed + 1
                 budget_fallout_liquid_mass = budget_fallout_liquid_mass + lparticle_array(i)%water_liquid
                 budget_fallout_solute_mass = budget_fallout_solute_mass + lparticle_array(i)%solute_gross_mass
                 budget_n_fellout = budget_n_fellout + 1
             else
-                ! Reassign array position of particles still in domain to 
-                ! fill in gaps of particles that fell out, saves space 
-                ! and removes particles that fellout from further computation
-                if (n_just_fellout > 0) then
-                    lparticle_array(i - n_just_fellout) = lparticle_array(i)
+                if (n_removed > 0) then
+                    lparticle_array(i - n_removed) = lparticle_array(i)
                 end if
             end if
         end do
 
         ! Update number of particles in domain
-        n_particles = n_particles - n_just_fellout
+        n_particles = n_particles - n_removed
 
     end subroutine verify_particle_fallout
 

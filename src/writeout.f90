@@ -128,6 +128,7 @@ contains
             buffer_budgets(10, buffer_count) = budget_sidewall_delta_WV
             buffer_budgets(11, buffer_count) = real(budget_n_injected, dp)
             buffer_budgets(12, buffer_count) = real(budget_n_fellout, dp)
+            buffer_budgets(13, buffer_count) = real(budget_n_coalesced, dp)
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
@@ -274,17 +275,20 @@ contains
 
             call nc_verify( nf90_def_var(lncid, "Nact", NF90_INT, t_dimid, varid_stats(2), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Nact" )
-            call nc_verify( nf90_put_att(lncid, varid_stats(2), "long_name", "Number of Activated Particles"), "nf90_put_att: Nact, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(2), "long_name", &
+                            "Number of Activated Particles"), "nf90_put_att: Nact, name" )
             call nc_verify( nf90_put_att(lncid, varid_stats(2), "units", "#"), "nf90_put_att: Nact units")
 
             call nc_verify( nf90_def_var(lncid, "Nun", NF90_INT, t_dimid, varid_stats(3), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Nun" )
-            call nc_verify( nf90_put_att(lncid, varid_stats(3), "long_name", "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(3), "long_name", &
+                            "Number of Unactivated Particles"), "nf90_put_att: Nun, name" )
             call nc_verify( nf90_put_att(lncid, varid_stats(3), "units", "#"), "nf90_put_att: Nun units")
 
             call nc_verify( nf90_def_var(lncid, "Ravg", NF90_FLOAT, t_dimid, varid_stats(4), &
                             deflate_level=1, shuffle=.true.), "nf90_def_var: Ravg" )
-            call nc_verify( nf90_put_att(lncid, varid_stats(4), "long_name", "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
+            call nc_verify( nf90_put_att(lncid, varid_stats(4), "long_name", &
+                            "Average Particle Radius (wet)"), "nf90_put_att: Ravg, name" )
             call nc_verify( nf90_put_att(lncid, varid_stats(4), "units", "um"), "nf90_put_att: Ravg units")
 
             call nc_verify( nf90_def_var(lncid, "LWC", NF90_FLOAT, t_dimid, varid_stats(5), &
@@ -311,13 +315,19 @@ contains
         call define_budget_var(lncid, t_dimid, 3,  "budget_fallout_liquid_mass", "Accumulated liquid water removed by fallout","kg")
         call define_budget_var(lncid, t_dimid, 4,  "budget_fallout_solute_mass", "Accumulated solute mass removed by fallout","kg")
         call define_budget_var(lncid, t_dimid, 5,  "budget_condensation",        "Net liquid water change from cond/evap",    "kg")
-        call define_budget_var(lncid, t_dimid, 6,  "budget_dgm_delta_T",         "Sum of per-droplet temperature changes from DGM", "K")
-        call define_budget_var(lncid, t_dimid, 7,  "budget_diffusion_delta_T",   "Domain-sum T change from diffusion",        "K")
-        call define_budget_var(lncid, t_dimid, 8,  "budget_diffusion_delta_WV",  "Domain-sum WV change from diffusion",       "kg/kg")
-        call define_budget_var(lncid, t_dimid, 9,  "budget_sidewall_delta_T",    "Domain-sum T change from sidewall nudging", "K")
-        call define_budget_var(lncid, t_dimid, 10, "budget_sidewall_delta_WV",   "Domain-sum WV change from sidewall nudging","kg/kg")
+        call define_budget_var(lncid, t_dimid, 6,  "budget_dgm_delta_T", &
+                              "Sum of per-droplet temperature changes from DGM", "K")
+        call define_budget_var(lncid, t_dimid, 7,  "budget_diffusion_delta_T", &
+                              "Domain-sum T change from diffusion", "K")
+        call define_budget_var(lncid, t_dimid, 8,  "budget_diffusion_delta_WV", &
+                              "Domain-sum WV change from diffusion", "kg/kg")
+        call define_budget_var(lncid, t_dimid, 9,  "budget_sidewall_delta_T", &
+                              "Domain-sum T change from sidewall nudging", "K")
+        call define_budget_var(lncid, t_dimid, 10, "budget_sidewall_delta_WV", &
+                              "Domain-sum WV change from sidewall nudging", "kg/kg")
         call define_budget_var(lncid, t_dimid, 11, "budget_n_injected",          "Number of particles injected",              "#")
         call define_budget_var(lncid, t_dimid, 12, "budget_n_fellout",           "Number of particles fallen out",            "#")
+        call define_budget_var(lncid, t_dimid, 13, "budget_n_coalesced",         "Number of particles removed by coalescence", "#")
 
         ! Exit define mode, however netCDF is still open
         call nc_verify( nf90_enddef(lncid), "nf90_enddef" )

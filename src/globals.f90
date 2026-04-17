@@ -224,7 +224,7 @@ module globals
     ! ----------- Budget Accumulators -----------------
     ! Accumulated over each write interval, then reset.
     ! -------------------------------------------------
-    integer(i4), parameter :: n_budgets = 12
+    integer(i4), parameter :: n_budgets = 13
     real(dp) :: budget_inject_solute_mass = 0.0
     real(dp) :: budget_inject_liquid_mass = 0.0
     real(dp) :: budget_fallout_liquid_mass = 0.0
@@ -237,6 +237,7 @@ module globals
     real(dp) :: budget_sidewall_delta_WV = 0.0
     integer(i4) :: budget_n_injected = 0
     integer(i4) :: budget_n_fellout = 0
+    integer(i4) :: budget_n_coalesced = 0
 
     ! ----------- Turbulence Dispatch ----------------
     ! Abstract interfaces for mode-agnostic turbulence calls.
@@ -438,6 +439,7 @@ contains
         budget_sidewall_delta_WV = 0.0
         budget_n_injected = 0
         budget_n_fellout = 0
+        budget_n_coalesced = 0
     end subroutine reset_budgets
 
 end module globals

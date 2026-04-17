@@ -107,6 +107,10 @@ of piggy-backing on `position < 0` sentinels. That would make the
 contract explicit and the code easier to read without having to trace
 the whole call chain.
 
+## Known Bugs
+
+- **`copy_file` self-clobber.** When input dir == output dir, `copy_file` truncates the aerosol file to 0 bytes (copies onto itself). Workaround: keep inputs in a subdirectory.
+
 ## Planned Modifications
 
 ### 7. Add predetermined eddies mode

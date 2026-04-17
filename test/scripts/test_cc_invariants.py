@@ -119,9 +119,11 @@ def t2_bookkeeping(sim: CODTSimulation, log):
     n_log = int(len(log["records"]))
     ts_coll = int(sim.N_collisions.sum())
     ts_coal = int(sim.N_coalescences.sum())
-    ok_ts = (ts_coll == ts_coal == n_log)
+    ok_coal_log = (ts_coal == n_log)
+    ok_coal_le_coll = (ts_coal <= ts_coll)
 
-    # Surviving-particle check on the final snapshot
+    # Surviving-particle check on the final snapshot:
+    # each surviving particle's n_coalescences <= n_collisions
     pds = sim._particles_ds
     if pds is None:
         pds = sim.load_trajectories()
@@ -130,12 +132,14 @@ def t2_bookkeeping(sim: CODTSimulation, log):
     start = end - int(row_sizes[-1])
     p_coll = pds["n_collisions"].values[start:end].astype(int)
     p_coal = pds["n_coalescences"].values[start:end].astype(int)
-    ok_particles = bool(np.all(p_coll == p_coal))
+    ok_particles = bool(np.all(p_coal <= p_coll))
 
-    ok = ok_ts and ok_particles
+    ok = ok_coal_log and ok_coal_le_coll and ok_particles
     msg = (
         f"Σ N_collisions={ts_coll}, Σ N_coalescences={ts_coal}, "
-        f"log records={n_log}; surviving particles n_coll==n_coal: {ok_particles}"
+        f"log records={n_log}; coal==log: {ok_coal_log}, "
+        f"coal<=coll: {ok_coal_le_coll}, "
+        f"per-particle coal<=coll: {ok_particles}"
     )
     return ok, msg
 

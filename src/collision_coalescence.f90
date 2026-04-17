@@ -219,7 +219,7 @@ contains
                 lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
 
                 ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
-                lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0/3.0)
+                lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)
 
                 ! Conserve liquid water mass
                 lparticles(keep)%water_liquid = lparticles(keep)%water_liquid + lparticles(kill)%water_liquid
@@ -229,8 +229,8 @@ contains
                                                     + lparticles(kill)%solute_gross_mass
                 if (lparticles(keep)%solute_type%solute_density > 0.0) then
                     lparticles(keep)%solute_radius = &
-                        (3.0 * lparticles(keep)%solute_gross_mass / &
-                         (4.0 * pi * lparticles(keep)%solute_type%solute_density))**(1.0/3.0)
+                        (3.0_dp * lparticles(keep)%solute_gross_mass / &
+                         (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
                 end if
 
                 ! Recalculate terminal velocity for merged droplet

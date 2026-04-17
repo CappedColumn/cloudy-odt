@@ -253,7 +253,7 @@ contains
         real(dp) :: r, new_position
 
         ! Update fallout flag for particles which settled out of the domain
-        do concurrent (i = 1:n_particles)
+        do i = 1, n_particles
             if ( lparticle_array(i)%position < 0.0_dp ) then
                 ! I contemplate this immortal outcome
                 ! A timeless trace of future times to come
@@ -294,7 +294,7 @@ contains
 
     end subroutine verify_particle_fallout
 
-    pure subroutine random_fallout(lparticle, fallout_rate, height)
+    subroutine random_fallout(lparticle, fallout_rate, height)
         ! Special effects-related function. When particle falls through bottom
         ! boundary, determines whether it is removed or falls back through top
         ! of domain
@@ -757,7 +757,7 @@ contains
     subroutine read_binning_data(location, n_cat, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations
         character(*), intent(in) :: location
-        integer, intent(in), value :: n_cat
+        integer, value :: n_cat
         real(dp), allocatable, intent(out) :: bin_edges(:)
         integer, allocatable, intent(out) :: DSD(:,:)
         integer :: i, ierr, file_unit

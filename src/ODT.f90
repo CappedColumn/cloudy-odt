@@ -165,9 +165,9 @@ contains
         ! Non-dimensional Eddy Size
         Lnd = (1.*L)/(1.*N)
 
-        ! Integrate values across the eddy
-        wK = integrate_eddy(L, M, W_nd)
-        TvK = -integrate_eddy(L, M, Tv_nd)
+        ! Integrate values across the eddy (fused single pass)
+        call integrate_eddy_pair(L, M, W_nd, Tv_nd, wK, TvK)
+        TvK = -TvK
 
         ! Calculate energies
         pot_energy = buoy_nd * TvK * Lnd
@@ -309,6 +309,34 @@ contains
         integral = 4.*integral/(9.*L*L)
 
     end function integrate_eddy
+
+
+    pure subroutine integrate_eddy_pair(L, M, array1, array2, integral1, integral2)
+        integer(i4), intent(in) :: L, M
+        real(dp), intent(in) :: array1(:), array2(:)
+        real(dp), intent(out) :: integral1, integral2
+
+        integer(i4) :: k, weight
+        real(dp) :: half_L
+
+        half_L = L * 0.5
+
+        integral1 = array1(M) * half_L
+        integral2 = array2(M) * half_L
+
+        do k = 1, L-1
+            weight = L - 2*k
+            integral1 = integral1 + array1(M+k) * weight
+            integral2 = integral2 + array2(M+k) * weight
+        end do
+
+        integral1 = integral1 - array1(M+L) * half_L
+        integral2 = integral2 - array2(M+L) * half_L
+
+        integral1 = 4. * integral1 / (9. * L * L)
+        integral2 = 4. * integral2 / (9. * L * L)
+
+    end subroutine integrate_eddy_pair
 
 
     subroutine implement_eddy(L, M)

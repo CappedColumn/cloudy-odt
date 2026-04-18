@@ -260,7 +260,7 @@ end subroutine fcnkb !of costa mesa
 
 SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
    INTEGER       :: i, n
-   REAL(dp)        :: eps, errcon, errmax, h, hdid, hnext, htry, pgrow, pshrnk, safety, x, xnew
+   REAL(dp)        :: eps, errcon, errmax, h, hdid, hnext, htemp, htry, pgrow, pshrnk, safety, x, xnew
    REAL(dp)        :: dydx(n), y(n), yerr(nmax), yscal(n), ytemp(nmax)
    PARAMETER (safety=0.9,pgrow=-0.2,pshrnk=-0.25,errcon=1.89e-4)
 
@@ -281,10 +281,8 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
    IF (ytemp(1) .LT. r_floor) errmax = MAX(errmax, 2.0_dp)
 
    IF (errmax .GT. 1.0) THEN
-      h = safety*h*(errmax**pshrnk)
-      IF (h .LT. 0.1*h) THEN
-         h = 0.1*h
-      END IF
+      htemp = safety*h*(errmax**pshrnk)
+      h = max(htemp, 0.1_dp*h)
       xnew = x+h
       IF (xnew .EQ. x) THEN
          WRITE(0,*) 'stepsize underflow in rkqs'

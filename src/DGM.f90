@@ -5,8 +5,8 @@ module DGM
 
     ! From DGM-array.f90
     ! Verify where/when these are set and overwritten
-    integer(i4), parameter :: nmax = 8
-    integer(i4), parameter :: nvar = 8
+    integer(i4), parameter :: nmax = 4
+    integer(i4), parameter :: nvar = 4
     
     ! Mani sets these using "set_odeint_dgm_params()"
     integer(i4)            :: dmaxa
@@ -19,6 +19,9 @@ module DGM
     real(dp)               :: Ms_sp      ! molar mass of solute (kg/mol)
     real(dp)               :: c7_sp      ! density factor
     real(dp)               :: nions_sp   ! ions per solute molecule
+
+    real(dp)               :: ode_supersat  ! supersaturation (fraction), constant during ODE
+    real(dp)               :: ode_press     ! pressure (Pa), constant during ODE
 
     real(dp), parameter :: c7am   = 0.4363021
     real(dp), parameter :: c7nacl = 0.5381062
@@ -34,7 +37,7 @@ module DGM
     ! than a false positive.
     real(dp), parameter :: hmin = 1.0e-12_dp
 
-    public :: integrate_ODE, set_aerosol_properties
+    public :: integrate_ODE, set_aerosol_properties, ode_supersat, ode_press
     private
 
 contains
@@ -143,18 +146,14 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
 
 
 subroutine fcnkb(ltime, drop_radius, drdt)
-    !This function provides derivates for y variables in drop_radius at ltime
-    !input:     ltime               -> time
-    !input:     drop_radius     -> y variables
-    !output:    drdt            -> time derivative of all y variables
-    real(dp), intent(in)    :: ltime, drop_radius(8)
-    real(dp), intent(out) :: drdt(8)
+    real(dp), intent(in)    :: ltime, drop_radius(4)
+    real(dp), intent(out) :: drdt(4)
 
     real(dp)  :: ck, cr, denom
-    real(dp)  :: e, es
-    real(dp)  :: falpha, fbeta, rho, rhol
+    real(dp)  :: es
+    real(dp)  :: falpha, fbeta, rhol
 
-    real(dp)  :: radius, qv, temp, s, press, ver_vel, height, ql
+    real(dp)  :: radius, qv, temp, s, press
 
     real(dp)  :: lalpha, lbeta
     real(dp), parameter :: alph = 1
@@ -163,19 +162,11 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     real(dp), parameter :: sigma  = 7.392730e-2
 
     radius  = drop_radius(1)
-    ! Floor radius at r_floor = solute_radius*(1+eps_r) for derivative
-    ! evaluation. RK substages (with coefficients up to ~2.5) can transiently
-    ! push ytemp below the dry radius even when the final combined step
-    ! stays above it; without this clamp the cr denominator flips sign and
-    ! pollutes yerr. rkqs enforces the floor on accepted steps separately.
     if (radius < r_floor) radius = r_floor
     qv      = drop_radius(2)
     temp    = drop_radius(3)
-    s       = drop_radius(4)
-    press   = drop_radius(5)
-    ver_vel = drop_radius(6)
-    height  = drop_radius(7)
-    ql      = drop_radius(8)
+    s       = ode_supersat
+    press   = ode_press
 
     !Mani: constanst used from module const
     cpm     = cp*((1.0+cp_wv/cp*qv)/(1.0+qv))
@@ -240,21 +231,9 @@ subroutine fcnkb(ltime, drop_radius, drdt)
     end if
     
     ! -- calculate change of temperature
-    drdt(3) = -Lcond_temp/cpm*drdt(2)   !-ver_vel*g/cpm
+    drdt(3) = -Lcond_temp/cpm*drdt(2)
 
-    !write(*,*) "drdt(3): ", drdt(3)
-    ! -- calculate change of supersaturation
-    !e       = qv*press/(eps_err+qv)
-    !rho     = (press-e)/(Rd*temp)*(1.0+ql)+e/(Rv*temp)
-    !drdt(4) = (1.0+s)*(Rd/(qv*(Rv*qv+Rd))*drdt(2)-g*rho*ver_vel/press-Lcond_temp/(Rv*temp**2)*drdt(3))
-    ! -- calculate change of pressure
-    !drdt(5) = -1.0*rho*g*ver_vel
-    ! -- calculate change of vertical velocity
-    !drdt(6) = 0.0
-    ! -- calculate change of height
-    !drdt(7) = ver_vel
-    ! -- calculate change of liquid water
-    drdt(8) = -1.0*drdt(2)/grid_scale
+    drdt(4) = -1.0*drdt(2)/grid_scale
 
 end subroutine fcnkb !of costa mesa
 

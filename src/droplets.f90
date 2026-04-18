@@ -1,69 +1,24 @@
 module droplets
     use netcdf
     use globals
+    use particle_types
+    use collision_coalescence, only: do_collisions, do_coalescence, &
+                                     collision_coalescence_step, wmax_collision, &
+                                     write_collisions, collisions_this_step, coalescences_this_step
+    use collection_efficiency, only: coalescence_kernel, set_kernel_selector
     use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
 
-    type :: aerosol
-        ! Aerosol user-defined type. Aerosol is used by the 
-        ! particle type and attributes are used in calculations
-        character(20) :: aerosol_name = 'NA'
-        integer(i4) :: aerosol_id = 0
-        integer(i4) :: n_ions = 0
-        real(dp) :: solute_molar_mass = 0.0
-        real(dp) :: solute_density = 0.0 ! kg/m3
-    contains
-        ! All type-bound procedures begin with "aerosol_"
-        ! Renamed for ease of reading when calling procedures
-        procedure :: aerosol_initialize ! not renamed due to "initialize" procedure for particle below
-    end type aerosol
-
-    type, extends(aerosol) :: particle
-        ! Droplet particle user-defined type, contains the unique attributes
-        ! for each particle in the simulation
-        integer(i4) :: particle_id
-
-        ! Particle properties shared with gridcell
-        real(dp) :: position = 0.0          ! z coordinate, m
-        integer(i4) :: gridcell = 0      ! Gridcell index, i
-        real(dp) :: temperature = 0.0       ! Temperature of the particle, K
-        real(dp) :: water_vapor = 0.0      ! Water vapor content, kg/kg
-        real(dp) :: virt_temp = 0.0         ! Virtual temperature, K
-        real(dp) :: supersaturation = 0.0   ! Supersaturation level, %
-
-        ! particle properties unique to each particle
-        real(dp) :: critical_radius = 0.0
-        real(dp) :: critical_supersaturation = 0.0
-        real(dp) :: water_liquid = 0.0      ! Absolute liquid water, kg
-        real(dp) :: radius = 0.0            ! Radius of the particle, m
-
-        ! Particle properties pertaining to dissolved aerosol
-        type(aerosol) :: solute_type = aerosol()    ! Type of aerosol particle
-        real(dp) :: solute_gross_mass = 0.0      ! Gross mass of the solute in the particle (kg)
-        real(dp) :: solute_radius = 0.0        ! Radius of the dry-solute in the particle (m)
-        integer(i4) :: aerosol_category = 1
-
-        logical :: activated = .false.
-        logical :: fellout = .false.
-
-    contains
-        ! All type-bound procedures begin with "particle_"
-        ! Renamed for ease of reading when calling procedures
-        procedure :: initialize => particle_initialize
-        procedure :: update_scalars => particle_update_scalars
-        procedure :: critical_kohler => particle_critical_kohler
-        procedure :: settling => particle_settling
-        procedure :: update_gridcell => particle_update_gridcell
-        procedure :: calculate_water_content => particle_calculate_water_content
-        procedure :: verify_activation => particle_verify_activation
-    end type particle
-
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
     integer(i4) :: total_n_particles = 0
     integer(i4) :: total_n_fellout = 0
+
+    ! Collision-coalescence accumulators (accumulate between writes, reset on stats output)
+    integer(i4) :: collisions_since_write = 0
+    integer(i4) :: coalescences_since_write = 0
     real(dp), allocatable :: particle_bin_edges(:), particle_bins(:)
     integer(i4), allocatable :: size_distribution(:,:) !(No. DSDs, rbins)
     integer(i4) :: n_DSD_bins, n_aer_category
@@ -111,9 +66,25 @@ contains
         ! droplet-environment property update, and droplet growth.
         ! Caller is responsible for syncing nondim fields afterward.
         real(dp), intent(in) :: ltime, ldt
+        integer :: i
 
         call injection_controller(time, particles)
-        call move_particles_by_gravity(particles, ldt)
+
+        if (do_collisions) then
+            ! CC owns settling across the ldt window (writes back final
+            ! particle positions). Fallout removal and gridcell updates
+            ! match the tail of move_particles_by_gravity.
+            call collision_coalescence_step(particles, current_n_particles, ldt)
+            collisions_since_write = collisions_since_write + collisions_this_step
+            coalescences_since_write = coalescences_since_write + coalescences_this_step
+            call verify_particle_fallout(particles, current_n_particles)
+            do i = 1, current_n_particles
+                call particles(i)%update_gridcell()
+            end do
+        else
+            call move_particles_by_gravity(particles, ldt)
+        end if
+
         call update_all_particles(particles, T, WV, Tv, SS)
         call droplet_growth_model(particles, ltime, ldt)
 
@@ -217,8 +188,8 @@ contains
         random_position = grid_idx * (H / N)
 
         ! Initialize the new particle using properties from the gridcell
-        call injected_particle%initialize(aerosol_type, total_n_particles, random_position, grid_idx, Temp(grid_idx), &
-                    Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx))
+        call particle_initialize(injected_particle, aerosol_type, total_n_particles, random_position, grid_idx, &
+                    Temp(grid_idx), Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx))
 
         call injected_particle%update_gridcell()
 
@@ -232,40 +203,6 @@ contains
 
     end subroutine inject_particle
 
-
-    pure subroutine particle_critical_kohler(this)
-        ! Calculate the critical radius and supersaturation for the particle
-        ! based on Equations 6.7-6.8 in Rogers & Yau
-        class(particle), intent(inout) :: this
-        real(dp) :: radius, supersaturation
-        real(dp) :: a, b ! m
-
-        ! Determine numerical approximations
-        a = a_RY / (this%temperature)
-        b = 4.3 * this%solute_gross_mass * this%solute_type%n_ions / this%solute_type%solute_molar_mass
-
-        ! Calculate the critical radius and supersaturation
-        radius = sqrt(3 * b / a) * m_per_cm ! meters
-        supersaturation = sqrt(4 * a**3 / (27 * b)) * 100 ! %
-
-        ! Assign to particle properties
-        this%critical_radius = radius
-        this%critical_supersaturation = supersaturation
-
-    end subroutine particle_critical_kohler
-
-    pure subroutine particle_verify_activation(this)
-        ! Changes the activated flag for a particle, depending on its
-        ! current size and critical radius.
-        class(particle), intent(inout) :: this
-
-        if ( this%radius >= this%critical_radius ) then
-            this%activated = .true.
-        else
-            this%activated = .false.
-        end if
-
-    end subroutine particle_verify_activation
 
     !-----------------------------------------------------------
 
@@ -290,7 +227,7 @@ contains
         integer :: i
         
         ! Move each particle based on settling velocity
-        do concurrent (i = 1:current_n_particles)
+        do i = 1, current_n_particles
             call lparticles(i)%settling(ldt)
         end do
 
@@ -299,7 +236,7 @@ contains
         call verify_particle_fallout(lparticles, current_n_particles)
 
         ! For remaining particles, update gridcell index and properties
-        do concurrent (i = 1:current_n_particles)
+        do i = 1, current_n_particles
             call lparticles(i)%update_gridcell()
         end do
 
@@ -314,11 +251,14 @@ contains
         ! of active particles which remain in the domain
         type(particle), intent(inout) :: lparticle_array(:)
         integer(i4), intent(inout) :: n_particles
-        integer :: i, n_just_fellout
+        integer :: i, n_removed
         real(dp) :: r, new_position
 
         ! Update fallout flag for particles which settled out of the domain
-        do concurrent (i = 1:n_particles)
+        ! Coalesced particles (killed by CC) are already marked and skip
+        ! the random_fallout pathway since their mass is in the survivor.
+        do i = 1, n_particles
+            if ( lparticle_array(i)%coalesced ) cycle
             if ( lparticle_array(i)%position < 0.0_dp ) then
                 ! I contemplate this immortal outcome
                 ! A timeless trace of future times to come
@@ -333,33 +273,32 @@ contains
             end if
         end do
 
-        ! Count the number of particles that fellout
-        ! and reassign array positions for particles still in domain
-        n_just_fellout = 0 ! How many particles fellout since last check
+        ! Remove dead particles (fellout or coalesced) and compact array.
+        ! Budget counters are incremented separately for each removal type.
+        n_removed = 0
         do i = 1, n_particles
-            ! If particle fellout, increment counters
-            if ( lparticle_array(i)%fellout ) then
+            if ( lparticle_array(i)%coalesced ) then
+                n_removed = n_removed + 1
+                budget_n_coalesced = budget_n_coalesced + 1
+            else if ( lparticle_array(i)%fellout ) then
                 total_n_fellout = total_n_fellout + 1
-                n_just_fellout = n_just_fellout + 1
+                n_removed = n_removed + 1
                 budget_fallout_liquid_mass = budget_fallout_liquid_mass + lparticle_array(i)%water_liquid
                 budget_fallout_solute_mass = budget_fallout_solute_mass + lparticle_array(i)%solute_gross_mass
                 budget_n_fellout = budget_n_fellout + 1
             else
-                ! Reassign array position of particles still in domain to 
-                ! fill in gaps of particles that fell out, saves space 
-                ! and removes particles that fellout from further computation
-                if (n_just_fellout > 0) then
-                    lparticle_array(i - n_just_fellout) = lparticle_array(i)
+                if (n_removed > 0) then
+                    lparticle_array(i - n_removed) = lparticle_array(i)
                 end if
             end if
         end do
 
         ! Update number of particles in domain
-        n_particles = n_particles - n_just_fellout
+        n_particles = n_particles - n_removed
 
     end subroutine verify_particle_fallout
 
-    pure subroutine random_fallout(lparticle, fallout_rate, height)
+    subroutine random_fallout(lparticle, fallout_rate, height)
         ! Special effects-related function. When particle falls through bottom
         ! boundary, determines whether it is removed or falls back through top
         ! of domain
@@ -377,36 +316,6 @@ contains
         end if
 
     end subroutine random_fallout
-
-    pure subroutine particle_settling(this, ldt)
-        ! Determines particle fall speed and updates particle position
-        ! with explicit scheme
-        class(particle), intent(inout) :: this
-        real(dp), intent(in) :: ldt
-        real(dp) :: terminal_velocity
-
-        ! Determine the terminal velocity of the particle
-        terminal_velocity = calculate_terminal_velocity(this)
-
-        ! Update the particle position
-        this%position = this%position + (terminal_velocity * ldt)
-
-    end subroutine particle_settling
-
-    pure function calculate_terminal_velocity(this) result(terminal_velocity)
-        ! Calculate the stokes terminal fall velocity of a particle using
-        ! virtual effects
-        use globals, only: g, nu_stokes, pres, Rd, rho_l
-        class(particle), intent(in) :: this
-        real(dp) :: terminal_velocity
-        real(dp) :: coeff, rho_air
-
-        rho_air = pres / (this%virt_temp * Rd)
-        coeff = 2. * g * rho_l / (9.0 * nu * rho_air)
-        terminal_velocity = -coeff * this%radius**2
-
-
-    end function calculate_terminal_velocity
 
     subroutine move_particles_in_eddy(lparticles, M, L)
         ! Move particles within an eddy based on the triplet map.
@@ -430,54 +339,15 @@ contains
 
     end subroutine move_particles_in_eddy
 
-    pure subroutine particle_update_gridcell(this)
-        ! Given the position of a particle, update the particle's gridcell
-        ! index to reflect that location
-        !
-        ! Input:
-        ! this - particle type
-        !
-        ! Output:
-        ! this - particle type with updated gridcell index
-        use globals, only: dz_length
-        class(particle), intent(inout) :: this
-
-        this%gridcell = int(this%position / dz_length) + 1
-
-        ! Particle position can be moved to 1.0,
-        ! this ensures the gridcell index is not out of bounds
-        if ( this%gridcell > N ) this%gridcell = N
-
-    end subroutine particle_update_gridcell
-
     !-----------------------------------------------------------
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!!! SUBROUTINES TO INITIALIZE PARTICLES AND AEROSOLS !!!!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    subroutine aerosol_initialize(this, name, id, n_ions, molar_mass, density)
-        ! Type-bound procedure for aerosol. Initializes aerosol properties with
-        ! passed values.
-        class(aerosol), intent(out) :: this
-        character(len=*), intent(in) :: name
-        integer(i4), intent(in) :: id
-        integer(i4), intent(in) :: n_ions
-        real(dp), intent(in) :: molar_mass
-        real(dp), intent(in) :: density
-
-        this%aerosol_name = name
-        this%aerosol_id = id
-        this%n_ions = n_ions
-        this%solute_molar_mass = molar_mass
-        this%solute_density = density
-
-    end subroutine aerosol_initialize
-
-
     subroutine particle_initialize(this, solute, ln_particles, pos, grid_idx, temp, vapor, virt_temp, supersat)
 
-        class(particle), intent(out) :: this
+        type(particle), intent(out) :: this
         integer(i4), intent(in) :: ln_particles
         real(dp), intent(in) :: pos
         integer(i4), intent(in) :: grid_idx
@@ -485,7 +355,7 @@ contains
         real(dp), intent(in) :: vapor
         real(dp), intent(in) :: virt_temp
         real(dp), intent(in) :: supersat
-        class(aerosol), intent(in) :: solute
+        type(aerosol), intent(in) :: solute
 
         ! Each of us, a cell of awareness
         ! Imperfect and incomplete
@@ -545,43 +415,6 @@ contains
     !!! SUBROUTINES TO UPDATE PARTICLE PROPERTIES !!!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    pure subroutine particle_update_scalars(this, Temp, Vapor, VirtTemp, Supersat)
-        ! Update the particle properties based on the gridcell properties
-        ! at the particle's location.
-        !
-        ! Input:
-        ! this - particle type
-        ! Temp - temperature at particle location, K
-        ! Vapor - water vapor content at particle location, kg/kg
-        ! VirtTemp - virtual temperature at particle location, K
-        ! Supersat - supersaturation at particle location, %
-        !
-        ! Output:
-        ! this - particle type with updated properties
-        class(particle), intent(inout) :: this
-        real(dp), intent(in) :: Temp, Vapor, VirtTemp, Supersat
-
-        this%temperature = Temp
-        this%water_vapor = Vapor
-        this%virt_temp = VirtTemp
-        this%supersaturation = Supersat
-
-        ! Determine the critical radius and supersaturation for this particle
-        call this%critical_kohler()
-
-        ! Determine liquid water content of the particle
-        call this%calculate_water_content()
-
-    end subroutine particle_update_scalars
-
-    pure subroutine particle_calculate_water_content(this)
-        ! Determine particle liquid water content
-        class(particle), intent(inout) :: this
-
-        this%water_liquid = pi_43 * (this%radius**3 - this%solute_radius**3) * rho_l
-
-    end subroutine particle_calculate_water_content
-    
     !-----------------------------------------------------------
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -733,7 +566,7 @@ contains
         real(dp), intent(in) :: lT(:), lWV(:), lTv(:), lSS(:)
         integer :: i, idx
 
-        do concurrent (i = 1:current_n_particles)
+        do i = 1, current_n_particles
             idx = lparticles(i)%gridcell
             call lparticles(i)%update_scalars(lT(idx), lWV(idx), lTv(idx), lSS(idx))
             call lparticles(i)%verify_activation
@@ -779,7 +612,8 @@ contains
         character(256):: aerosol_file, bin_data_file ! Not allocatable since namelist-specified variable
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
-        bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius
+        bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
+        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -797,6 +631,21 @@ contains
             stop 1
         end if
         close(nml_unit)
+
+        call set_kernel_selector()
+
+        ! Collision-coalescence consistency checks
+        if (do_coalescence .and. .not. do_collisions) then
+            write(0,*) 'ERROR: do_coalescence requires do_collisions.'
+            stop 1
+        end if
+        if (write_collisions .and. .not. do_collisions) then
+            write(0,*) 'ERROR: write_collisions requires do_collisions.'
+            stop 1
+        end if
+        if (do_collisions .and. .not. do_coalescence) then
+            write(*,*) 'NOTE: Collisions enabled without coalescence (collisions-only mode).'
+        end if
 
         ! Namelist is copied to output directory in initialize_params
         
@@ -927,7 +776,7 @@ contains
     subroutine read_binning_data(location, n_cat, bin_edges, DSD)
         ! Acquires the bin edges for particle/droplet size distribution calculations
         character(*), intent(in) :: location
-        integer, intent(in), value :: n_cat
+        integer, value :: n_cat
         real(dp), allocatable, intent(out) :: bin_edges(:)
         integer, allocatable, intent(out) :: DSD(:,:)
         integer :: i, ierr, file_unit
@@ -1114,6 +963,12 @@ contains
         stats(3) = current_n_particles - Nact ! Unactivated N
         stats(4) = (r_sum / current_n_particles) * um_per_m ! r_bar
         stats(5) = lwc_sum * g_per_kg / domain_volume ! g/m3
+
+        ! Collision-coalescence counts since last write (0 when CC is off)
+        stats(6) = collisions_since_write
+        stats(7) = coalescences_since_write
+        collisions_since_write = 0
+        coalescences_since_write = 0
 
     end subroutine calculate_droplet_statistics
 

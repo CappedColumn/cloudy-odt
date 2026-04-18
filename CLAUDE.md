@@ -55,12 +55,21 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 - `LEM.f90` — periodic Crank-Nicolson (Sherman-Morrison), -5/3 eddy sampling, periodic triplet map
 - `microphysics.f90` — thermodynamic functions, dim/nondim conversion
 - `droplets.f90` — `aerosol`→`particle` type hierarchy, Lagrangian tracking
+- `collision_coalescence.f90` — event-driven 1D collision-coalescence (min-heap, linked list)
+- `collection_efficiency.f90` — coalescence kernels: Hall (1980) tabulated, Long (1974) analytical, unity
 - `DGM.f90` — Cash-Karp RK45 ODE integrator for droplet growth
 - `writeout.f90` — buffered NetCDF output
 - `write_particle.f90` — particle trajectory NetCDF output
 - `initialize.f90` — namelist I/O, domain setup, pointer assignment
 
-**Dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
+**Dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
+
+**Collision-coalescence namelist parameters** (in `&MICROPHYSICS`):
+- `do_collisions` — enable collision detection (default `.false.`)
+- `do_coalescence` — enable coalescence on collision (default `.true.`, requires `do_collisions`)
+- `coalescence_kernel` — `'hall'` (tabulated, default `'long'`), `'long'` (analytical), or `'unity'` (E=1)
+- `wmax_collision` — terminal velocity cap in CC kernel (default 10.0 m/s)
+- `write_collisions` — write binary collision event log (requires `do_collisions`)
 
 ## Fortran Conventions
 
@@ -72,6 +81,44 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 ## Interface Contract with codt_tools
 
 Executable invocation: `codt <NAMELIST_PATH>`. Relative paths (`aerosol_file`, `bin_data_file`) resolve from namelist's parent directory. `output_directory` must be absolute. No argument → error + `stop 1`. Corresponding spec in `~/dev/CODT_tools/CLAUDE.md`.
+
+## Known Fragilities / Future Cleanup
+
+### Collision-coalescence ↔ droplet fallout interface
+
+`collision_coalescence_step` communicates "this particle fell out" to
+`verify_particle_fallout` by setting `lparticles(i)%position = -1.0_dp`
+in its writeback loop. `verify_particle_fallout` then detects `position
+< 0` and finishes the bookkeeping (sets `%fellout`, compacts the array,
+bumps `total_n_fellout`). This works, but is fragile:
+
+- **Order-of-calls coupling.** Nothing between CC's writeback and the
+  `verify_particle_fallout` call is allowed to read `%fellout` (still
+  `.false.` at that point) or `%position` (sentinel `-1.0` would look
+  like a bogus location) without knowing about the contract. Any new
+  step inserted in `update_droplets` between CC and
+  `verify_particle_fallout` would need to respect or update this.
+- **`do_random_fallout` override.** When CC's `handle_fall_event` marks
+  a particle dead and the writeback sets `position = -1`,
+  `verify_particle_fallout` may instead recycle that particle to the
+  top of the domain via `random_fallout` (if `do_random_fallout =
+  .true.`). That's the special effect's design, but it means CC's
+  decision can be "undone" by a downstream module. CC has no awareness
+  of `do_random_fallout`.
+- **`total_n_fellout` counter lives in droplets.** CC increments its
+  own `collisions_this_step` / `coalescences_this_step`, but the
+  fellout counter is bumped by `verify_particle_fallout`. Two
+  mechanisms in two modules for closely-related events.
+
+Future cleanup idea: give CC a proper "event → particle state" sink
+interface (e.g. a subroutine it calls for each removal/merge) instead
+of piggy-backing on `position < 0` sentinels. That would make the
+contract explicit and the code easier to read without having to trace
+the whole call chain.
+
+## Known Bugs
+
+- **`copy_file` self-clobber.** When input dir == output dir, `copy_file` truncates the aerosol file to 0 bytes (copies onto itself). Workaround: keep inputs in a subdirectory.
 
 ## Planned Modifications
 
@@ -89,6 +136,7 @@ Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_p
 |------|--------|-------------|
 | `{name}.nc` | netCDF4 | Profiles + time series |
 | `{name}_particles.nc` | netCDF4 | Particle data (if `write_trajectories=.true.`) |
+| `{name}_collisions.bin` | Binary stream | Collision events (if `write_collisions=.true.`) |
 | `{name}_eddies.bin` | Binary stream | Eddy events (if `write_eddies=.true.`) |
 | `{name}.nml` | ASCII | Namelist copy |
 

@@ -11,6 +11,7 @@ module initialize
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
+    use collision_coalescence, only: write_collisions, initialize_collision_file
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -47,6 +48,7 @@ contains
             call initialize_particle_buffers(n_aer_category, n_DSD_bins)
             ! Wont work right now if init_drop_each_gridpoint = .false.
             if ( write_trajectories ) call initialize_write_particle(file_prefix)
+            if ( write_collisions ) call initialize_collision_file(file_prefix)
         end if
 
         if ( do_special_effects ) then

@@ -130,13 +130,13 @@ SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
       END IF
 
       IF (ABS(hnext) .LT. hmin) THEN
-         WRITE(7,*) 'stepsize smaller than minimum in odeint'
+         WRITE(0,*) 'stepsize smaller than minimum in odeint'
          STOP 1
       END IF
 
       h = hnext
    END DO
-   WRITE(7,*) 'too many steps in odeint'
+   WRITE(0,*) 'too many steps in odeint'
    RETURN
 
    END
@@ -287,7 +287,7 @@ SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
       END IF
       xnew = x+h
       IF (xnew .EQ. x) THEN
-         WRITE(7,*) 'stepsize underflow in rkqs'
+         WRITE(0,*) 'stepsize underflow in rkqs'
          STOP 1
       END IF
       GOTO 1

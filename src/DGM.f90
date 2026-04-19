@@ -1,41 +1,28 @@
 module DGM
     use globals
     use microphysics, only: saturation_vapor_pressure
+    use ode_integrators, only: ode_rhs, ode_integrate
     implicit none
 
-    ! From DGM-array.f90
-    ! Verify where/when these are set and overwritten
-    integer(i4), parameter :: nmax = 4
     integer(i4), parameter :: nvar = 4
-    
-    ! Mani sets these using "set_odeint_dgm_params()"
+
     integer(i4)            :: dmaxa
     real(dp)               :: grid_scale, solute_mass
     real(dp)               :: r_floor
     real(dp), parameter    :: eps_r = 1.0e-2_dp
 
-    ! Species-specific constants — set once per droplet in
-    ! set_aerosol_properties instead of re-branched every fcnkb call.
-    real(dp)               :: Ms_sp      ! molar mass of solute (kg/mol)
-    real(dp)               :: c7_sp      ! density factor
-    real(dp)               :: nions_sp   ! ions per solute molecule
+    real(dp)               :: Ms_sp
+    real(dp)               :: c7_sp
+    real(dp)               :: nions_sp
 
-    real(dp)               :: ode_supersat  ! supersaturation (fraction), constant during ODE
-    real(dp)               :: ode_press     ! pressure (Pa), constant during ODE
+    real(dp)               :: ode_supersat
+    real(dp)               :: ode_press
 
     real(dp), parameter :: c7am   = 0.4363021
     real(dp), parameter :: c7nacl = 0.5381062
-    
-    ! From DGM-const.f90
-    real(dp)               :: Lcond_temp ! Temp. dependent latent heat
-    real(dp)               :: Ktemp, D   ! Temp. dependent diffusivities
-    real(dp)               :: cpm     ! Specific heat of...
 
-    ! Minimum step size — bail early if rkqs collapses h below this
-    ! threshold. 1e-12 s is ~10 orders of magnitude below a physical dt,
-    ! so any trip here indicates the solver is genuinely stuck rather
-    ! than a false positive.
-    real(dp), parameter :: hmin = 1.0e-12_dp
+    real(dp) :: ode_rtol(nvar) = [1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp]
+    real(dp) :: ode_atol(nvar) = [1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp]
 
     public :: integrate_ODE, set_aerosol_properties, ode_supersat, ode_press
     private
@@ -43,26 +30,24 @@ module DGM
 contains
 
 subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
-    ! Set aerosol properties
     integer(i4), intent(in) :: dmax
     real(dp), intent(in) :: m0_aerosol, r0_solute, gscale
 
-    ! Set the global variables
     dmaxa = dmax
     solute_mass = m0_aerosol
     grid_scale = gscale
     r_floor = r0_solute * (1.0_dp + eps_r)
 
     select case (dmax)
-    case (1)  ! sodium chloride (NaCl)
+    case (1)
         Ms_sp    = 58.4428e-3
         c7_sp    = c7nacl
         nions_sp = 2.0
-    case (2)  ! ammonium sulphate (NH4)2SO4
+    case (2)
         Ms_sp    = 132.1395e-3
         c7_sp    = c7am
         nions_sp = 3.0
-    case (3)  ! ammonium bisulphate NH4HSO4
+    case (3)
         Ms_sp    = 115.11e-3
         c7_sp    = c7am
         nions_sp = 2.0
@@ -73,120 +58,55 @@ subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
 
 end subroutine set_aerosol_properties
 
-! Below is the logic of the ancients, pre-dating most modern forms
-! of written human communication. Somewhere, in a creeky basement next
-! to a boiler, sits a dusty bookshelf containing the transcription. A
-! rosetta stone to illuminate the all-cap intrinsics of yester-years.
 
-! **** Turns on ~THE HISTORY CHANNEL~ **** 
-! "The comment was not invented until 1843, by Augustus Chaddington VI, an
-! amateur naturalist and tinkerer who's "magic logic machines" were built
-! from herring bones, pea-coat buttons and half-combusted pipe tobacco. After
-! meeting a lady at his local croquet club, he created the inline comment
-! in an attempt to woo her. They married 3 months later."
+subroutine integrate_ODE(ystart, x1, x2, h1)
+    real(dp), intent(inout) :: ystart(nvar)
+    real(dp), intent(in) :: x1, x2, h1
 
-SUBROUTINE integrate_ODE(ystart,x1,x2,h1)
+    integer(i4) :: ierr
 
-   INTEGER       :: i, maxstp
-   INTEGER       :: nbad, nok, nstp
-   REAL(dp)        :: eps, h1, x1, x2, TINY
-   PARAMETER (maxstp=10000,TINY=1.e-30)
-   REAL(dp)        :: dydx(nmax), ystart(nvar)
-   REAL(dp)        :: h, hdid, hnext, x
-   REAL(dp)        :: y(nmax), yscal(nmax)
+    call ode_integrate(fcnkb, nvar, ystart, x1, x2, h1, ode_rtol, ode_atol, ierr)
 
-   eps = 1e-4 ! Error tolerance
+    if (ierr < 0) then
+        write(0,*) 'DGM ODE integration failed, ierr = ', ierr
+        write(0,*) '  radius=', ystart(1), ' qv=', ystart(2), ' T=', ystart(3)
+        stop 1
+    end if
 
-   dydx(:) = 0.0
-
-   x     = x1
-   h     = SIGN(h1,x2-x1)
-   nok   = 0
-   nbad  = 0
-
-   DO i=1,nvar
-      y(i) = ystart(i)
-   END DO
-
-   DO nstp=1,maxstp
-      CALL fcnkb(x,y,dydx)
-
-      DO i=1,nvar
-         yscal(i) = ABS(y(i))+ABS(h*dydx(i))+TINY
-      END DO
-
-      IF ((x+h-x2)*(x+h-x1) .GT. 0.0) h=x2-x
-
-      CALL rkqs(y,dydx,nvar,x,h,eps,yscal,hdid,hnext)
-
-      IF (hdid .EQ. h) THEN
-         nok  = nok+1
-      ELSE
-         nbad = nbad+1
-      END IF
-
-      IF ((x-x2)*(x2-x1) .GE. 0.0) THEN
-         DO i=1,nvar
-            ystart(i)=y(i)
-         END DO
-         RETURN
-      END IF
-
-      IF (ABS(hnext) .LT. hmin) THEN
-         WRITE(0,*) 'stepsize smaller than minimum in odeint'
-         STOP 1
-      END IF
-
-      h = hnext
-   END DO
-   WRITE(0,*) 'too many steps in odeint'
-   RETURN
-
-   END
+end subroutine integrate_ODE
 
 
-subroutine fcnkb(ltime, drop_radius, drdt)
-    real(dp), intent(in)    :: ltime, drop_radius(4)
-    real(dp), intent(out) :: drdt(4)
+subroutine fcnkb(ltime, y, dydt)
+    real(dp), intent(in)  :: ltime
+    real(dp), intent(in)  :: y(:)
+    real(dp), intent(out) :: dydt(:)
 
-    real(dp)  :: ck, cr, denom
-    real(dp)  :: es
-    real(dp)  :: falpha, fbeta, rhol
-
-    real(dp)  :: radius, qv, temp, s, press
-
-    real(dp)  :: lalpha, lbeta
+    real(dp) :: ck, cr, denom
+    real(dp) :: es
+    real(dp) :: falpha, fbeta, rhol
+    real(dp) :: radius, qv, temp, s, press
+    real(dp) :: Lcond_temp, Ktemp, D, cpm
+    real(dp) :: lalpha, lbeta
     real(dp), parameter :: alph = 1
     real(dp), parameter :: beta = 0.04
+    real(dp), parameter :: sigma = 7.392730e-2
 
-    real(dp), parameter :: sigma  = 7.392730e-2
-
-    radius  = drop_radius(1)
+    radius = y(1)
     if (radius < r_floor) radius = r_floor
-    qv      = drop_radius(2)
-    temp    = drop_radius(3)
-    s       = ode_supersat
-    press   = ode_press
+    qv     = y(2)
+    temp   = y(3)
+    s      = ode_supersat
+    press  = ode_press
 
-    !Mani: constanst used from module const
-    cpm     = cp*((1.0+cp_wv/cp*qv)/(1.0+qv))
+    cpm = cp*((1.0+cp_wv/cp*qv)/(1.0+qv))
 
-    ! -- initialize diffusivities D, Ktemp and Lcond_temp
+    Lcond_temp = (2.501-0.00237*(temp-Tice))*1.e6
+    Ktemp = 7.7e-5*(temp-Tice)+0.02399
+    D     = 1.57e-7*(temp-Tice)+2.211e-5
+    D     = D*1.e5/press
 
-    ! -- Equation 2 from Bolton, MWR (1980)
-    Lcond_temp      = (2.501-0.00237*(temp-Tice))*1.e6
+    es = saturation_vapor_pressure(temp)
 
-    ! -- Table 7.1 (p103): linear interpolation between -10 and 30 deg C
-    ! -- Rogers and Yau (1989)
-    Ktemp   = 7.7e-5*(temp-Tice)+0.02399
-    D       = 1.57e-7*(temp-Tice)+2.211e-5
-    D       = D*1.e5/press
-
-    es      = saturation_vapor_pressure(temp)
-
-    ! -- calculate lalpha and lbeta
-    !Mani: I found that sqrt of negative temp produces floating point error, so I am catching it before occurs
-    !if (temp < 0) then
     if (temp < 273 .or. qv < 0 .or. temp > 320) then
       write(*,*) ""
       write(*,'(3(A,E16.8))') "fcnb error: T: ", temp, " qv: ", qv,  " radius: " , radius
@@ -194,157 +114,31 @@ subroutine fcnkb(ltime, drop_radius, drdt)
       write(*,*) "fcnb error: 2.0*pi*Md*R_uni : ", 2.0*pi*Ma*1e-3*R_univ
       flush(6)
       stop 1
-      !err_dgm   = -1
-      !return
-      ! write(*,*) "fcnb error: SQRT(2.0*pi*Md*R_uni*temp): ", SQRT(2.0*pi*Md*R_uni*temp)
-      ! flush(6)
     end if
 
-    !Mani: if the temperature oscillates to a negative value, sqrt() will return NaN and throws a floating point 
-    !exception. if compiled with Floating point flags on, the exception will terminate the program. 
-    !This is difficult to debug. therefore compile without floating point flags, and handle it in the program.
-    !So you know, where the issue occurs.
+    lalpha = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*press*(cv+R_univ/2.0))
+    lbeta  = SQRT(2.0*pi*Mw/(Rv*temp))*D/beta
 
-    lalpha  = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*press*(cv+R_univ/2.0))
-    lbeta   = SQRT(2.0*pi*Mw/(Rv*temp))*D/beta
+    falpha = radius/(radius+lalpha)
+    fbeta  = radius/(radius+lbeta)
+    rhol   = (radius**3*pi_43*rho_l+solute_mass*c7_sp)/(radius**3*pi_43)
 
-    ! Species constants (Ms_sp, c7_sp, nions_sp) are set once per droplet
-    ! in set_aerosol_properties — no per-substage branching here.
+    ck    = (2*sigma/(Rv*temp*rhol*radius))
+    cr    = nions_sp*(Mw/Ms_sp)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
+    denom = rhol*(Rv*temp/(fbeta*D*es)+Lcond_temp**2/(falpha*Ktemp*Rv*temp**2))
+    dydt(1) = 1.0/radius*(s-ck+cr)/denom
 
-    falpha  = radius/(radius+lalpha)
-    fbeta   = radius/(radius+lbeta)
-    rhol    = (radius**3*pi_43*rho_l+solute_mass*c7_sp)/(radius**3*pi_43)
+    dydt(2) = -pi_4*grid_scale*radius**2*dydt(1)*rho_l
 
-    ! -- calculate drdt
-    ck      = (2*sigma/(Rv*temp*rhol*radius))
-    cr      = nions_sp*(Mw/Ms_sp)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
-    denom   = rhol*(Rv*temp/(fbeta*D*es)+Lcond_temp**2/(falpha*Ktemp*Rv*temp**2))
-    drdt(1) = 1.0/radius*(s-ck+cr)/denom
-    !write(*,*) "drdt(1): ", drdt(1)
-    ! -- calculate change of water vapor
-    drdt(2) = -pi_4*grid_scale*radius**2*drdt(1)*rho_l
-
-    ! Verify that water vapor does not go negative
-    if ( (drdt(2) < 0.0) .and. (abs(drdt(2)) > qv) ) then
-      drdt(2) = - qv
-      drdt(1) = - drdt(2)/(pi_4*grid_scale*radius**2*rho_l)
+    if ( (dydt(2) < 0.0) .and. (abs(dydt(2)) > qv) ) then
+      dydt(2) = - qv
+      dydt(1) = - dydt(2)/(pi_4*grid_scale*radius**2*rho_l)
     end if
-    
-    ! -- calculate change of temperature
-    drdt(3) = -Lcond_temp/cpm*drdt(2)
 
-    drdt(4) = -1.0*drdt(2)/grid_scale
+    dydt(3) = -Lcond_temp/cpm*dydt(2)
 
-end subroutine fcnkb !of costa mesa
+    dydt(4) = -1.0*dydt(2)/grid_scale
 
-SUBROUTINE rkqs(y,dydx,n,x,htry,eps,yscal,hdid,hnext)
-   INTEGER       :: i, n
-   REAL(dp)        :: eps, errcon, errmax, h, hdid, hnext, htemp, htry, pgrow, pshrnk, safety, x, xnew
-   REAL(dp)        :: dydx(n), y(n), yerr(nmax), yscal(n), ytemp(nmax)
-   PARAMETER (safety=0.9,pgrow=-0.2,pshrnk=-0.25,errcon=1.89e-4)
-
-   h      = htry
-
-1       CALL rkck(y,dydx,n,x,h,ytemp,yerr)
-
-   errmax = 0.0
-   DO i=1,n
-      errmax = MAX(errmax,ABS(yerr(i)/yscal(i)))
-   END DO
-
-   errmax = errmax/eps
-
-   ! Force step rejection if the proposed radius would cross the dry-solute
-   ! floor. This prevents the ODE from entering the region where the solute
-   ! (cr) denominator changes sign and drdt(1) runs away.
-   IF (ytemp(1) .LT. r_floor) errmax = MAX(errmax, 2.0_dp)
-
-   IF (errmax .GT. 1.0) THEN
-      htemp = safety*h*(errmax**pshrnk)
-      h = max(htemp, 0.1_dp*h)
-      xnew = x+h
-      IF (xnew .EQ. x) THEN
-         WRITE(0,*) 'stepsize underflow in rkqs'
-         STOP 1
-      END IF
-      GOTO 1
-   ELSE
-      IF(errmax .GT. errcon) THEN
-         hnext = safety*h*(errmax**pgrow)
-      ELSE
-         hnext = 5.0*h
-      END IF
-      hdid = h
-      x    = x+h
-      DO i=1,n
-         y(i) = ytemp(i)
-      END DO
-      RETURN
-   END IF
-
-   END
-
-! -- (C) Copr. 1986-92 Numerical Recipes Software 5"#@-130Rk#3#)KB.
-
-SUBROUTINE rkck(y,dydx,n,x,h,yout,yerr)
-
-   INTEGER       :: i, n
-   REAL(dp)        :: dydx(n), h, x, y(n), yerr(n), yout(n)
-
-   REAL(dp)        :: ak2(nmax), ak3(nmax), ak4(nmax), ak5(nmax), ak6(nmax),       &
-                 &  ytemp(nmax), A2, A3, A4, A5, A6, B21, B31, B32, B41, B42, B43, B51,  &
-                 &  B52, B53, B54, B61, B62, B63, B64, B65, C1, C3, C4, C6, DC1, DC3, DC4, &
-                 &  DC5, DC6
-   PARAMETER ( A2=0.2,A3=0.3,A4=0.6,A5=1.0,A6=0.875,B21=0.2,B31=3.0/40.0,&
-             & B32=9.0/40.0,B41=0.3,B42=-0.9,B43=1.2,B51=-11.0/54.0,B52=2.5,&
-             & B53=-70.0/27.0,B54=35.0/27.0,B61=1631.0/55296.0,B62=175.0/512.0,&
-             & B63=575.0/13824.0,B64=44275.0/110592.0,B65=253.0/4096.0,C1=37.0/378.0,&
-             & C3=250.0/621.0,C4=125.0/594.0,C6=512.0/1771.0,DC1=C1-2825.0/27648.0,&
-             & DC3=C3-18575.0/48384.0,DC4=C4-13525.0/55296.0,DC5=-277.0/14336.0,&
-             & DC6=C6-0.25 )
-
-   DO i=1,n
-      ytemp(i) = y(i)+B21*h*dydx(i)
-   END DO
-
-   CALL fcnkb(x+A2*h,ytemp,ak2)
-
-   DO i=1,n
-      ytemp(i) = y(i)+h*(B31*dydx(i)+B32*ak2(i))
-   END DO
-
-   CALL fcnkb(x+A3*h,ytemp,ak3)
-
-   DO i=1,n
-      ytemp(i) = y(i)+h*(B41*dydx(i)+B42*ak2(i)+B43*ak3(i))
-   END DO
-
-   CALL fcnkb(x+A4*h,ytemp,ak4)
-
-   DO i=1,n
-      ytemp(i) = y(i)+h*(B51*dydx(i)+B52*ak2(i)+B53*ak3(i)+B54*ak4(i))
-   END DO
-
-   CALL fcnkb(x+A5*h,ytemp,ak5)
-
-   DO i=1,n
-      ytemp(i) = y(i)+h*(B61*dydx(i)+B62*ak2(i)+B63*ak3(i)+B64*ak4(i)+B65*ak5(i))
-   END DO
-
-   CALL fcnkb(x+A6*h,ytemp,ak6)
-
-   DO i=1,n
-      yout(i)  = y(i)+h*(C1*dydx(i)+C3*ak3(i)+C4*ak4(i)+C6*ak6(i))
-   END DO
-
-   DO i=1,n
-      yerr(i)  = h*(DC1*dydx(i)+DC3*ak3(i)+DC4*ak4(i)+DC5*ak5(i)+DC6*ak6(i))
-   END DO
- RETURN
-
- END
-
-! -- (C) Copr. 1986-92 Numerical Recipes Software 5"#@-130Rk#3#)KB.
-
+end subroutine fcnkb
 
 end module DGM

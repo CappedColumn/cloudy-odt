@@ -80,7 +80,7 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 
 ## Interface Contract with codt_tools
 
-Executable invocation: `codt <NAMELIST_PATH>`. Relative paths (`aerosol_file`, `bin_data_file`) resolve from namelist's parent directory. `output_directory` must be absolute. No argument → error + `stop 1`. Corresponding spec in `~/dev/CODT_tools/CLAUDE.md`.
+Executable invocation: `codt <NAMELIST_PATH>`. Relative path `aerosol_file` resolves from namelist's parent directory. `output_directory` must be absolute. No argument → error + `stop 1`. Corresponding spec in `~/dev/CODT_tools/CLAUDE.md`.
 
 ## Known Fragilities / Future Cleanup
 

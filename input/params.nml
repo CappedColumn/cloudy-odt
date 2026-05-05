@@ -45,7 +45,6 @@ expected_Ndrops_per_gridpoint = 1.0       ! Set initial size of particle array t
 initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 
 aerosol_file = "aerosol_input.nc"
-bin_data_file = "bin_data.txt"
 
 ! --- Collision-Coalescence Parameters ---
 

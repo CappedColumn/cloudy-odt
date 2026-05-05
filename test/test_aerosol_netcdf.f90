@@ -2,7 +2,7 @@ program test_aerosol_netcdf
     use globals, only: dp, i4
     use droplets, only: read_aerosol_netcdf, aerosol_size_edges, injection_times, &
                         injection_rates, aerosol_partition, aerosol_bin_freq, &
-                        aerosol_radii, aerosols
+                        aerosol_radii, aerosols, particle_bin_edges, n_DSD_bins
     implicit none
 
     integer :: n_passed, n_failed
@@ -39,6 +39,12 @@ program test_aerosol_netcdf
     ! CDF values: bin_freq(bin, time)
     call check_real("cdf(1,1)", aerosol_bin_freq(1,1), 1.0_dp)
     call check_real("cdf(2,1)", aerosol_bin_freq(2,1), 1.0_dp)
+
+    ! DSD bin edges
+    call check_int("n_DSD_bins", n_DSD_bins, 200)
+    call check_int("n dsd_bin_edges", size(particle_bin_edges), 201)
+    call check_real("dsd_bin_edges(1)", particle_bin_edges(1), 0.049_dp)
+    call check_real("dsd_bin_edges(201)", particle_bin_edges(201), 65.262_dp)
 
     ! Aerosol properties
     call check_int("n_ions", aerosols(1)%n_ions, 2)

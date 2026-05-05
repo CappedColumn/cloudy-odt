@@ -609,10 +609,10 @@ contains
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
         
-        character(256):: aerosol_file, bin_data_file ! Not allocatable since namelist-specified variable
+        character(256):: aerosol_file
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
-        bin_data_file, write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
+        write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
         do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
 
         ! Read in microphysical namelist parameters
@@ -659,18 +659,19 @@ contains
 
         ! Resolve input paths relative to namelist directory
         aerosol_file = resolve_path(namelist_dir, trim(aerosol_file))
-        bin_data_file = resolve_path(namelist_dir, trim(bin_data_file))
 
         ! Copy aerosol input to output directory
         i = scan(trim(aerosol_file), '/', back=.true.)
         call copy_file(trim(aerosol_file), trim(sim_output_dir)//trim(aerosol_file(i+1:)))
 
-        ! Set up aerosol type and injection forcings
+        ! Set up aerosol type, injection forcings, and DSD bin edges
         call read_aerosol_netcdf(trim(aerosol_file))
 
-        ! Bring in binning data
+        ! Set up DSD arrays
         n_aer_category = maxval(aerosol_partition)
-        call read_binning_data(trim(bin_data_file), n_aer_category, particle_bin_edges, size_distribution)
+        if (n_aer_category > 1) n_aer_category = n_aer_category + 1
+        allocate(size_distribution(n_aer_category, n_DSD_bins))
+        size_distribution = 0
         
         ! Calculate mid-point radii of DSD
         allocate(particle_bins(n_DSD_bins))
@@ -773,52 +774,12 @@ contains
 
     end subroutine netcdf_add_aerDSD
 
-    subroutine read_binning_data(location, n_cat, bin_edges, DSD)
-        ! Acquires the bin edges for particle/droplet size distribution calculations
-        character(*), intent(in) :: location
-        integer, value :: n_cat
-        real(dp), allocatable, intent(out) :: bin_edges(:)
-        integer, allocatable, intent(out) :: DSD(:,:)
-        integer :: i, ierr, file_unit
-        character(100) :: io_emsg
-        logical :: file_exists
-
-        integer :: n_bin_edges
-
-        ! Open the bin data file
-        write(*,*) 'Reading bin data from: ', location
-        inquire(file=location, exist=file_exists)
-        if ( .not. file_exists ) write(*,*) 'Bin data file does not exist: ', location
-        open(newunit=file_unit, file=trim(location), iostat=ierr, iomsg=io_emsg, action='read', status='old')
-        if (ierr .ne. 0) then
-            write(*,*) 'Error opening injection data file: ', io_emsg
-            stop 1
-        end if
-
-        read(file_unit, *) ! N Bin-Edges
-        read(file_unit, *) n_bin_edges
-        n_DSD_bins = n_bin_edges - 1
-        if ( n_cat > 1 ) n_cat = n_cat + 1 ! Account for total and categorical DSDs
-        allocate(DSD(n_cat, n_DSD_bins))
-        DSD = 0
-        
-        ! Allocate and read in bin edge values
-        allocate(bin_edges(n_bin_edges))
-        read(file_unit, *) ! Bin-Edges
-        do i = 1, n_bin_edges
-            read(file_unit, *) bin_edges(i)
-        end do
-
-        close(file_unit)
-
-    end subroutine read_binning_data
-
     subroutine read_aerosol_netcdf(filepath)
         ! Reads aerosol properties, injection schedule, and size distribution
         ! from a NetCDF file (CODT_aerosol_input_v1 schema).
         character(*), intent(in) :: filepath
         integer :: i, aer_ncid, varid, dimid
-        integer :: n_types, n_bins, n_edges, n_times
+        integer :: n_types, n_bins, n_edges, n_times, n_dsd_edges
         character(64) :: conventions
         character(20) :: aer_name
         integer :: aer_n_ions
@@ -887,6 +848,14 @@ contains
         ! Read aerosol name from global attribute
         call nc_verify(nf90_get_att(aer_ncid, NF90_GLOBAL, 'aerosol_name', aer_name), &
                        'reading aerosol_name')
+
+        ! Read DSD bin edges (microns)
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'dsd_edge', dimid), 'finding dsd_edge dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_dsd_edges), 'reading dsd_edge dim')
+        n_DSD_bins = n_dsd_edges - 1
+        allocate(particle_bin_edges(n_dsd_edges))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'dsd_bin_edges', varid), 'finding dsd_bin_edges')
+        call nc_verify(nf90_get_var(aer_ncid, varid, particle_bin_edges), 'reading dsd_bin_edges')
 
         call nc_verify(nf90_close(aer_ncid), 'closing aerosol file')
 

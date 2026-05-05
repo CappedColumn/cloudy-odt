@@ -2,35 +2,22 @@
 
 ## Habits
 
-BE CONCIOUS OF TOKEN USAGE!
+BE CONSCIOUS OF TOKEN USAGE!
 
 ## Build & Run
 
 ```bash
-source fpm_env          # sets compiler/NetCDF paths (only needed once per shell)
+source fpm_env          # sets compiler/NetCDF paths (once per shell)
 fpm build               # compiles to build/
-fpm test                # runs standalone test programs in test/
+fpm test                # unit tests (paths, file copy, aerosol reader) — no full simulations
 fpm run -- /path/to/params.nml   # run simulation
 ```
 
-Tests exercise library routines (paths, file copy, aerosol reader) but do not run full simulations.
-
 ## Reference Test (Reftest)
 
-Reftest files live outside the repo — ask the user for directory locations.
-
-```bash
-fpm run -- <reftest_input_dir>/params.nml
-python3 scripts/compare_reftest_bitwise.py <reftest_output_dir>
-```
+Reftest files live outside the repo — ask the user for directory locations. Use the `run-reftest` and `archive-reftest` skills for execution and promotion.
 
 `identical` = safe. `DIFFERS` = investigate. Uses `same_random = .true.` for determinism.
-
-To promote new reference output (**only when user explicitly requests**):
-```bash
-cp <reftest_output_dir>/reftest.nc <reftest_output_dir>/reftest_REF.nc
-cp <reftest_output_dir>/reftest_particles.nc <reftest_output_dir>/reftest_particles_REF.nc
-```
 
 ## Architecture
 
@@ -47,29 +34,25 @@ cp <reftest_output_dir>/reftest_particles.nc <reftest_output_dir>/reftest_partic
 2. Diffusion → if fields updated: update_droplets → special_effects → sync
 3. Turbulence → if eddy accepted: update_droplets → special_effects → sync
 
-Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy acceptance. **When modifying the time loop, verify that the diffusion→droplets→sync and turbulence→droplets→sync ordering is preserved.**
+**When modifying the time loop, preserve the diffusion→droplets→sync and turbulence→droplets→sync ordering.**
 
 **Key modules:**
 - `globals.f90` — constants, arrays, triplet map, abstract interfaces, utilities (`nc_verify`, `resolve_path`)
 - `ODT.f90` — eddy accept/reject, nondim Crank-Nicolson (Dirichlet), triplet map + addK kernel
 - `LEM.f90` — periodic Crank-Nicolson (Sherman-Morrison), -5/3 eddy sampling, periodic triplet map
 - `microphysics.f90` — thermodynamic functions, dim/nondim conversion
-- `droplets.f90` — `aerosol`→`particle` type hierarchy, Lagrangian tracking
+- `particle_types.f90` — `aerosol`→`particle` type hierarchy, Köhler theory, terminal velocity
+- `droplets.f90` — Lagrangian tracking, DSD binning, sequential/batched DGM dispatch
 - `collision_coalescence.f90` — event-driven 1D collision-coalescence (min-heap, linked list)
-- `collection_efficiency.f90` — coalescence kernels: Hall (1980) tabulated, Long (1974) analytical, unity
-- `DGM.f90` — Cash-Karp RK45 ODE integrator for droplet growth
+- `collection_efficiency.f90` — coalescence kernels: Hall (1980), Long (1974), unity
+- `ode_integrators.f90` — Cash-Karp RK45 adaptive ODE integrator
+- `DGM.f90` — droplet growth model RHS and ODE driver
+- `special_effects.f90` — sidewall nudging, stochastic fallout
 - `writeout.f90` — buffered NetCDF output
 - `write_particle.f90` — particle trajectory NetCDF output
 - `initialize.f90` — namelist I/O, domain setup, pointer assignment
 
-**Dependency chain:** `globals` → `microphysics` → `droplets` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
-
-**Collision-coalescence namelist parameters** (in `&MICROPHYSICS`):
-- `do_collisions` — enable collision detection (default `.false.`)
-- `do_coalescence` — enable coalescence on collision (default `.true.`, requires `do_collisions`)
-- `coalescence_kernel` — `'hall'` (tabulated, default `'long'`), `'long'` (analytical), or `'unity'` (E=1)
-- `wmax_collision` — terminal velocity cap in CC kernel (default 10.0 m/s)
-- `write_collisions` — write binary collision event log (requires `do_collisions`)
+**Dependency chain:** `globals` → `microphysics` → `particle_types` → `droplets` → `DGM`. `ode_integrators` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
 
 ## Fortran Conventions
 
@@ -82,55 +65,20 @@ Dim/nondim sync occurs after droplet movement, triggered by diffusion or eddy ac
 
 Executable invocation: `codt <NAMELIST_PATH>`. Relative path `aerosol_file` resolves from namelist's parent directory. `output_directory` must be absolute. No argument → error + `stop 1`. Corresponding spec in `~/dev/CODT_tools/CLAUDE.md`.
 
-## Known Fragilities / Future Cleanup
+## Known Fragilities
 
-### Collision-coalescence ↔ droplet fallout interface
+**CC ↔ fallout interface:** `collision_coalescence_step` signals fallout by setting `position = -1.0`, then `verify_particle_fallout` detects this and does bookkeeping (`%fellout`, array compaction, `total_n_fellout`). Fragile because: (1) nothing between CC writeback and `verify_particle_fallout` may read `%position` or `%fellout`, (2) `do_random_fallout` can silently recycle CC-removed particles, (3) fellout counting is split across two modules. Future fix: explicit event interface instead of sentinel values.
 
-`collision_coalescence_step` communicates "this particle fell out" to
-`verify_particle_fallout` by setting `lparticles(i)%position = -1.0_dp`
-in its writeback loop. `verify_particle_fallout` then detects `position
-< 0` and finishes the bookkeeping (sets `%fellout`, compacts the array,
-bumps `total_n_fellout`). This works, but is fragile:
-
-- **Order-of-calls coupling.** Nothing between CC's writeback and the
-  `verify_particle_fallout` call is allowed to read `%fellout` (still
-  `.false.` at that point) or `%position` (sentinel `-1.0` would look
-  like a bogus location) without knowing about the contract. Any new
-  step inserted in `update_droplets` between CC and
-  `verify_particle_fallout` would need to respect or update this.
-- **`do_random_fallout` override.** When CC's `handle_fall_event` marks
-  a particle dead and the writeback sets `position = -1`,
-  `verify_particle_fallout` may instead recycle that particle to the
-  top of the domain via `random_fallout` (if `do_random_fallout =
-  .true.`). That's the special effect's design, but it means CC's
-  decision can be "undone" by a downstream module. CC has no awareness
-  of `do_random_fallout`.
-- **`total_n_fellout` counter lives in droplets.** CC increments its
-  own `collisions_this_step` / `coalescences_this_step`, but the
-  fellout counter is bumped by `verify_particle_fallout`. Two
-  mechanisms in two modules for closely-related events.
-
-Future cleanup idea: give CC a proper "event → particle state" sink
-interface (e.g. a subroutine it calls for each removal/merge) instead
-of piggy-backing on `position < 0` sentinels. That would make the
-contract explicit and the code easier to read without having to trace
-the whole call chain.
-
-## Known Bugs
-
-- **`copy_file` self-clobber.** When input dir == output dir, `copy_file` truncates the aerosol file to 0 bytes (copies onto itself). Workaround: keep inputs in a subdirectory.
+**`copy_file` self-clobber:** When input dir == output dir, `copy_file` truncates the file to 0 bytes. Workaround: keep inputs in a subdirectory.
 
 ## Planned Modifications
 
-### 7. Add predetermined eddies mode
-
-Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_predetermined_eddies` + `eddy_file`. Validate header `N` matches. Replace eddy acceptance with sequential reads; implement eddy when simulation time reaches timestamp. Skip `lower_dt`/`raise_dt`. Mutually exclusive with `write_eddies`.
-
-### 8. Add eddy data reader to codt_tools
-
-`eddy_io.py` module: read `_eddies.bin`, return header as dict + eddy records as structured numpy array. Integrate as `CODTSimulation.load_eddies()`.
+- **Predetermined eddies mode:** Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_predetermined_eddies` + `eddy_file`. Mutually exclusive with `write_eddies`.
+- **Eddy data reader (codt_tools):** `eddy_io.py` module to read `_eddies.bin`. Integrate as `CODTSimulation.load_eddies()`.
 
 ## Output Files
+
+All output to `{output_directory}/{simulation_name}/`:
 
 | File | Format | Description |
 |------|--------|-------------|
@@ -140,8 +88,6 @@ Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_p
 | `{name}_eddies.bin` | Binary stream | Eddy events (if `write_eddies=.true.`) |
 | `{name}.nml` | ASCII | Namelist copy |
 
-All output to `{output_directory}/{simulation_name}/`.
-
 ## Cross-Project Sync
 
-When committing CODT changes, update `~/dev/CODT_tools/CLAUDE.md` if any of these change: output formats/structure, namelist parameters, invocation/path resolution, NetCDF variables/dimensions/attributes, or Fortran modification status.
+When committing CODT changes, update `~/dev/CODT_tools/CLAUDE.md` if any of these change: output formats/structure, namelist parameters, invocation/path resolution, NetCDF variables/dimensions/attributes.

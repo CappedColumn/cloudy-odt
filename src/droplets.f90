@@ -666,10 +666,13 @@ contains
 
         ! Set up DSD arrays
         n_aer_category = maxval(aerosol_partition)
-        if (n_aer_category > 1) n_aer_category = n_aer_category + 1
-        allocate(size_distribution(n_aer_category, n_DSD_bins))
+        if (n_aer_category > 1) then
+            allocate(size_distribution(1 + n_aer_category, n_DSD_bins))
+        else
+            allocate(size_distribution(1, n_DSD_bins))
+        end if
         size_distribution = 0
-        
+
         ! Calculate mid-point radii of DSD
         allocate(particle_bins(n_DSD_bins))
         do i = 1, n_DSD_bins

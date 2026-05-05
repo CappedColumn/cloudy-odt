@@ -1,6 +1,6 @@
 module DGM
     use globals
-    use microphysics, only: saturation_vapor_pressure
+
     use ode_integrators, only: ode_rhs, ode_integrate
     implicit none
 
@@ -82,7 +82,7 @@ subroutine fcnkb(ltime, y, dydt)
     real(dp), intent(out) :: dydt(:)
 
     real(dp) :: ck, cr, denom
-    real(dp) :: es
+    real(dp) :: es, Tc_es
     real(dp) :: falpha, fbeta, rhol
     real(dp) :: radius, qv, temp, s, press
     real(dp) :: Lcond_temp, Ktemp, D, cpm
@@ -90,6 +90,12 @@ subroutine fcnkb(ltime, y, dydt)
     real(dp), parameter :: alph = 1
     real(dp), parameter :: beta = 0.04
     real(dp), parameter :: sigma = 7.392730e-2
+    ! Manual inlining of saturation_vapor_pressure() for speedup
+    ! due to difficulty with cross-module inlining with some compilers
+    double precision, parameter :: es_coeff(9) = [6.11239921d0, 0.443987641d0, 0.142986287d-1, &
+        0.264847430d-3, 0.302950461d-5, 0.206739458d-7, 0.640689451d-10, &
+        -0.952447341d-13, -0.976195544d-15]
+    integer :: i_es
 
     radius = y(1)
     if (radius < r_floor) radius = r_floor
@@ -105,7 +111,12 @@ subroutine fcnkb(ltime, y, dydt)
     D     = 1.57e-7*(temp-Tice)+2.211e-5
     D     = D*1.e5/press
 
-    es = saturation_vapor_pressure(temp)
+    Tc_es = max(-80.0_dp, temp - Tice)
+    es = es_coeff(9)
+    do i_es = 8, 1, -1
+        es = es * Tc_es + es_coeff(i_es)
+    end do
+    es = es * 100.0_dp
 
     if (temp < 273 .or. qv < 0 .or. temp > 320) then
       write(*,*) ""

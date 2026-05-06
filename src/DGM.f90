@@ -15,6 +15,11 @@ module DGM
     real(dp)               :: c7_sp
     real(dp)               :: nions_sp
 
+    real(dp)               :: solute_c7
+    real(dp)               :: raoult_coeff
+    real(dp)               :: flux_coeff
+    real(dp)               :: inv_grid_scale
+
     real(dp)               :: ode_supersat
     real(dp)               :: ode_press
 
@@ -55,6 +60,11 @@ subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
         write(*,*) "set_aerosol_properties: Error: aerosol type unknown"
         stop 1
     end select
+
+    solute_c7      = solute_mass * c7_sp
+    raoult_coeff   = nions_sp * (Mw / Ms_sp) * solute_mass
+    flux_coeff     = pi_4 * grid_scale * rho_l
+    inv_grid_scale = 1.0_dp / grid_scale
 
 end subroutine set_aerosol_properties
 
@@ -132,23 +142,23 @@ subroutine fcnkb(ltime, y, dydt)
 
     falpha = radius/(radius+lalpha)
     fbeta  = radius/(radius+lbeta)
-    rhol   = (radius**3*pi_43*rho_l+solute_mass*c7_sp)/(radius**3*pi_43)
+    rhol   = (radius**3*pi_43*rho_l+solute_c7)/(radius**3*pi_43)
 
     ck    = (2*sigma/(Rv*temp*rhol*radius))
-    cr    = nions_sp*(Mw/Ms_sp)*solute_mass/(pi_43*radius**3*rhol-solute_mass)
+    cr    = raoult_coeff/(pi_43*radius**3*rhol-solute_mass)
     denom = rhol*(Rv*temp/(fbeta*D*es)+Lcond_temp**2/(falpha*Ktemp*Rv*temp**2))
     dydt(1) = 1.0/radius*(s-ck+cr)/denom
 
-    dydt(2) = -pi_4*grid_scale*radius**2*dydt(1)*rho_l
+    dydt(2) = -flux_coeff*radius**2*dydt(1)
 
     if ( (dydt(2) < 0.0) .and. (abs(dydt(2)) > qv) ) then
       dydt(2) = - qv
-      dydt(1) = - dydt(2)/(pi_4*grid_scale*radius**2*rho_l)
+      dydt(1) = - dydt(2)/(flux_coeff*radius**2)
     end if
 
     dydt(3) = -Lcond_temp/cpm*dydt(2)
 
-    dydt(4) = -1.0*dydt(2)/grid_scale
+    dydt(4) = -dydt(2)*inv_grid_scale
 
 end subroutine fcnkb
 

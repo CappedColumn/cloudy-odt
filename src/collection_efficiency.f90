@@ -119,16 +119,16 @@ contains
 
     pure function long_kernel(r_collector, r_collectee) result(E)
         real(dp), intent(in) :: r_collector, r_collectee
-        real(dp) :: E, R_um, r_um, p
+        real(dp) :: E, R_large_um, r_small_um, p
 
-        R_um = r_collector * 1.0e6
-        r_um = r_collectee * 1.0e6
-        p = r_um / max(R_um, 1.0e-3)
+        R_large_um = r_collector * 1.0e6
+        r_small_um = r_collectee * 1.0e6
+        p = r_small_um / max(R_large_um, 1.0e-3)
 
-        if (R_um < 50.0) then
-            E = 4.5e-4 * R_um * R_um * (1.0 - 3.0 / (max(R_um, 1.0e-3) * max(p, 0.01)))
+        if (R_large_um < 50.0) then
+            E = 4.5e-4 * R_large_um * R_large_um * (1.0 - 3.0 / (max(R_large_um, 1.0e-3) * max(p, 0.01)))
         else
-            E = 1.0 - 0.5 * exp(-0.003 * R_um * p)
+            E = 1.0 - 0.5 * exp(-0.003 * R_large_um * p)
         end if
 
         E = max(0.0, min(1.0, E))

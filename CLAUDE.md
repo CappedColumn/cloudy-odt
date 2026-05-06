@@ -84,7 +84,7 @@ All output to `{output_directory}/{simulation_name}/`:
 |------|--------|-------------|
 | `{name}.nc` | netCDF4 | Profiles + time series |
 | `{name}_particles.nc` | netCDF4 | Particle data (if `write_trajectories=.true.`) |
-| `{name}_collisions.bin` | Binary stream | Collision events (if `write_collisions=.true.`) |
+| `{name}_collisions.bin` | Binary stream | Collision/coalescence events (if `write_collisions=.true.`) |
 | `{name}_eddies.bin` | Binary stream | Eddy events (if `write_eddies=.true.`) |
 | `{name}.nml` | ASCII | Namelist copy |
 

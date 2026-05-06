@@ -11,7 +11,7 @@ module initialize
     use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
-    use collision_coalescence, only: write_collisions, initialize_collision_file
+    use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -71,6 +71,9 @@ contains
         call close_netcdf(ncid)
         if ( do_microphysics .and. write_trajectories ) then
             call close_particle_netcdf()
+        end if
+        if ( write_collisions ) then
+            call close_collision_file()
         end if
 
     end subroutine close_simulation

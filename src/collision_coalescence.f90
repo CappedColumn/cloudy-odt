@@ -10,8 +10,7 @@ module collision_coalescence
     !   - Otherwise: swap adjacency order
     !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
-    use globals, only: dp, i4, i1, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling, &
-                       simulation_mode
+    use globals, only: dp, i4, i1, pi, N, H, domain_width, volume_scaling, simulation_mode
     use particle_types, only: particle, calculate_terminal_velocity
     use collection_efficiency, only: collection_efficiency_E
     implicit none
@@ -31,7 +30,10 @@ module collision_coalescence
     ! Collision output file unit (unformatted stream binary)
     integer(i4) :: collision_unit
 
-    public :: collision_coalescence_step, initialize_collision_file
+    ! Cross-sectional area of the statistical volume (set once at init)
+    real(dp) :: grid_area = 0.0
+
+    public :: collision_coalescence_step, initialize_collision_file, close_collision_file
 
     ! Event types
     integer, parameter :: EV_PAIR = 1
@@ -53,8 +55,8 @@ contains
         integer(i4), intent(inout) :: n_particles
         real(dp), intent(in) :: ldt
 
-        integer :: i, n_active, n_coalescences, head
-        real(dp) :: grid_area, current_time
+        integer :: i, n_active, head
+        real(dp) :: current_time
         real(dp), allocatable :: zcur(:), w_fall(:), tstamp(:)
         logical, allocatable :: alive(:)
         integer, allocatable :: sort_order(:), prev(:), next(:)
@@ -79,9 +81,7 @@ contains
             return
         end if
 
-        ! Cross-sectional area of the statistical volume
-        grid_area = domain_width**2 * volume_scaling
-        if (grid_area <= 0.0) return
+        if (grid_area <= 0.0) grid_area = domain_width**2 * volume_scaling
 
         ! Allocate working arrays
         allocate(zcur(n_active), w_fall(n_active), tstamp(n_active), alive(n_active))
@@ -98,7 +98,6 @@ contains
 
         alive = .true.
         current_time = 0.0
-        n_coalescences = 0
         heap_size = 0
 
         ! Build sorted ordering by position and linked list
@@ -134,7 +133,7 @@ contains
 
             if (current_event%event_type == EV_PAIR) then
                 call handle_pair_event(current_event%i, current_event%j, current_time, lparticles, zcur, tstamp, w_fall, &
-                                       alive, prev, next, head, n_active, grid_area, n_coalescences, ldt, heap, heap_size)
+                                       alive, prev, next, head, n_active, ldt, heap, heap_size)
             else if (current_event%event_type == EV_FALL) then
                 call handle_fall_event(current_event%i, current_time, zcur, tstamp, w_fall, alive, prev, next, &
                                        head, n_active, ldt, heap, heap_size)
@@ -169,13 +168,13 @@ contains
     ! =========================================================================
 
     subroutine handle_pair_event(i, j, current_time, lparticles, zcur, tstamp, w_fall, &
-                                 alive, prev, next, head, n_active, grid_area, n_coalescences, dt, heap, heap_size)
+                                 alive, prev, next, head, n_active, dt, heap, heap_size)
         integer, intent(in) :: i, j, n_active
-        real(dp), intent(in) :: current_time, grid_area, dt
+        real(dp), intent(in) :: current_time, dt
         type(particle), intent(inout) :: lparticles(:)
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
         logical, intent(inout) :: alive(:)
-        integer, intent(inout) :: prev(:), next(:), head, n_coalescences
+        integer, intent(inout) :: prev(:), next(:), head
         type(Event), intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
@@ -210,7 +209,6 @@ contains
                 call random_number(random_draw)
                 if (random_draw <= coal_efficiency) then
                     ! Coalescence: merge particles, conserving mass
-                    n_coalescences = n_coalescences + 1
                     coalescences_this_step = coalescences_this_step + 1
                     keep = i
                     kill = j
@@ -475,17 +473,17 @@ contains
         integer, intent(in) :: kill
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
-        integer :: ip, in_
+        integer :: prev_neighbor, next_neighbor
 
         if (kill < 1 .or. kill > size(alive)) return
         if (.not. alive(kill)) return
 
-        ip = prev(kill)
-        in_ = next(kill)
+        prev_neighbor = prev(kill)
+        next_neighbor = next(kill)
 
-        if (ip > 0) next(ip) = in_
-        if (in_ > 0) prev(in_) = ip
-        if (head == kill) head = in_
+        if (prev_neighbor > 0) next(prev_neighbor) = next_neighbor
+        if (next_neighbor > 0) prev(next_neighbor) = prev_neighbor
+        if (head == kill) head = next_neighbor
 
         prev(kill) = 0
         next(kill) = 0
@@ -493,22 +491,21 @@ contains
 
 
     subroutine swap_adjacent(i, j, prev, next, head)
-        ! Swap adjacent nodes where next(i)=j: ... a-i-j-d ... -> ... a-j-i-d ...
         integer, intent(in) :: i, j
         integer, intent(inout) :: prev(:), next(:), head
-        integer :: a, d
+        integer :: before, after
 
-        a = prev(i)
-        d = next(j)
+        before = prev(i)
+        after = next(j)
 
-        if (a /= 0) next(a) = j
-        prev(j) = a
+        if (before /= 0) next(before) = j
+        prev(j) = before
 
         next(j) = i
         prev(i) = j
 
-        next(i) = d
-        if (d /= 0) prev(d) = i
+        next(i) = after
+        if (after /= 0) prev(after) = i
 
         if (head == i) head = j
     end subroutine swap_adjacent
@@ -574,6 +571,7 @@ contains
 
         heap_size = heap_size + 1
         if (heap_size > size(heap)) then
+            print *, "WARNING: collision-coalescence event heap overflow, events may be dropped"
             heap_size = heap_size - 1
             return
         end if
@@ -659,5 +657,14 @@ contains
         write(collision_unit) id_i, id_j, r_i_m, r_j_m, r_after_m, position_m, time_s, flag
 
     end subroutine write_collision
+
+
+    subroutine close_collision_file()
+        logical :: is_open
+
+        inquire(unit=collision_unit, opened=is_open)
+        if (is_open) close(collision_unit)
+
+    end subroutine close_collision_file
 
 end module collision_coalescence

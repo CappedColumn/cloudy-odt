@@ -59,6 +59,27 @@ def compare_files(test_path, ref_path, label=""):
     return all_match
 
 
+def compare_binary(test_path, ref_path):
+    if not os.path.exists(ref_path):
+        print("  SKIP: reference file not found")
+        return True
+    if not os.path.exists(test_path):
+        print("  SKIP: test file not found")
+        return True
+
+    with open(ref_path, 'rb') as f:
+        ref_bytes = f.read()
+    with open(test_path, 'rb') as f:
+        test_bytes = f.read()
+
+    if ref_bytes == test_bytes:
+        print("  identical")
+        return True
+    else:
+        print(f"  DIFFERS  ref_size={len(ref_bytes)} test_size={len(test_bytes)}")
+        return False
+
+
 def main():
     if len(sys.argv) != 2:
         print(__doc__)
@@ -78,7 +99,13 @@ def main():
         os.path.join(output_dir, "reftest_particles_REF.nc"),
     )
 
-    if profiles_ok and particles_ok:
+    print("\nCollisions:")
+    collisions_ok = compare_binary(
+        os.path.join(output_dir, "reftest_collisions.bin"),
+        os.path.join(output_dir, "reftest_collisions_REF.bin"),
+    )
+
+    if profiles_ok and particles_ok and collisions_ok:
         print("\nAll variables identical.")
         sys.exit(0)
     else:

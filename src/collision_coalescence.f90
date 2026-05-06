@@ -10,7 +10,7 @@ module collision_coalescence
     !   - Otherwise: swap adjacency order
     !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
-    use globals, only: dp, i4, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling, &
+    use globals, only: dp, i4, i1, pi, pi_43, g, nu, rho_l, pres, Tref, Rd, N, H, domain_width, volume_scaling, &
                        simulation_mode
     use particle_types, only: particle, calculate_terminal_velocity
     use collection_efficiency, only: collection_efficiency_E
@@ -201,8 +201,11 @@ contains
             lparticles(i)%n_collisions = lparticles(i)%n_collisions + 1
             lparticles(j)%n_collisions = lparticles(j)%n_collisions + 1
 
-            ! Stage 2: Coalescence check (collection efficiency E)
-            if (do_coalescence) then
+            if (.not. do_coalescence) then
+                if (write_collisions) call write_collision( &
+                    lparticles(i)%particle_id, lparticles(j)%particle_id, &
+                    lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), tcur, .false.)
+            else
                 E_coal = collection_efficiency_E(lparticles(i)%radius, lparticles(j)%radius)
 
                 call random_number(u_coll)
@@ -244,10 +247,9 @@ contains
                     zcur(keep) = zcur(i)
                     tstamp(keep) = tcur
 
-                    ! Write collision event log
                     if (write_collisions) call write_collision( &
                         lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur)
+                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), tcur, .true.)
 
                     ! Remove killed particle from linked list
                     call unlink_particle(kill, alive, prev, next, head)
@@ -263,6 +265,10 @@ contains
                     ! Reschedule fallout for survivor
                     call push_fall_event(heap, hsize, keep, zcur, tstamp, w_fall, alive, dt, tcur)
                     return
+                else
+                    if (write_collisions) call write_collision( &
+                        lparticles(i)%particle_id, lparticles(j)%particle_id, &
+                        lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), tcur, .false.)
                 end if
             end if
         end if
@@ -646,11 +652,14 @@ contains
     end subroutine initialize_collision_file
 
 
-    subroutine write_collision(id_keep, id_kill, r_keep_m, r_kill_m, r_after_m, position_m, time_s)
-        integer(i4), intent(in) :: id_keep, id_kill
-        real(dp), intent(in) :: r_keep_m, r_kill_m, r_after_m, position_m, time_s
+    subroutine write_collision(id_i, id_j, r_i_m, r_j_m, r_after_m, position_m, time_s, coalesced)
+        integer(i4), intent(in) :: id_i, id_j
+        real(dp), intent(in) :: r_i_m, r_j_m, r_after_m, position_m, time_s
+        logical, intent(in) :: coalesced
+        integer(i1) :: flag
 
-        write(collision_unit) id_keep, id_kill, r_keep_m, r_kill_m, r_after_m, position_m, time_s
+        flag = merge(1_i1, 0_i1, coalesced)
+        write(collision_unit) id_i, id_j, r_i_m, r_j_m, r_after_m, position_m, time_s, flag
 
     end subroutine write_collision
 

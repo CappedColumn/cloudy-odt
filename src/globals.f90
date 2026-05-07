@@ -129,11 +129,6 @@ module globals
     ! Simulation mode: 'chamber' (ODT, fixed BCs) or 'parcel' (LEM, periodic BCs)
     character(7) :: simulation_mode = 'chamber'
 
-    ! LEM parameters (only used when simulation_mode = 'parcel')
-    real(dp) :: integral_length_scale = 0.01_dp       ! Largest eddy size (m)
-    real(dp) :: kolmogorov_length_scale = 0.001_dp    ! Smallest eddy size (m)
-    real(dp) :: dissipation_rate = 0.01_dp            ! TKE dissipation rate (m^2/s^3)
-
     ! -----------------------------------------------
     ! -----------------------------------------------
 

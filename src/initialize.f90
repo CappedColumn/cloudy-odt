@@ -70,9 +70,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tdiff, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, &
-        integral_length_scale, kolmogorov_length_scale, dissipation_rate, &
-        dynamics_file
+        overwrite, simulation_mode, dynamics_file
 
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')

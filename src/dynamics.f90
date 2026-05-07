@@ -45,6 +45,9 @@ contains
         call nc_verify(nf90_inq_varid(dyn_ncid, 'velocity', varid), 'finding velocity')
         call nc_verify(nf90_get_var(dyn_ncid, varid, segment_velocity), 'reading velocity')
 
+        call nc_verify(nf90_get_att(dyn_ncid, NF90_GLOBAL, 'initial_pressure', pres), &
+                       'reading initial_pressure')
+
         call nc_verify(nf90_close(dyn_ncid), 'closing dynamics file')
 
         if (abs(segment_times(1)) > 1.0e-10) then
@@ -62,8 +65,9 @@ contains
         parcel_velocity = segment_velocity(1)
 
         write(*,*) '--- Dynamics Configuration ---'
-        write(*,*) 'n_segments:       ', n_segments
-        write(*,*) 'initial velocity: ', segment_velocity(1), ' m/s'
+        write(*,*) 'n_segments:        ', n_segments
+        write(*,*) 'initial velocity:  ', segment_velocity(1), ' m/s'
+        write(*,*) 'initial pressure:  ', pres / Pa_per_mb, ' mb'
         write(*,*) '------------------------------'
 
     end subroutine initialize_dynamics

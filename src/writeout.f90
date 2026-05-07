@@ -2,7 +2,7 @@ module writeout
     use globals
     use netcdf
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
-                        size_distribution, n_aer_category, init_drop_each_gridpoint, &
+                        size_distribution, n_aer_category, n_DSD_bins, init_drop_each_gridpoint, &
                         expected_Ndrops_per_gridpoint, write_trajectories, trajectory_start, &
                         trajectory_end, trajectory_timer, initial_wet_radius, &
                         dsd_varid, aerDSD_varids
@@ -35,7 +35,7 @@ module writeout
     ! Parcel ascent buffers
     real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:)
 
-    public  :: create_netcdf, initialize_buffers, initialize_particle_buffers, &
+    public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
                write_profiles, write_eddy, initialize_eddy_file
     private :: write_netcdf_profiles
@@ -62,20 +62,17 @@ contains
     end subroutine write_profiles
 
     subroutine initialize_buffers(buff_len, N_grid)
-        ! Initializes buffer size and arrays for writing to netCDF
         integer(i4), intent(in) :: buff_len, N_grid
+        integer(i4) :: n_DSDs
 
-        ! Set variables in module scope
         buffer_size = buff_len
         buffer_count = 0
-        
-        ! Allocate and initialize buffer arrays
+
         allocate(buffer_T(N_grid, buff_len))
         allocate(buffer_WV(N_grid, buff_len))
         allocate(buffer_Tv(N_grid, buff_len))
         allocate(buffer_SS(N_grid, buff_len))
         allocate(buffer_time(buff_len))
-        allocate(buffer_stats(7, buff_len))
         allocate(buffer_budgets(n_budgets, buff_len))
 
         buffer_T = 0.
@@ -83,8 +80,19 @@ contains
         buffer_Tv = 0.
         buffer_SS = 0.
         buffer_time = 0.
-        buffer_stats = 0.
+        allocate(buffer_stats(7, buff_len))
         buffer_budgets = 0.
+        buffer_stats = 0.
+
+        if (do_microphysics) then
+            if (n_aer_category > 1) then
+                n_DSDs = n_aer_category + 1
+            else
+                n_DSDs = 1
+            end if
+            allocate(buffer_DSD(n_DSDs, n_DSD_bins, buff_len))
+            buffer_DSD = 0
+        end if
 
         if (do_parcel_ascent) then
             allocate(buffer_parcel_height(buff_len))
@@ -94,23 +102,17 @@ contains
         end if
 
     end subroutine initialize_buffers
-    
-    subroutine initialize_particle_buffers(n_cat, n_bins)
 
-        integer(i4), intent(in) :: n_cat, n_bins
-        integer(i4) :: n_DSDs
 
-        ! Calculate number of DSDs (n_cat + 1 for multiple categories, 1 otherwise)
-        
-        if ( n_cat > 1 ) then
-            n_DSDs = n_cat + 1
-        else
-            n_DSDs = 1
-        end if
-        allocate(buffer_DSD(n_DSDs, n_bins, buffer_size))
-        buffer_DSD = 0
+    subroutine deallocate_buffers()
+        write(0,*) 'DEBUG: deallocating buffers'
+        deallocate(buffer_T, buffer_WV, buffer_Tv, buffer_SS, buffer_time, buffer_budgets)
+        if (allocated(buffer_stats)) deallocate(buffer_stats)
+        if (allocated(buffer_DSD)) deallocate(buffer_DSD)
+        if (allocated(buffer_parcel_height)) deallocate(buffer_parcel_height)
+        if (allocated(buffer_parcel_pressure)) deallocate(buffer_parcel_pressure)
+    end subroutine deallocate_buffers
 
-    end subroutine initialize_particle_buffers
 
     recursive subroutine add_to_profile_buffer(ltime, lT, lWV, lTv, lSS)
         real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:)

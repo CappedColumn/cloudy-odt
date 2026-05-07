@@ -49,7 +49,7 @@ module droplets
     real(dp), parameter :: RK5_min_timestep = 0.01
 
     ! Particle I/O Handling
-    logical :: write_trajectories
+    logical :: write_trajectories = .false.
     real(dp) :: trajectory_start = 0., trajectory_end = 0.
     real(dp) :: trajectory_timer = 1.
 

@@ -6,6 +6,7 @@ program main
   use droplets, only: particles, update_droplets, &
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
+  use dynamics, only: do_parcel_ascent, apply_adiabatic_forcing
   implicit none
 
   real(dp) :: t_start, t_end
@@ -63,6 +64,7 @@ program main
     ! Update iterators and timing
     Nt = Nt + 1
     time = time + dt
+    if (do_parcel_ascent) call apply_adiabatic_forcing(dt)
     delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------

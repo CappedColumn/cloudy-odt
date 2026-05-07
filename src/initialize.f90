@@ -12,6 +12,7 @@ module initialize
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
+    use dynamics, only: initialize_dynamics, do_parcel_ascent
     implicit none
 
     integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
@@ -38,6 +39,9 @@ contains
             diffuse_step       => lem_diffuse_step
             turbulence_step    => lem_turbulence_step
             sync_after_physics => lem_sync_after_physics
+            if (dynamics_file /= '') then
+                call initialize_dynamics(resolve_path(namelist_dir, dynamics_file))
+            end if
         else
             write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
             stop 1
@@ -95,7 +99,8 @@ contains
         max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
         overwrite, simulation_mode, &
-        integral_length_scale, kolmogorov_length_scale, dissipation_rate
+        integral_length_scale, kolmogorov_length_scale, dissipation_rate, &
+        dynamics_file
 
         ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'

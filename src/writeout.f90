@@ -8,6 +8,7 @@ module writeout
                         dsd_varid, aerDSD_varids
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
+    use dynamics, only: do_parcel_ascent, parcel_height
     implicit none
 
     ! Buffer variables and arrays for writing to netCDF
@@ -29,6 +30,10 @@ module writeout
     integer :: varid_time, varid_T, varid_QV, varid_Tv, varid_S
     integer :: varid_stats(7)  ! Np, Nact, Nun, Ravg, LWC, N_collisions, N_coalescences
     integer :: varid_budgets(n_budgets)
+    integer :: varid_parcel_height, varid_parcel_pressure
+
+    ! Parcel ascent buffers
+    real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:)
 
     public  :: create_netcdf, initialize_buffers, initialize_particle_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
@@ -81,6 +86,13 @@ contains
         buffer_stats = 0.
         buffer_budgets = 0.
 
+        if (do_parcel_ascent) then
+            allocate(buffer_parcel_height(buff_len))
+            allocate(buffer_parcel_pressure(buff_len))
+            buffer_parcel_height = 0.
+            buffer_parcel_pressure = 0.
+        end if
+
     end subroutine initialize_buffers
     
     subroutine initialize_particle_buffers(n_cat, n_bins)
@@ -129,6 +141,10 @@ contains
             buffer_budgets(11, buffer_count) = real(budget_n_injected, dp)
             buffer_budgets(12, buffer_count) = real(budget_n_fellout, dp)
             buffer_budgets(13, buffer_count) = real(budget_n_coalesced, dp)
+            if (do_parcel_ascent) then
+                buffer_parcel_height(buffer_count) = parcel_height
+                buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
+            end if
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
@@ -329,6 +345,25 @@ contains
         call define_budget_var(lncid, t_dimid, 12, "budget_n_fellout",           "Number of particles fallen out",            "#")
         call define_budget_var(lncid, t_dimid, 13, "budget_n_coalesced",         "Number of particles removed by coalescence", "#")
 
+        ! Parcel ascent variables (parcel mode with dynamics only)
+        if (do_parcel_ascent) then
+            call nc_verify( nf90_def_var(lncid, "parcel_height", NF90_FLOAT, t_dimid, &
+                            varid_parcel_height, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: parcel_height" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_height, "long_name", "Parcel Height"), &
+                            "nf90_put_att: parcel_height, name" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_height, "units", "m"), &
+                            "nf90_put_att: parcel_height, units" )
+
+            call nc_verify( nf90_def_var(lncid, "parcel_pressure", NF90_FLOAT, t_dimid, &
+                            varid_parcel_pressure, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: parcel_pressure" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_pressure, "long_name", "Parcel Pressure"), &
+                            "nf90_put_att: parcel_pressure, name" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_pressure, "units", "mb"), &
+                            "nf90_put_att: parcel_pressure, units" )
+        end if
+
         ! Exit define mode, however netCDF is still open
         call nc_verify( nf90_enddef(lncid), "nf90_enddef" )
     
@@ -392,6 +427,13 @@ contains
             call nc_verify( nf90_put_var(lncid, varid_budgets(i), lbudgets(i,:), &
                             start=(/nc_write_iter/)) )
         end do
+
+        if (do_parcel_ascent) then
+            call nc_verify( nf90_put_var(lncid, varid_parcel_height, &
+                            buffer_parcel_height(1:buffer_count), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, varid_parcel_pressure, &
+                            buffer_parcel_pressure(1:buffer_count), start=(/nc_write_iter/)) )
+        end if
 
         ! Move 'start' time location to end of buffer for next write
         nc_write_iter = nc_write_iter + buffer_count

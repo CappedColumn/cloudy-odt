@@ -8,7 +8,7 @@ module initialize
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
                 initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
-    use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
+    use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, &
                 write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
@@ -59,7 +59,7 @@ contains
             call initialize_special_effects()
         end if
 
-        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS)
 
     end subroutine initialize_simulation
 
@@ -70,7 +70,7 @@ contains
             call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
         end if
         call update_supersat(T, WV, SS, pres)
-        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS)
         call flush_buffer()
         call close_netcdf(ncid)
         if ( do_microphysics .and. write_trajectories ) then

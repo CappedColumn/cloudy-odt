@@ -54,7 +54,7 @@ contains
                 call calculate_droplet_statistics(particles, statistics)
                 call bin_droplet_radii(particles, particle_bin_edges, size_distribution)
             end if
-            call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+            call add_to_profile_buffer(time, T, WV, Tv, SS)
             call reset_budgets()
             write_time_iter = mod(write_time_iter, write_timer)
         end if
@@ -112,22 +112,20 @@ contains
 
     end subroutine initialize_particle_buffers
 
-    recursive subroutine add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lDSD, lstats)
-        ! Writes the profile arrays into the profile buffers, will flush
-        ! the buffer to write netCDF if buffer is full
-        real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:), lstats(:)
-        integer(i4), intent(in) :: lDSD(:,:)
+    recursive subroutine add_to_profile_buffer(ltime, lT, lWV, lTv, lSS)
+        real(dp), intent(in) :: ltime, lT(:), lWV(:), lTv(:), lSS(:)
 
-        ! Write profile data into buffers
         if (buffer_count < buffer_size) then
-            buffer_count = buffer_count + 1 ! recall buffer_count resets to 0
+            buffer_count = buffer_count + 1
             buffer_time(buffer_count) = ltime
             buffer_T(:, buffer_count) = lT - Tice ! (C)
             buffer_WV(:, buffer_count) = lWV
             buffer_Tv(:, buffer_count) = lTv - Tice ! (C)
             buffer_SS(:, buffer_count) = lSS
-            buffer_stats(:, buffer_count) = lstats
-            buffer_DSD(:, :, buffer_count) = lDSD
+            if (do_microphysics) then
+                buffer_stats(:, buffer_count) = statistics
+                buffer_DSD(:, :, buffer_count) = size_distribution
+            end if
             buffer_budgets(1,  buffer_count) = budget_inject_solute_mass
             buffer_budgets(2,  buffer_count) = budget_inject_liquid_mass
             buffer_budgets(3,  buffer_count) = budget_fallout_liquid_mass
@@ -148,7 +146,7 @@ contains
         else
             ! Flush buffer and start new buffer
             call flush_buffer()
-            call add_to_profile_buffer(ltime, lT, lWV, lTv, lSS, lDSD, lstats)
+            call add_to_profile_buffer(ltime, lT, lWV, lTv, lSS)
         end if
 
     end subroutine add_to_profile_buffer
@@ -189,14 +187,11 @@ contains
     end subroutine define_budget_var
 
     subroutine flush_buffer()
-        ! writes the buffer to the netCDF file and resets buffer position
         call write_netcdf_profiles(ncid, buffer_time(1:buffer_count), &
                                         buffer_T(:, 1:buffer_count), &
                                         buffer_WV(:, 1:buffer_count), &
                                         buffer_Tv(:, 1:buffer_count), &
                                         buffer_SS(:, 1:buffer_count), &
-                                        buffer_DSD(:, :, 1:buffer_count), &
-                                        buffer_stats(:, 1:buffer_count), &
                                         buffer_budgets(:, 1:buffer_count))
         call nc_verify( nf90_sync(ncid) )
         buffer_count = 0
@@ -375,28 +370,20 @@ contains
     end subroutine create_netcdf
 
 
-    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lDSD, lstats, lbudgets)
+    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lbudgets)
         integer(i4), intent(in) :: lncid
-        real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:), lstats(:,:)
+        real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:)
         real(dp), intent(in) :: lbudgets(:,:)
-        integer(i4), intent(in) :: lDSD(:,:,:)
 
         integer :: i, time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
 
-        ! netCDF profile variables are (time, height) dimensions
         time_len = size(ltime,1)
         z_len = size(lT,1)
-        bin_len = size(lDSD,2)
-        if (size(lT,2) /= time_len) then
-            write(*,'(a)') "Error: Time and profile arrays are not the same length."
-            stop 1
-        end if
-        ! set the starting/ending positions for netCDF file
+
         count_dim = (/z_len, time_len/)
         start_dim = (/1, nc_write_iter/)
 
-        ! Write profile variables using cached varids
         call nc_verify( nf90_put_var(lncid, varid_time, ltime, start=(/nc_write_iter/)) )
         call nc_verify( nf90_put_var(lncid, varid_T,  lT,  start=start_dim, count=count_dim) )
         call nc_verify( nf90_put_var(lncid, varid_QV, lWV, start=start_dim, count=count_dim) )
@@ -404,25 +391,25 @@ contains
         call nc_verify( nf90_put_var(lncid, varid_S,  lSS, start=start_dim, count=count_dim) )
 
         if ( do_microphysics ) then
-            ! Particle statistics
             do i = 1, 7
-                call nc_verify( nf90_put_var(lncid, varid_stats(i), lstats(i,:), start=(/nc_write_iter/)) )
+                call nc_verify( nf90_put_var(lncid, varid_stats(i), buffer_stats(i, 1:buffer_count), &
+                                start=(/nc_write_iter/)) )
             end do
 
-            ! Write total DSD
+            bin_len = size(buffer_DSD, 2)
             count_dim = (/ bin_len, time_len /)
-            call nc_verify( nf90_put_var(lncid, dsd_varid, lDSD(1,:,:), start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(lncid, dsd_varid, buffer_DSD(1, :, 1:buffer_count), &
+                            start=start_dim, count=count_dim) )
 
-            ! Write the subcategory DSDs
             if ( n_aer_category > 1 ) then
                 do i = 1, n_aer_category
-                    call nc_verify( nf90_put_var(lncid, aerDSD_varids(i), lDSD(i+1,:,:), &
+                    call nc_verify( nf90_put_var(lncid, aerDSD_varids(i), &
+                                    buffer_DSD(i+1, :, 1:buffer_count), &
                                     start=start_dim, count=count_dim) )
                 end do
             end if
         end if
 
-        ! Write budget time series using cached varids
         do i = 1, n_budgets
             call nc_verify( nf90_put_var(lncid, varid_budgets(i), lbudgets(i,:), &
                             start=(/nc_write_iter/)) )

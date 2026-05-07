@@ -36,9 +36,15 @@ contains
             if (write_collisions) call initialize_collision_file(file_prefix)
         end if
         call initialize_buffers(write_buffer, N)
+        if (do_special_effects) call initialize_special_effects()
 
         if (write_eddies) call initialize_eddy_file(file_prefix)
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
+        if (dynamics_file /= '') then
+            call copy_file(resolve_path(namelist_dir, dynamics_file), &
+                           trim(sim_output_dir)// &
+                           trim(dynamics_file(scan(trim(dynamics_file), '/', back=.true.)+1:)))
+        end if
         call add_to_profile_buffer(time, T, WV, Tv, SS)
 
     end subroutine initialize_simulation
@@ -133,8 +139,6 @@ contains
             write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
             stop 1
         end if
-
-        if (do_special_effects) call initialize_special_effects()
 
         if (same_random) then
             call random_seed(size=rand_size)

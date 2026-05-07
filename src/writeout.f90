@@ -15,7 +15,8 @@ module writeout
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)
     real(dp), allocatable :: buffer_SS(:,:), buffer_time(:), buffer_stats(:,:)
-    real(dp), allocatable :: buffer_budgets(:,:) ! (n_budgets, buffer_size)
+    real(dp), allocatable :: buffer_field_budgets(:,:)  ! (n_field_budgets, buffer_size)
+    real(dp), allocatable :: buffer_micro_budgets(:,:)  ! (n_micro_budgets, buffer_size)
     integer(i4), allocatable :: buffer_DSD(:,:,:) ! n_DSDs, rbins, buffer_size
 
     ! Eddy output file unit (unformatted stream binary)
@@ -29,7 +30,8 @@ module writeout
     ! Cached NetCDF variable IDs (populated by create_netcdf)
     integer :: varid_time, varid_T, varid_QV, varid_Tv, varid_S
     integer :: varid_stats(7)  ! Np, Nact, Nun, Ravg, LWC, N_collisions, N_coalescences
-    integer :: varid_budgets(n_budgets)
+    integer :: varid_field_budgets(n_field_budgets)
+    integer :: varid_micro_budgets(n_micro_budgets)
     integer :: varid_parcel_height, varid_parcel_pressure
 
     ! Parcel ascent buffers
@@ -73,16 +75,21 @@ contains
         allocate(buffer_Tv(N_grid, buff_len))
         allocate(buffer_SS(N_grid, buff_len))
         allocate(buffer_time(buff_len))
-        allocate(buffer_budgets(n_budgets, buff_len))
+        allocate(buffer_field_budgets(n_field_budgets, buff_len))
 
         buffer_T = 0.
         buffer_WV = 0.
         buffer_Tv = 0.
         buffer_SS = 0.
         buffer_time = 0.
-        allocate(buffer_stats(7, buff_len))
-        buffer_budgets = 0.
-        buffer_stats = 0.
+        buffer_field_budgets = 0.
+
+        if (do_microphysics) then
+            allocate(buffer_stats(7, buff_len))
+            buffer_stats = 0.
+            allocate(buffer_micro_budgets(n_micro_budgets, buff_len))
+            buffer_micro_budgets = 0.
+        end if
 
         if (do_microphysics) then
             if (n_aer_category > 1) then
@@ -106,8 +113,9 @@ contains
 
     subroutine deallocate_buffers()
         write(0,*) 'DEBUG: deallocating buffers'
-        deallocate(buffer_T, buffer_WV, buffer_Tv, buffer_SS, buffer_time, buffer_budgets)
+        deallocate(buffer_T, buffer_WV, buffer_Tv, buffer_SS, buffer_time, buffer_field_budgets)
         if (allocated(buffer_stats)) deallocate(buffer_stats)
+        if (allocated(buffer_micro_budgets)) deallocate(buffer_micro_budgets)
         if (allocated(buffer_DSD)) deallocate(buffer_DSD)
         if (allocated(buffer_parcel_height)) deallocate(buffer_parcel_height)
         if (allocated(buffer_parcel_pressure)) deallocate(buffer_parcel_pressure)
@@ -124,23 +132,23 @@ contains
             buffer_WV(:, buffer_count) = lWV
             buffer_Tv(:, buffer_count) = lTv - Tice ! (C)
             buffer_SS(:, buffer_count) = lSS
+            buffer_field_budgets(1, buffer_count) = budget_diffusion_delta_T
+            buffer_field_budgets(2, buffer_count) = budget_diffusion_delta_WV
+            buffer_field_budgets(3, buffer_count) = budget_sidewall_delta_T
+            buffer_field_budgets(4, buffer_count) = budget_sidewall_delta_WV
             if (do_microphysics) then
                 buffer_stats(:, buffer_count) = statistics
                 buffer_DSD(:, :, buffer_count) = size_distribution
+                buffer_micro_budgets(1, buffer_count) = budget_inject_solute_mass
+                buffer_micro_budgets(2, buffer_count) = budget_inject_liquid_mass
+                buffer_micro_budgets(3, buffer_count) = budget_fallout_liquid_mass
+                buffer_micro_budgets(4, buffer_count) = budget_fallout_solute_mass
+                buffer_micro_budgets(5, buffer_count) = budget_condensation
+                buffer_micro_budgets(6, buffer_count) = budget_dgm_delta_T
+                buffer_micro_budgets(7, buffer_count) = real(budget_n_injected, dp)
+                buffer_micro_budgets(8, buffer_count) = real(budget_n_fellout, dp)
+                buffer_micro_budgets(9, buffer_count) = real(budget_n_coalesced, dp)
             end if
-            buffer_budgets(1,  buffer_count) = budget_inject_solute_mass
-            buffer_budgets(2,  buffer_count) = budget_inject_liquid_mass
-            buffer_budgets(3,  buffer_count) = budget_fallout_liquid_mass
-            buffer_budgets(4,  buffer_count) = budget_fallout_solute_mass
-            buffer_budgets(5,  buffer_count) = budget_condensation
-            buffer_budgets(6,  buffer_count) = budget_dgm_delta_T
-            buffer_budgets(7,  buffer_count) = budget_diffusion_delta_T
-            buffer_budgets(8,  buffer_count) = budget_diffusion_delta_WV
-            buffer_budgets(9,  buffer_count) = budget_sidewall_delta_T
-            buffer_budgets(10, buffer_count) = budget_sidewall_delta_WV
-            buffer_budgets(11, buffer_count) = real(budget_n_injected, dp)
-            buffer_budgets(12, buffer_count) = real(budget_n_fellout, dp)
-            buffer_budgets(13, buffer_count) = real(budget_n_coalesced, dp)
             if (do_parcel_ascent) then
                 buffer_parcel_height(buffer_count) = parcel_height
                 buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
@@ -177,14 +185,15 @@ contains
 
     end subroutine write_eddy
 
-    subroutine define_budget_var(lncid, t_dimid, idx, varname, long_name, units)
+    subroutine define_budget_var(lncid, t_dimid, varids, idx, varname, long_name, units)
         integer, intent(in) :: lncid, t_dimid, idx
+        integer, intent(inout) :: varids(:)
         character(*), intent(in) :: varname, long_name, units
 
-        call nc_verify( nf90_def_var(lncid, varname, NF90_DOUBLE, t_dimid, varid_budgets(idx), &
+        call nc_verify( nf90_def_var(lncid, varname, NF90_DOUBLE, t_dimid, varids(idx), &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: "//varname )
-        call nc_verify( nf90_put_att(lncid, varid_budgets(idx), "long_name", long_name), "nf90_put_att: "//varname//", name" )
-        call nc_verify( nf90_put_att(lncid, varid_budgets(idx), "units", units), "nf90_put_att: "//varname//", units" )
+        call nc_verify( nf90_put_att(lncid, varids(idx), "long_name", long_name), "nf90_put_att: "//varname//", name" )
+        call nc_verify( nf90_put_att(lncid, varids(idx), "units", units), "nf90_put_att: "//varname//", units" )
 
     end subroutine define_budget_var
 
@@ -193,8 +202,7 @@ contains
                                         buffer_T(:, 1:buffer_count), &
                                         buffer_WV(:, 1:buffer_count), &
                                         buffer_Tv(:, 1:buffer_count), &
-                                        buffer_SS(:, 1:buffer_count), &
-                                        buffer_budgets(:, 1:buffer_count))
+                                        buffer_SS(:, 1:buffer_count))
         call nc_verify( nf90_sync(ncid) )
         buffer_count = 0
 
@@ -322,25 +330,37 @@ contains
             call nc_verify( nf90_put_att(lncid, varid_stats(7), "units", "#"), "nf90_put_att: N_coalescences units")
         end if
 
-        ! Budget variables (time dimension only, defined unconditionally)
-        call define_budget_var(lncid, t_dimid, 1,  "budget_inject_solute_mass",  "Accumulated injected solute mass",          "kg")
-        call define_budget_var(lncid, t_dimid, 2,  "budget_inject_liquid_mass",  "Accumulated injected liquid water mass",    "kg")
-        call define_budget_var(lncid, t_dimid, 3,  "budget_fallout_liquid_mass", "Accumulated liquid water removed by fallout","kg")
-        call define_budget_var(lncid, t_dimid, 4,  "budget_fallout_solute_mass", "Accumulated solute mass removed by fallout","kg")
-        call define_budget_var(lncid, t_dimid, 5,  "budget_condensation",        "Net liquid water change from cond/evap",    "kg")
-        call define_budget_var(lncid, t_dimid, 6,  "budget_dgm_delta_T", &
-                              "Sum of per-droplet temperature changes from DGM", "K")
-        call define_budget_var(lncid, t_dimid, 7,  "budget_diffusion_delta_T", &
+        ! Field budget variables (always active)
+        call define_budget_var(lncid, t_dimid, varid_field_budgets, 1, "budget_diffusion_delta_T", &
                               "Domain-sum T change from diffusion", "K")
-        call define_budget_var(lncid, t_dimid, 8,  "budget_diffusion_delta_WV", &
+        call define_budget_var(lncid, t_dimid, varid_field_budgets, 2, "budget_diffusion_delta_WV", &
                               "Domain-sum WV change from diffusion", "kg/kg")
-        call define_budget_var(lncid, t_dimid, 9,  "budget_sidewall_delta_T", &
+        call define_budget_var(lncid, t_dimid, varid_field_budgets, 3, "budget_sidewall_delta_T", &
                               "Domain-sum T change from sidewall nudging", "K")
-        call define_budget_var(lncid, t_dimid, 10, "budget_sidewall_delta_WV", &
+        call define_budget_var(lncid, t_dimid, varid_field_budgets, 4, "budget_sidewall_delta_WV", &
                               "Domain-sum WV change from sidewall nudging", "kg/kg")
-        call define_budget_var(lncid, t_dimid, 11, "budget_n_injected",          "Number of particles injected",              "#")
-        call define_budget_var(lncid, t_dimid, 12, "budget_n_fellout",           "Number of particles fallen out",            "#")
-        call define_budget_var(lncid, t_dimid, 13, "budget_n_coalesced",         "Number of particles removed by coalescence", "#")
+
+        ! Microphysics budget variables
+        if (do_microphysics) then
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 1, &
+                                  "budget_inject_solute_mass", "Accumulated injected solute mass", "kg")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 2, &
+                                  "budget_inject_liquid_mass", "Accumulated injected liquid water mass", "kg")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 3, &
+                                  "budget_fallout_liquid_mass", "Accumulated liquid water removed by fallout", "kg")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 4, &
+                                  "budget_fallout_solute_mass", "Accumulated solute mass removed by fallout", "kg")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 5, &
+                                  "budget_condensation", "Net liquid water change from cond/evap", "kg")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 6, &
+                                  "budget_dgm_delta_T", "Sum of per-droplet temperature changes from DGM", "K")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 7, &
+                                  "budget_n_injected", "Number of particles injected", "#")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 8, &
+                                  "budget_n_fellout", "Number of particles fallen out", "#")
+            call define_budget_var(lncid, t_dimid, varid_micro_budgets, 9, &
+                                  "budget_n_coalesced", "Number of particles removed by coalescence", "#")
+        end if
 
         ! Parcel ascent variables (parcel mode with dynamics only)
         if (do_parcel_ascent) then
@@ -372,10 +392,9 @@ contains
     end subroutine create_netcdf
 
 
-    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS, lbudgets)
+    subroutine write_netcdf_profiles(lncid, ltime, lT, lWV, lTv, lSS)
         integer(i4), intent(in) :: lncid
         real(dp), intent(in) :: ltime(:), lT(:,:), lWV(:,:), lTv(:,:), lSS(:,:)
-        real(dp), intent(in) :: lbudgets(:,:)
 
         integer :: i, time_len, z_len, bin_len
         integer :: count_dim(2), start_dim(2)
@@ -412,10 +431,19 @@ contains
             end if
         end if
 
-        do i = 1, n_budgets
-            call nc_verify( nf90_put_var(lncid, varid_budgets(i), lbudgets(i,:), &
+        do i = 1, n_field_budgets
+            call nc_verify( nf90_put_var(lncid, varid_field_budgets(i), &
+                            buffer_field_budgets(i, 1:buffer_count), &
                             start=(/nc_write_iter/)) )
         end do
+
+        if (do_microphysics) then
+            do i = 1, n_micro_budgets
+                call nc_verify( nf90_put_var(lncid, varid_micro_budgets(i), &
+                                buffer_micro_budgets(i, 1:buffer_count), &
+                                start=(/nc_write_iter/)) )
+            end do
+        end if
 
         if (do_parcel_ascent) then
             call nc_verify( nf90_put_var(lncid, varid_parcel_height, &

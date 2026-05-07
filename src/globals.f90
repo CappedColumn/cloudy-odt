@@ -199,17 +199,22 @@ module globals
     ! ----------- Budget Accumulators -----------------
     ! Accumulated over each write interval, then reset.
     ! -------------------------------------------------
-    integer(i4), parameter :: n_budgets = 13
+
+    ! Field budgets (always active)
+    integer(i4), parameter :: n_field_budgets = 4
+    real(dp) :: budget_diffusion_delta_T = 0.0
+    real(dp) :: budget_diffusion_delta_WV = 0.0
+    real(dp) :: budget_sidewall_delta_T = 0.0
+    real(dp) :: budget_sidewall_delta_WV = 0.0
+
+    ! Microphysics budgets (only when do_microphysics = .true.)
+    integer(i4), parameter :: n_micro_budgets = 9
     real(dp) :: budget_inject_solute_mass = 0.0
     real(dp) :: budget_inject_liquid_mass = 0.0
     real(dp) :: budget_fallout_liquid_mass = 0.0
     real(dp) :: budget_fallout_solute_mass = 0.0
     real(dp) :: budget_condensation = 0.0
     real(dp) :: budget_dgm_delta_T = 0.0
-    real(dp) :: budget_diffusion_delta_T = 0.0
-    real(dp) :: budget_diffusion_delta_WV = 0.0
-    real(dp) :: budget_sidewall_delta_T = 0.0
-    real(dp) :: budget_sidewall_delta_WV = 0.0
     integer(i4) :: budget_n_injected = 0
     integer(i4) :: budget_n_fellout = 0
     integer(i4) :: budget_n_coalesced = 0
@@ -402,19 +407,21 @@ contains
 
 
     subroutine reset_budgets()
-        budget_inject_solute_mass = 0.0
-        budget_inject_liquid_mass = 0.0
-        budget_fallout_liquid_mass = 0.0
-        budget_fallout_solute_mass = 0.0
-        budget_condensation = 0.0
-        budget_dgm_delta_T = 0.0
         budget_diffusion_delta_T = 0.0
         budget_diffusion_delta_WV = 0.0
         budget_sidewall_delta_T = 0.0
         budget_sidewall_delta_WV = 0.0
-        budget_n_injected = 0
-        budget_n_fellout = 0
-        budget_n_coalesced = 0
+        if (do_microphysics) then
+            budget_inject_solute_mass = 0.0
+            budget_inject_liquid_mass = 0.0
+            budget_fallout_liquid_mass = 0.0
+            budget_fallout_solute_mass = 0.0
+            budget_condensation = 0.0
+            budget_dgm_delta_T = 0.0
+            budget_n_injected = 0
+            budget_n_fellout = 0
+            budget_n_coalesced = 0
+        end if
     end subroutine reset_budgets
 
 end module globals

@@ -430,10 +430,13 @@ contains
     end subroutine write_netcdf_profiles
 
 
-    subroutine close_netcdf(lncid)
+    subroutine close_netcdf(lncid, lLmin, lLprob, lmax_accept_prob)
         integer, intent(in) :: lncid
+        integer(i4), intent(in) :: lLmin, lLprob
+        real(dp), intent(in) :: lmax_accept_prob
 
-        call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer)
+        call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer, &
+                                       lLmin, lLprob, lmax_accept_prob)
         call nc_verify( nf90_close(lncid), 'nf90_close')
         if ( write_eddies ) close(eddy_unit)
 
@@ -444,27 +447,28 @@ contains
 
     
 
-    subroutine write_namelist_attributes(lncid, sim_name, lwrite_buffer)
-        ! Writes all namelist parameters as global attributes to the netCDF file.
-        ! Re-enters define mode, writes attributes, then exits define mode.
+    subroutine write_namelist_attributes(lncid, sim_name, lwrite_buffer, &
+                                         lLmin, lLprob, lmax_accept_prob)
         integer, intent(in) :: lncid
         character(*), intent(in) :: sim_name
         integer(i4), intent(in) :: lwrite_buffer
+        integer(i4), intent(in) :: lLmin, lLprob
+        real(dp), intent(in) :: lmax_accept_prob
 
         call nc_verify( nf90_redef(lncid), "nf90_redef: namelist attributes" )
 
         ! PARAMETERS namelist (19 attributes)
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(sim_name)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.N", N) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lmin", Lmin) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lprob", Lprob) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lmin", lLmin) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lprob", lLprob) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.tmax", tmax) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tdiff", Tdiff) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.pres", pres) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.H", H) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.volume_scaling", volume_scaling) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.max_accept_prob", max_accept_prob) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.max_accept_prob", lmax_accept_prob) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_timer", write_timer) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_buffer", lwrite_buffer) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.same_random", merge(1, 0, same_random)) )

@@ -2,7 +2,6 @@ module ODT
     use globals
     use microphysics, only: update_dim_scalars, update_nondim_scalars, update_supersat
     use droplets, only: particles, move_particles_in_eddy
-    use writeout, only: write_eddy
     implicit none
 
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
@@ -12,6 +11,20 @@ module ODT
     private
     public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+    public :: Lmin, Lprob, max_accept_prob
+
+    ! ODT namelist parameters
+    integer(i4) :: Lmin = 6
+    integer(i4) :: Lprob = 18
+    real(dp) :: max_accept_prob = 0.1
+
+    ! ODT derived parameters
+    integer(i4) :: Lmax
+    integer(i4) :: LpD
+    real(dp) :: buoy_nd
+    real(dp) :: prob_coeff
+    real(dp) :: Co, Cm
+    real(dp), allocatable :: prob_eddy_length(:)
 
     ! Non-dimensional time variables
     real(dp) :: dt_nd             ! Non-dimensional time step
@@ -29,10 +42,12 @@ module ODT
 contains
 
     subroutine initialize_ODT(H_domain)
-        ! Initialize ODT module: set time conversion, timestep, and
-        ! eddy probability parameters. Must be called after namelist
-        ! read and thermodynamic boundary conditions are set.
         real(dp), intent(in) :: H_domain
+
+        call read_odt_params()
+
+        Lmax = int(N / 3)
+        LpD = 2 * Lprob
 
         time_conv_nd = nu / (H_domain**2)
         dt_nd = 1.0 / (1.0 * N * N)
@@ -41,12 +56,39 @@ contains
         dt = diffusion_step
 
         buoy_nd = (8. * g * alpha * Tvdiff * C2 * H_domain**3) / (27. * nu * nu)
-        LpD = 2 * Lprob
         Co = exp(-LpD / (1.*Lmin))
         Cm = exp(-LpD / (1.*Lmax))
         prob_coeff = (exp(-LpD/(1.*Lmax)) - exp(-LpD/(1.*Lmin))) * (N/(3.*LpD))
 
+        if (do_turbulence) then
+            allocate(prob_eddy_length(N))
+            prob_eddy_length = 0.
+            call calc_eddy_length_cdf(prob_eddy_length)
+        end if
+
     end subroutine initialize_ODT
+
+
+    subroutine read_odt_params()
+        integer :: ierr, nml_unit
+        character(256) :: nml_line, io_emsg
+
+        namelist /TURBULENCE_ODT/ Lmin, Lprob, max_accept_prob
+
+        open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
+        if (ierr /= 0) then
+            write(*,*) io_emsg; stop 1
+        end if
+        read(nml=TURBULENCE_ODT, unit=nml_unit, iostat=ierr)
+        if (ierr /= 0) then
+            backspace(nml_unit)
+            read(nml_unit,'(a)') nml_line
+            write(*,'(a)') 'Invalid TURBULENCE_ODT parameter: '//trim(nml_line)
+            stop 1
+        end if
+        close(nml_unit)
+
+    end subroutine read_odt_params
 
     subroutine diffusion(ldelta_time)
         ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
@@ -475,8 +517,6 @@ contains
         call eddy_acceptance_method(ldt, eddy_loc, eddy_len, leddy_accepted)
 
         if (.not. leddy_accepted) return
-
-        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
 
         if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
 

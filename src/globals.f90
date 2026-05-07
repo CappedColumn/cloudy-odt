@@ -103,8 +103,6 @@ module globals
     ! -----------------------------------------------
 
     integer(i4) :: N = 6000         ! Number of Grid Cells
-    integer(i4) :: Lmin = 6        ! 1/3 of Smallest Eddy Size (gridpoints)
-    integer(i4) :: Lprob= 18        ! 1/3 of Most Probable Eddy Size (gridpoints)
     integer(i4) :: eddy_location = 1 ! Eddy index Location (M)
     integer(i4) :: eddy_length = 1   ! Eddy index Length (L)
     logical :: eddy_accepted = .false. ! Eddy acceptance flag
@@ -124,8 +122,6 @@ module globals
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)
     real(dp) :: dz_length    ! Length of each grid cell (meters)
-
-    real(dp) :: max_accept_prob = 0.1      ! Upper constraint for stability in eddy accpt. method
 
     logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
     logical :: overwrite = .false.      ! Allow overwriting existing output files
@@ -180,24 +176,6 @@ module globals
     ! -----------------------------------------------
     ! -----------------------------------------------
 
-
-    ! ----------- Calculated Parameters -------------
-    ! Will be calculated in initialization module once
-    ! namelist parameters are fully updated
-    ! -----------------------------------------------
-
-    integer(i4) :: Lmax      ! Largest Eddy Size (1/3 of domain, in gridpoints)
-    integer(i4) :: LpD          ! Twice the most probable length
-    real(dp) :: buoy_nd           ! Dimensionless Buoyancy
-    real(dp) :: prob_coeff          ! Used in calculation of eddy acceptance probability
-    real(dp) :: Co, Cm              ! Used for initial eddy sample guess
-
-    ! Eddy acceptance/rejection related
-    real(dp), allocatable :: prob_eddy_length(:)      ! Probability of eddy sizes
-    
-    ! -----------------------------------------------
-    ! -----------------------------------------------
-    
     ! ------------------- ARRAYS --------------------
 
     ! Velocity arrays

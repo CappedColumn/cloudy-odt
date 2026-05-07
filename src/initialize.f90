@@ -2,8 +2,8 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT, &
-                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+    use ODT, only: initialize_ODT, diffusion, odt_diffuse_step, odt_turbulence_step, &
+                   odt_sync_after_physics, Lmin, Lprob, max_accept_prob
     use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, deallocate_buffers, create_netcdf, &
@@ -54,7 +54,7 @@ contains
         call add_to_profile_buffer(time, T, WV, Tv, SS)
         call flush_buffer()
         write(0,*) 'DEBUG: flush done'
-        call close_netcdf(ncid)
+        call close_netcdf(ncid, Lmin, Lprob, max_accept_prob)
         write(0,*) 'DEBUG: netcdf closed'
         if (do_microphysics .and. write_trajectories) call close_particle_netcdf()
         if (write_collisions) call close_collision_file()
@@ -67,8 +67,8 @@ contains
         integer     :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
 
-        namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
-        max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
+        namelist /PARAMETERS/ N, tmax, Tdiff, Tref, pres, H, volume_scaling, &
+        same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
         overwrite, simulation_mode, &
         integral_length_scale, kolmogorov_length_scale, dissipation_rate, &
@@ -104,7 +104,6 @@ contains
         write(*,*) 'Setting domain variables...'
         Tref = Tref + Tice
         Ttop = Tref - Tdiff
-        Lmax = int(N / 3)
         time = 0.
         last_time_updated = 0.
 
@@ -124,10 +123,6 @@ contains
             diffuse_step       => odt_diffuse_step
             turbulence_step    => odt_turbulence_step
             sync_after_physics => odt_sync_after_physics
-            if (do_turbulence) then
-                call allocate_zero_arrays(prob_eddy_length, N)
-                call calc_eddy_length_cdf(prob_eddy_length)
-            end if
         else if (simulation_mode == 'parcel') then
             call initialize_LEM(H)
             diffuse_step       => lem_diffuse_step

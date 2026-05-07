@@ -2,7 +2,7 @@ program main
   use write_particle, only: write_trajectory_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_profiles
+  use writeout, only: write_profiles, write_eddy
   use droplets, only: particles, update_droplets, &
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
@@ -90,6 +90,7 @@ program main
     if ( do_turbulence ) call turbulence_step(dt, time, delta_time, &
                                               eddy_accepted, eddy_location, eddy_length)
     if ( eddy_accepted ) then
+      if (write_eddies) call write_eddy(eddy_location, eddy_length, time)
       call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)

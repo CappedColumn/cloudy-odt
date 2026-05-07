@@ -2,7 +2,6 @@ module LEM
     use globals
     use microphysics, only: virtual_temp, update_supersat
     use droplets, only: particle, particles, current_n_particles, move_particles_in_eddy
-    use writeout, only: write_eddy
     implicit none
 
     private
@@ -138,7 +137,6 @@ contains
             eddy_len = eddy_gridpoints
         end do
 
-        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
         leddy_accepted = .true.
 
     end subroutine lem_turbulence_step

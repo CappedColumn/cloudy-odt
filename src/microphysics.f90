@@ -4,7 +4,7 @@ module microphysics
 
     private
     public :: saturation_vapor_pressure, saturation_mixing_ratio, virtual_temp, &
-              update_dim_scalars, update_nondim_scalars, update_supersat, calc_supersat
+              update_supersat, calc_supersat
 
 contains
 
@@ -58,41 +58,6 @@ contains
         supersat = 100*(mr/sat_mr - 1.)
 
     end function calc_supersat
-
-    pure subroutine update_dim_scalars(lT_nd, lWV_nd, lTv_nd, lT, lWV, lTv)
-        ! Takes the non-dimensional scalar arrays, and updates the dimensional
-        ! arrays. Also calculates the virtual temperature and nondim Tv.
-        real(dp), intent(in) :: lT_nd(:), lWV_nd(:)
-        real(dp), intent(out) :: lT(:), lWV(:), lTv_nd(:), lTv(:)
-        integer(i4) :: k
-
-        ! Note the subtraction because Tdiff and WVdiff are actually negative w.r.t height
-        do concurrent (k = 1:N)
-            lT(k) = Tref - Tdiff * lT_nd(k)
-            lWV(k) = WVref - WVdiff * lWV_nd(k)
-        end do
-
-        do concurrent (k = 1:N)
-            lTv(k) = virtual_temp(lT(k), lWV(k))
-            lTv_nd(k) = (Tvref - lTv(k)) / Tdiff
-        end do
-
-    end subroutine update_dim_scalars
-
-    pure subroutine update_nondim_scalars(lT, lWV, lTv, lT_nd, lWV_nd, lTv_nd)
-        ! Updates the non-dimensional scalar fields based on the current value of
-        ! the dimension scalar fields
-        real(dp), intent(in) :: lT(:), lWV(:), lTv(:)
-        real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
-        integer(i4) :: k
-
-        do concurrent (k = 1:N)
-            lT_nd(k) = -(lT(k) - Tref) / Tdiff
-            lWV_nd(k) = -(lWV(k) - WVref) / WVdiff
-            lTv_nd(k) = -(lTv(k) - Tvref) / Tvdiff
-        end do
-
-    end subroutine update_nondim_scalars
 
     pure subroutine update_supersat(lT, lWV, lSS, lpres)
         ! Calculates the supersaturation fields based on the current values of

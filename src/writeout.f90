@@ -9,6 +9,8 @@ module writeout
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use dynamics, only: do_parcel_ascent, parcel_height
+    use ODT, only: Lmin, Lprob, max_accept_prob, C2, ZC2
+    use LEM, only: integral_length_scale, kolmogorov_length_scale, dissipation_rate
     implicit none
 
     private
@@ -41,7 +43,7 @@ module writeout
 
     public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
-               write_profiles, write_eddy, initialize_eddy_file
+               write_profiles, write_eddy, initialize_eddy_file, write_eddy_header_fields
     private :: write_netcdf_profiles
     
 contains
@@ -114,7 +116,6 @@ contains
 
 
     subroutine deallocate_buffers()
-        write(0,*) 'DEBUG: deallocating buffers'
         deallocate(buffer_T, buffer_WV, buffer_Tv, buffer_SS, buffer_time, buffer_field_budgets)
         if (allocated(buffer_stats)) deallocate(buffer_stats)
         if (allocated(buffer_micro_budgets)) deallocate(buffer_micro_budgets)
@@ -163,9 +164,10 @@ contains
 
     end subroutine add_to_profile_buffer
 
-    subroutine initialize_eddy_file(filename)
-        character(*), intent(in) :: filename
+    subroutine initialize_eddy_file(filename, mode)
+        character(*), intent(in) :: filename, mode
         integer(i4) :: ierr
+        integer(i1) :: mode_flag
 
         open(newunit=eddy_unit, file=trim(filename)//'_eddies.bin', &
              form='unformatted', access='stream', status='replace', iostat=ierr)
@@ -174,10 +176,23 @@ contains
             stop 1
         end if
 
-        ! Header: grid size, domain height, ODT constants, temperature BCs
-        write(eddy_unit) N, H, C2, ZC2, Tdiff, Tref
+        if (trim(mode) == 'chamber') then
+            mode_flag = 0_i1
+        else
+            mode_flag = 1_i1
+        end if
+        write(eddy_unit) mode_flag
+        write(eddy_unit) N, H
 
     end subroutine initialize_eddy_file
+
+
+    subroutine write_eddy_header_fields(fields)
+        real(dp), intent(in) :: fields(:)
+
+        write(eddy_unit) fields
+
+    end subroutine write_eddy_header_fields
 
     subroutine write_eddy(loc, len, ltime)
         integer(i4), intent(in) :: loc, len
@@ -460,13 +475,10 @@ contains
     end subroutine write_netcdf_profiles
 
 
-    subroutine close_netcdf(lncid, lLmin, lLprob, lmax_accept_prob)
+    subroutine close_netcdf(lncid)
         integer, intent(in) :: lncid
-        integer(i4), intent(in) :: lLmin, lLprob
-        real(dp), intent(in) :: lmax_accept_prob
 
-        call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer, &
-                                       lLmin, lLprob, lmax_accept_prob)
+        call write_namelist_attributes(lncid, nc_simulation_name, nc_write_buffer)
         call nc_verify( nf90_close(lncid), 'nf90_close')
         if ( write_eddies ) close(eddy_unit)
 
@@ -477,28 +489,21 @@ contains
 
     
 
-    subroutine write_namelist_attributes(lncid, sim_name, lwrite_buffer, &
-                                         lLmin, lLprob, lmax_accept_prob)
+    subroutine write_namelist_attributes(lncid, sim_name, lwrite_buffer)
         integer, intent(in) :: lncid
         character(*), intent(in) :: sim_name
         integer(i4), intent(in) :: lwrite_buffer
-        integer(i4), intent(in) :: lLmin, lLprob
-        real(dp), intent(in) :: lmax_accept_prob
 
         call nc_verify( nf90_redef(lncid), "nf90_redef: namelist attributes" )
 
-        ! PARAMETERS namelist (19 attributes)
+        ! PARAMETERS namelist
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(sim_name)) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_mode", trim(simulation_mode)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.N", N) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lmin", lLmin) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Lprob", lLprob) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.tmax", tmax) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tdiff", Tdiff) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.pres", pres) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.H", H) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.volume_scaling", volume_scaling) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.max_accept_prob", lmax_accept_prob) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_timer", write_timer) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_buffer", lwrite_buffer) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.same_random", merge(1, 0, same_random)) )
@@ -507,6 +512,22 @@ contains
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_eddies", merge(1, 0, write_eddies)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_special_effects", merge(1, 0, do_special_effects)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.overwrite", merge(1, 0, overwrite)) )
+
+        ! Mode-specific turbulence attributes
+        if (simulation_mode == 'chamber') then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tdiff", Tdiff) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.Lmin", Lmin) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.Lprob", Lprob) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.max_accept_prob", max_accept_prob) )
+        else if (simulation_mode == 'parcel') then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.integral_length_scale", &
+                            integral_length_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.kolmogorov_length_scale", &
+                            kolmogorov_length_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.dissipation_rate", &
+                            dissipation_rate) )
+        end if
 
         ! MICROPHYSICS namelist (7 attributes, only when microphysics is enabled)
         if ( do_microphysics ) then

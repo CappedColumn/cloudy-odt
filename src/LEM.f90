@@ -6,6 +6,7 @@ module LEM
 
     private
     public :: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
+    public :: integral_length_scale, kolmogorov_length_scale, dissipation_rate
 
     ! LEM namelist parameters
     real(dp) :: integral_length_scale = 0.01

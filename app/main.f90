@@ -11,6 +11,8 @@ program main
 
   real(dp) :: t_start, t_end
   integer :: done_unit
+  integer(i4) :: eddy_location, eddy_length
+  logical :: eddy_accepted
   character(8) :: date_str
   character(10) :: time_str
 
@@ -48,8 +50,10 @@ program main
   write(*,*) 'simulation_mode: ', trim(simulation_mode)
   write(*,*) 'N: ', N
   write(*,*) 'tmax (s): ', tmax
-  write(*,*) 'Tdiff (K): ', Tdiff
-  write(*,*) 'Tref (K): ', Tref
+  if (simulation_mode == 'chamber') then
+    write(*,*) 'Tdiff (K): ', Tdiff
+    write(*,*) 'Tref (K): ', Tref
+  end if
   write(*,*) 'H (m): ', H
   write(*,*) 'volume_scaling: ', volume_scaling
   write(*,*) 'do_turbulence: ', do_turbulence

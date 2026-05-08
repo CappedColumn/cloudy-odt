@@ -65,9 +65,6 @@ module globals
     real(dp), parameter :: pi_43 = 4.1887902047863905   ! 4/3*pi
 
     real(dp), parameter :: alpha = 3.5e-3           ! Thermal Expansion Coefficient
-    real(dp), parameter :: C2 = 1.5e3                ! Turbulent strength in ODT (dimensionless, squared): see Eq. 2.9 - Wunsch and Kerstein 2005
-    real(dp), parameter :: C = sqrt(C2)
-    real(dp), parameter :: ZC2 = 1.0e5                 ! ODT viscous cut-off parameter (dimensionless): see same equation/paper
 
     ! Aerosol Calculations/Constants
     real(dp), parameter :: a_RY = 3.3e-5  ! Rogers & Yau Eq. 6.7 alpha parameter
@@ -103,9 +100,6 @@ module globals
     ! -----------------------------------------------
 
     integer(i4) :: N = 6000         ! Number of Grid Cells
-    integer(i4) :: eddy_location = 1 ! Eddy index Location (M)
-    integer(i4) :: eddy_length = 1   ! Eddy index Length (L)
-    logical :: eddy_accepted = .false. ! Eddy acceptance flag
     logical :: write_eddies = .false.
 
     ! Note default values will yeild a domain of 1 cm^3, area_frac=2 gives 2 cm^3...
@@ -116,9 +110,6 @@ module globals
 
     real(dp) :: Tdiff = 10.        ! Top-Bottom Temperature Difference (Celsius)
     real(dp) :: Tref = 15.          ! Bottom temperature used for reference
-    real(dp) :: Ttop
-    real(dp) :: WVref, WVtop, WVdiff
-    real(dp) :: Tvref, Tvtop, Tvdiff
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)
     real(dp) :: dz_length    ! Length of each grid cell (meters)

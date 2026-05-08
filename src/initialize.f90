@@ -3,12 +3,13 @@ module initialize
     use globals
     use microphysics
     use ODT, only: initialize_ODT, close_ODT, odt_init_arrays, &
-                   odt_diffuse_step, odt_turbulence_step, &
-                   odt_sync_after_physics, Lmin, Lprob, max_accept_prob
-    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
+                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics, C2, ZC2
+    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics, &
+                   integral_length_scale, kolmogorov_length_scale, dissipation_rate
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, deallocate_buffers, create_netcdf, &
-                initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
+                initialize_eddy_file, write_eddy_header_fields, &
+                add_to_profile_buffer, flush_buffer, close_netcdf
     use droplets, only: initialize_microphysics, write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
@@ -38,7 +39,15 @@ contains
         call initialize_buffers(write_buffer, N)
         if (do_special_effects) call initialize_special_effects()
 
-        if (write_eddies) call initialize_eddy_file(file_prefix)
+        if (write_eddies) then
+            call initialize_eddy_file(file_prefix, simulation_mode)
+            if (simulation_mode == 'chamber') then
+                call write_eddy_header_fields([C2, ZC2, Tdiff, Tref])
+            else if (simulation_mode == 'parcel') then
+                call write_eddy_header_fields([integral_length_scale, &
+                                               kolmogorov_length_scale, dissipation_rate])
+            end if
+        end if
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
         if (dynamics_file /= '') then
             call copy_file(resolve_path(namelist_dir, dynamics_file), &
@@ -56,7 +65,7 @@ contains
         call update_supersat(T, WV, SS, pres)
         call add_to_profile_buffer(time, T, WV, Tv, SS)
         call flush_buffer()
-        call close_netcdf(ncid, Lmin, Lprob, max_accept_prob)
+        call close_netcdf(ncid)
         if (do_microphysics .and. write_trajectories) call close_particle_netcdf()
         if (write_collisions) call close_collision_file()
         call deallocate_buffers()
@@ -102,20 +111,12 @@ contains
 
         write(*,*) 'Setting domain variables...'
         Tref = Tref + Tice
-        Ttop = Tref - Tdiff
         time = 0.
         last_time_updated = 0.
 
         dz_length = H/N
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N
-
-        WVref = saturation_mixing_ratio(Tref, pres)
-        WVtop = saturation_mixing_ratio(Ttop, pres)
-        WVdiff = WVref - WVtop
-        Tvref = virtual_temp(Tref, WVref)
-        Tvtop = virtual_temp(Ttop, WVtop)
-        Tvdiff = Tvref - Tvtop
 
         if (simulation_mode == 'chamber') then
             call initialize_ODT(H)
@@ -166,7 +167,7 @@ contains
             call odt_init_arrays()
         else if (simulation_mode == 'parcel') then
             T(:) = Tref
-            WV(:) = WVref
+            WV(:) = saturation_mixing_ratio(Tref, pres)
             do k = 1, N
                 Tv(k) = virtual_temp(T(k), WV(k))
             end do

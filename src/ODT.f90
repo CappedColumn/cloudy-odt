@@ -1,6 +1,6 @@
 module ODT
     use globals
-    use microphysics, only: update_dim_scalars, update_nondim_scalars, update_supersat
+    use microphysics, only: update_supersat, saturation_mixing_ratio, virtual_temp
     use droplets, only: particles, move_particles_in_eddy
     implicit none
 
@@ -13,11 +13,22 @@ module ODT
     public :: eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
     public :: Lmin, Lprob, max_accept_prob
+    public :: Ttop, WVref, WVtop, WVdiff, Tvref, Tvtop, Tvdiff
+    public :: C2, ZC2
+
+    ! ODT constants (Wunsch & Kerstein 2005, Eq. 2.9)
+    real(dp), parameter :: C2 = 1.5e3
+    real(dp), parameter :: ZC2 = 1.0e5
 
     ! ODT namelist parameters
     integer(i4) :: Lmin = 6
     integer(i4) :: Lprob = 18
     real(dp) :: max_accept_prob = 0.1
+
+    ! Chamber boundary-condition scaling (derived from Tdiff, Tref, pres)
+    real(dp) :: Ttop
+    real(dp) :: WVref, WVtop, WVdiff
+    real(dp) :: Tvref, Tvtop, Tvdiff
 
     ! ODT derived parameters
     integer(i4) :: Lmax
@@ -50,6 +61,14 @@ contains
         real(dp), intent(in) :: H_domain
 
         call read_odt_params()
+
+        Ttop = Tref - Tdiff
+        WVref = saturation_mixing_ratio(Tref, pres)
+        WVtop = saturation_mixing_ratio(Ttop, pres)
+        WVdiff = WVref - WVtop
+        Tvref = virtual_temp(Tref, WVref)
+        Tvtop = virtual_temp(Ttop, WVtop)
+        Tvdiff = Tvref - Tvtop
 
         Lmax = int(N / 3)
         LpD = 2 * Lprob
@@ -553,6 +572,38 @@ contains
 
         call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
     end subroutine odt_init_arrays
+
+
+    pure subroutine update_dim_scalars(lT_nd, lWV_nd, lTv_nd, lT, lWV, lTv)
+        real(dp), intent(in) :: lT_nd(:), lWV_nd(:)
+        real(dp), intent(out) :: lT(:), lWV(:), lTv_nd(:), lTv(:)
+        integer(i4) :: k
+
+        do concurrent (k = 1:N)
+            lT(k) = Tref - Tdiff * lT_nd(k)
+            lWV(k) = WVref - WVdiff * lWV_nd(k)
+        end do
+
+        do concurrent (k = 1:N)
+            lTv(k) = virtual_temp(lT(k), lWV(k))
+            lTv_nd(k) = (Tvref - lTv(k)) / Tdiff
+        end do
+
+    end subroutine update_dim_scalars
+
+
+    pure subroutine update_nondim_scalars(lT, lWV, lTv, lT_nd, lWV_nd, lTv_nd)
+        real(dp), intent(in) :: lT(:), lWV(:), lTv(:)
+        real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
+        integer(i4) :: k
+
+        do concurrent (k = 1:N)
+            lT_nd(k) = -(lT(k) - Tref) / Tdiff
+            lWV_nd(k) = -(lWV(k) - WVref) / WVdiff
+            lTv_nd(k) = -(lTv(k) - Tvref) / Tvdiff
+        end do
+
+    end subroutine update_nondim_scalars
 
 
     subroutine close_ODT()

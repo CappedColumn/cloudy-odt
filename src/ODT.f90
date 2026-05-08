@@ -13,7 +13,7 @@ module ODT
     public :: eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
     public :: Lmin, Lprob, max_accept_prob
-    public :: Ttop, WVref, WVtop, WVdiff, Tvref, Tvtop, Tvdiff
+    public :: Tdiff, Ttop, WVref, WVtop, WVdiff, Tvref, Tvtop, Tvdiff
     public :: C2, ZC2
 
     ! ODT constants (Wunsch & Kerstein 2005, Eq. 2.9)
@@ -21,9 +21,11 @@ module ODT
     real(dp), protected :: ZC2 = 1.0e5
 
     ! ODT namelist parameters
+    real(dp), protected :: Tdiff = 10.
     integer(i4), protected :: Lmin = 6
     integer(i4), protected :: Lprob = 18
     real(dp), protected :: max_accept_prob = 0.1
+
 
     ! Chamber boundary-condition scaling (derived from Tdiff, Tref, pres)
     real(dp) :: Ttop
@@ -97,7 +99,7 @@ contains
         integer :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
 
-        namelist /TURBULENCE_ODT/ Lmin, Lprob, max_accept_prob, C2, ZC2
+        namelist /TURBULENCE_ODT/ Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr /= 0) then

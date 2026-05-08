@@ -37,7 +37,8 @@ contains
     end subroutine run_special_effects
 
 
-    subroutine initialize_special_effects()
+    subroutine initialize_special_effects(rayleigh)
+        real(dp), intent(in) :: rayleigh
 
         integer :: nml_unit, ierr
         character(256) :: io_emsg, nml_line
@@ -51,7 +52,6 @@ contains
             write(*,*) io_emsg; stop 1
         end if
         read(nml=SPECIALEFFECTS, unit=nml_unit, iostat=ierr)
-        ! Print value causing namelist read error
         if (ierr .ne. 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
@@ -60,27 +60,22 @@ contains
         end if
         close(nml_unit)
 
-        ! Namelist is copied to output directory in initialize_params
-
-        ! Initialize enabled special effects
-        if ( do_sidewalls ) call initialize_sidewalls()
+        if ( do_sidewalls ) call initialize_sidewalls(rayleigh)
 
 
     end subroutine initialize_special_effects
 
 
-    subroutine initialize_sidewalls()
+    subroutine initialize_sidewalls(rayleigh)
+        real(dp), intent(in) :: rayleigh
 
         real(dp) :: velocity_bot
 
-        ! Set time tracker to zero
         sw_iter = 0.
 
-        ! Convert sidewall temperature to Kelvin
         T_sw = T_sw + Tice
 
-        ! Calculate rayleigh and nusselt numbers
-        Ra = (g * Tdiff * H**3)/(Tref * nu * kT)
+        Ra = rayleigh
 
         Nuss = 0.124 * Ra**0.309
 

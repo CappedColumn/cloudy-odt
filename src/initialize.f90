@@ -3,9 +3,10 @@ module initialize
     use globals
     use microphysics
     use ODT, only: initialize_ODT, close_ODT, odt_init_arrays, &
-                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics, C2, ZC2
+                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics, &
+                   C2, ZC2, Tdiff
     use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics, &
-                   integral_length_scale, kolmogorov_length_scale, dissipation_rate
+                   integral_length_scale, kolmogorov_length_scale, dissipation_rate, reynolds_number
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, deallocate_buffers, create_netcdf, &
                 initialize_eddy_file, write_eddy_header_fields, &
@@ -37,7 +38,14 @@ contains
             if (write_collisions) call initialize_collision_file(file_prefix)
         end if
         call initialize_buffers(write_buffer, N)
-        if (do_special_effects) call initialize_special_effects()
+        if (do_special_effects) then
+            if (simulation_mode == 'chamber') then
+                call initialize_special_effects((g * Tdiff * H**3) / (Tref * nu * kT))
+            else
+                ! TODO: parcel mode substitutes Re for Ra as a placeholder
+                call initialize_special_effects(reynolds_number)
+            end if
+        end if
 
         if (write_eddies) then
             call initialize_eddy_file(file_prefix, simulation_mode)
@@ -77,7 +85,7 @@ contains
         integer     :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
 
-        namelist /PARAMETERS/ N, tmax, Tdiff, Tref, pres, H, volume_scaling, &
+        namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
         overwrite, simulation_mode, dynamics_file

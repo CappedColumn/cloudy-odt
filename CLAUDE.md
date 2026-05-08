@@ -71,6 +71,8 @@ Executable invocation: `codt <NAMELIST_PATH>`. Relative path `aerosol_file` reso
 
 **`copy_file` self-clobber:** When input dir == output dir, `copy_file` truncates the file to 0 bytes. Workaround: keep inputs in a subdirectory.
 
+**Sidewall Ra in parcel mode:** `initialize_special_effects` receives a Rayleigh number from the caller. In chamber mode this is the true Ra = gΔTH³/(T_ref·ν·κ). In parcel mode the LEM Reynolds number is substituted as a placeholder — this needs a proper formulation.
+
 ## Planned Modifications
 
 - **Predetermined eddies mode:** Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_predetermined_eddies` + `eddy_file`. Mutually exclusive with `write_eddies`.

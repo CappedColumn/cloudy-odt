@@ -108,7 +108,6 @@ module globals
     real(dp) :: domain_volume           ! Volume of domain (m^3)
     real(dp) :: gridcell_volume         ! Volume of each grid cell (m^3)
 
-    real(dp) :: Tdiff = 10.        ! Top-Bottom Temperature Difference (Celsius)
     real(dp) :: Tref = 15.          ! Bottom temperature used for reference
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)

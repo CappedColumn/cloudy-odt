@@ -9,7 +9,8 @@ module ODT
     ! the eddy rejection/acceptance method (the entire loop)
 
     private
-    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method
+    public :: initialize_ODT, close_ODT, odt_init_arrays
+    public :: calc_eddy_length_cdf, eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
     public :: Lmin, Lprob, max_accept_prob
 
@@ -25,6 +26,10 @@ module ODT
     real(dp) :: prob_coeff
     real(dp) :: Co, Cm
     real(dp), allocatable :: prob_eddy_length(:)
+
+    ! Nondimensional field arrays (ODT-only)
+    real(dp), allocatable :: W_nd(:)
+    real(dp), allocatable :: T_nd(:), WV_nd(:), Tv_nd(:)
 
     ! Non-dimensional time variables
     real(dp) :: dt_nd             ! Non-dimensional time step
@@ -526,6 +531,34 @@ contains
     subroutine odt_sync_after_physics()
         call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
     end subroutine odt_sync_after_physics
+
+
+    subroutine odt_init_arrays()
+        real(dp) :: rand_num
+        integer(i4) :: k
+
+        allocate(T_nd(N+1), WV_nd(N+1), Tv_nd(N+1), W_nd(N+1))
+        do concurrent (k = 1:N+1)
+            T_nd(k)  = 1.*k/(N+1)
+            WV_nd(k) = 1.*k/(N+1)
+            Tv_nd(k) = 1.*k/(N+1)
+            W_nd(k)  = 1.*k/(N+1)
+        end do
+
+        do k = 1, N
+            call random_number(rand_num)
+            W_nd(k) = 2.e-10 * (rand_num - 0.5)
+        end do
+        W_nd(N+1) = 0.
+
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+    end subroutine odt_init_arrays
+
+
+    subroutine close_ODT()
+        call diffusion(delta_time)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+    end subroutine close_ODT
 
 
 end module ODT

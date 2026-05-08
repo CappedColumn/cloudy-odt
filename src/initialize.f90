@@ -2,7 +2,8 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: initialize_ODT, diffusion, odt_diffuse_step, odt_turbulence_step, &
+    use ODT, only: initialize_ODT, close_ODT, odt_init_arrays, &
+                   odt_diffuse_step, odt_turbulence_step, &
                    odt_sync_after_physics, Lmin, Lprob, max_accept_prob
     use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
     use special_effects, only: initialize_special_effects
@@ -17,7 +18,7 @@ module initialize
     integer(i4) :: write_buffer
 
     private :: read_params, initialize_params, initialize_arrays, initialize_output, &
-               allocate_zero_arrays, allocate_nondim_array, initialize_velocity_arrays
+               allocate_zero_arrays
     public :: initialize_simulation, close_simulation
 
 contains
@@ -52,16 +53,11 @@ contains
 
     subroutine close_simulation()
 
-        if (simulation_mode == 'chamber') then
-            call diffusion(delta_time)
-            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-        end if
+        if (simulation_mode == 'chamber') call close_ODT()
         call update_supersat(T, WV, SS, pres)
         call add_to_profile_buffer(time, T, WV, Tv, SS)
         call flush_buffer()
-        write(0,*) 'DEBUG: flush done'
         call close_netcdf(ncid, Lmin, Lprob, max_accept_prob)
-        write(0,*) 'DEBUG: netcdf closed'
         if (do_microphysics .and. write_trajectories) call close_particle_netcdf()
         if (write_collisions) call close_collision_file()
         call deallocate_buffers()
@@ -168,12 +164,7 @@ contains
         end do
 
         if (simulation_mode == 'chamber') then
-            call allocate_nondim_array(W_nd, N)
-            call allocate_nondim_array(T_nd, N)
-            call allocate_nondim_array(WV_nd, N)
-            call allocate_nondim_array(Tv_nd, N)
-            call initialize_velocity_arrays(W_nd)
-            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+            call odt_init_arrays()
         else if (simulation_mode == 'parcel') then
             T(:) = Tref
             WV(:) = WVref
@@ -215,20 +206,6 @@ contains
     end subroutine initialize_output
 
 
-    subroutine allocate_nondim_array(A, n_array)
-        integer(i4), intent(in) ::n_array
-        real(dp), intent(inout), allocatable :: A(:)
-        integer :: k
-
-        allocate(A(N+1))
-        A = 0.
-
-        do concurrent (k = 1:N+1)
-            A(k) = 1.*k/(N+1)
-        end do
-
-    end subroutine allocate_nondim_array
-
     subroutine allocate_zero_arrays(A, n_array)
         integer(i4), intent(in) ::n_array
         real(dp), intent(inout), allocatable :: A(:)
@@ -237,18 +214,5 @@ contains
         A = 0.
 
     end subroutine allocate_zero_arrays
-
-    subroutine initialize_velocity_arrays(lw_nd)
-        real(dp), intent(inout), allocatable :: lw_nd(:)
-        real(dp) :: rand_num
-        integer(i4) :: k
-
-        do k = 1, N
-            call random_number(rand_num)
-            lw_nd(k) = 2.e-10 * (rand_num - 0.5)
-        end do
-        lw_nd(N+1) = 0.
-
-    end subroutine initialize_velocity_arrays
 
 end module initialize

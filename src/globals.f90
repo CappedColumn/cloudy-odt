@@ -173,15 +173,12 @@ module globals
 
     ! ------------------- ARRAYS --------------------
 
-    ! Velocity arrays
-    real(dp), allocatable :: W_nd(:)   ! ODT velocity (nondim, energy conservation)
-
     ! Positional arrays
     real(dp), allocatable :: z(:)
 
     ! Scalar arrays
-    ! Temperature, Water Vapor (dim and non-dim) and Virt. Temp, Supersaturation
-    real(dp), allocatable :: T_nd(:), WV_nd(:), Tv_nd(:), T(:), WV(:), Tv(:)
+    ! Temperature, Water Vapor, Virtual Temperature, Supersaturation
+    real(dp), allocatable :: T(:), WV(:), Tv(:)
     real(dp), allocatable :: SS(:)
 
     ! Statistics

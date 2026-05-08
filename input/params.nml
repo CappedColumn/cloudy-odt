@@ -34,6 +34,8 @@ do_special_effects = .false. ! Controls special effect namelist below
 Lmin = 6
 Lprob = 18
 max_accept_prob = 0.1
+C2 = 1.5e3
+ZC2 = 1.0e5
 /
 
 &TURBULENCE_LEM

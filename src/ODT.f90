@@ -17,13 +17,13 @@ module ODT
     public :: C2, ZC2
 
     ! ODT constants (Wunsch & Kerstein 2005, Eq. 2.9)
-    real(dp), parameter :: C2 = 1.5e3
-    real(dp), parameter :: ZC2 = 1.0e5
+    real(dp), protected :: C2 = 1.5e3
+    real(dp), protected :: ZC2 = 1.0e5
 
     ! ODT namelist parameters
-    integer(i4) :: Lmin = 6
-    integer(i4) :: Lprob = 18
-    real(dp) :: max_accept_prob = 0.1
+    integer(i4), protected :: Lmin = 6
+    integer(i4), protected :: Lprob = 18
+    real(dp), protected :: max_accept_prob = 0.1
 
     ! Chamber boundary-condition scaling (derived from Tdiff, Tref, pres)
     real(dp) :: Ttop
@@ -97,7 +97,7 @@ contains
         integer :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
 
-        namelist /TURBULENCE_ODT/ Lmin, Lprob, max_accept_prob
+        namelist /TURBULENCE_ODT/ Lmin, Lprob, max_accept_prob, C2, ZC2
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr /= 0) then

@@ -15,11 +15,10 @@ module initialize
     use dynamics, only: initialize_dynamics
     implicit none
 
-    integer(i4) :: write_buffer
-
-    private :: read_params, initialize_params, initialize_arrays, initialize_output, &
-               allocate_zero_arrays
+    private
     public :: initialize_simulation, close_simulation
+
+    integer(i4) :: write_buffer
 
 contains
 

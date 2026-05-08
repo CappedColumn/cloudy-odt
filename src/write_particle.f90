@@ -4,8 +4,10 @@ module write_particle
                         trajectory_start, trajectory_end, trajectory_timer
     use collision_coalescence, only: do_collisions
     use globals
-    use writeout, only: nc_verify
     implicit none
+
+    private
+    public :: initialize_write_particle, write_trajectory_data, close_particle_netcdf
 
     ! Trajectory write timer accumulator
     real(dp) :: trajectory_time_iter = 0.

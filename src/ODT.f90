@@ -10,7 +10,7 @@ module ODT
 
     private
     public :: initialize_ODT, close_ODT, odt_init_arrays
-    public :: calc_eddy_length_cdf, eddy_acceptance_method
+    public :: eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
     public :: Lmin, Lprob, max_accept_prob
 

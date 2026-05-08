@@ -11,6 +11,8 @@ module writeout
     use dynamics, only: do_parcel_ascent, parcel_height
     implicit none
 
+    private
+
     ! Buffer variables and arrays for writing to netCDF
     integer(i4) :: buffer_size, buffer_count, nc_write_iter
     real(dp), allocatable :: buffer_T(:,:), buffer_WV(:,:), buffer_Tv(:,:) ! dims (buffer_size, N_grid)

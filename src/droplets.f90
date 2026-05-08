@@ -11,6 +11,15 @@ module droplets
     use microphysics
     implicit none
 
+    private
+    public :: particles, particle, current_n_particles, total_n_particles, total_n_fellout, n_injected
+    public :: initialize_microphysics, update_droplets, move_particles_in_eddy
+    public :: calculate_droplet_statistics, bin_droplet_radii
+    public :: particle_bin_edges, size_distribution, n_DSD_bins, n_aer_category
+    public :: dsd_varid, aerDSD_varids
+    public :: write_trajectories, trajectory_start, trajectory_end, trajectory_timer
+    public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
+
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
     integer(i4) :: total_n_particles = 0
@@ -52,12 +61,6 @@ module droplets
     logical :: write_trajectories = .false.
     real(dp) :: trajectory_start = 0., trajectory_end = 0.
     real(dp) :: trajectory_timer = 1.
-
-        ! private
-    !public :: particles, aerosol, particle, inject_particle, initialize_aerosol_type, &
-    !total_n_fellout, droplet_growth_model, initialize_injection_rate, n_injected
-
-    ! Used in Main - write_trajectories
 
 contains
 

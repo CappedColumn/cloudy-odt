@@ -12,9 +12,9 @@ module special_effects
     logical :: do_random_fallout = .false.
     real(dp) :: random_fallout_rate = 1.
 
-    public :: initialize_special_effects, run_special_effects, do_random_fallout, &
-    random_fallout_rate, do_sidewalls, area_sw, area_bot, C_sw, T_sw, RH_sw, P_sw, &
-    sw_nudging_time
+    public :: initialize_special_effects, run_special_effects
+    public :: do_random_fallout, random_fallout_rate
+    public :: do_sidewalls, area_sw, area_bot, C_sw, T_sw, RH_sw, P_sw, sw_nudging_time
     private
 
 contains

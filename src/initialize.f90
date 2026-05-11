@@ -89,7 +89,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, dynamics_file
+        overwrite, simulation_mode, dynamics_file, initial_RH
 
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
@@ -137,6 +137,10 @@ contains
             diffuse_step       => lem_diffuse_step
             turbulence_step    => lem_turbulence_step
             sync_after_physics => lem_sync_after_physics
+            if (initial_RH < 0.0 .or. initial_RH > 1.0) then
+                write(0,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
+                stop 1
+            end if
             if (dynamics_file /= '') then
                 call initialize_dynamics(resolve_path(namelist_dir, dynamics_file))
             end if
@@ -176,7 +180,7 @@ contains
             call odt_init_arrays()
         else if (simulation_mode == 'parcel') then
             T(:) = Tref
-            WV(:) = saturation_mixing_ratio(Tref, pres)
+            WV(:) = initial_RH * saturation_mixing_ratio(Tref, pres)
             do k = 1, N
                 Tv(k) = virtual_temp(T(k), WV(k))
             end do
@@ -251,6 +255,7 @@ contains
         else if (simulation_mode == 'parcel') then
             write(*,'(a,f0.2)')  ' Tref (K):       ', Tref
             write(*,'(a,f0.2)')  ' pres (mb):      ', pres / Pa_per_mb
+            write(*,'(a,f0.4)')  ' initial_RH:     ', initial_RH
             write(*,'(a,es9.2)') ' L_int (m):      ', integral_length_scale
             write(*,'(a,es9.2)') ' L_kolm (m):     ', kolmogorov_length_scale
             write(*,'(a,es9.2)') ' epsilon (m2/s3):', dissipation_rate

@@ -7,6 +7,7 @@ tmax = 1500.    ! Maximum Simulation Time (seconds)
 Tref = 20.85    ! Bottom boundary condition (i.e. warm)
 pres = 1.00e5
 H = 1.
+initial_RH = 1.0 ! Initial relative humidity (fraction, parcel mode only)
 
 volume_scaling = 10 ! i.e. 50 -> 50 cm3 Domain Volume
 

@@ -56,6 +56,7 @@ expected_Ndrops_per_gridpoint = 1.0       ! Set initial size of particle array t
 initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 
 aerosol_file = "aerosol_input.nc"
+aerosol_concentration = 100.0 ! Initial aerosol number concentration (cm-3, parcel mode only)
 
 ! --- Collision-Coalescence Parameters ---
 

@@ -19,6 +19,7 @@ module droplets
     public :: dsd_varid, aerDSD_varids
     public :: write_trajectories, trajectory_start, trajectory_end, trajectory_timer
     public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
+    public :: aerosol_concentration
 
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
@@ -53,6 +54,7 @@ module droplets
     real(dp) :: initial_wet_radius
     logical :: init_drop_each_gridpoint = .true.
     real(dp) :: expected_Ndrops_per_gridpoint = 1
+    real(dp) :: aerosol_concentration = 0.0
 
     ! DGM-Controlling variables
     real(dp), parameter :: RK5_min_timestep = 0.01
@@ -71,7 +73,7 @@ contains
         real(dp), intent(in) :: ltime, ldt
         integer :: i
 
-        call injection_controller(time, particles)
+        if (simulation_mode == 'chamber') call injection_controller(time, particles)
 
         if (do_collisions) then
             ! CC owns settling across the ldt window (writes back final
@@ -613,7 +615,8 @@ contains
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
-        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
+        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel, &
+        aerosol_concentration
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -690,20 +693,46 @@ contains
             call netcdf_add_aerDSD(ncid, n_aer_category)
         end if
 
-        ! Set up starting injection rate
+        if (simulation_mode == 'parcel') then
+            call initialize_parcel_aerosol()
+        else
+            call initialize_chamber_aerosol()
+        end if
+
+    end subroutine initialize_microphysics
+
+
+    subroutine initialize_chamber_aerosol()
+        integer(i4) :: i
+
         call initialize_injection(injection_rates)
-
-        ! Size particle array based on the expected number of droplets
         allocate(particles(int(expected_Ndrops_per_gridpoint*N)))
-
-        ! Initialize particles in each gridpoint (approximately)
-        if ( init_drop_each_gridpoint ) then
+        if (init_drop_each_gridpoint) then
             do i = 1, N
                 call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
             end do
         end if
 
-    end subroutine initialize_microphysics
+    end subroutine initialize_chamber_aerosol
+
+
+    subroutine initialize_parcel_aerosol()
+        integer(i4) :: n_total, i
+
+        inj_time_idx = 1
+        n_total = nint(aerosol_concentration * 1.0e6 * domain_volume)
+
+        write(*,'(a,i0,a,f0.1,a)') ' Expected particles: ', n_total, &
+              ' (', aerosol_concentration, ' cm-3)'
+
+        allocate(particles(max(n_total, 1)))
+
+        do i = 1, n_total
+            call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
+        end do
+
+    end subroutine initialize_parcel_aerosol
+
 
     subroutine netcdf_add_DSD(lncid, r_bins)
         ! Adds a DSD variable to the netcdf file

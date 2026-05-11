@@ -45,9 +45,6 @@ contains
         call nc_verify(nf90_inq_varid(dyn_ncid, 'velocity', varid), 'finding velocity')
         call nc_verify(nf90_get_var(dyn_ncid, varid, segment_velocity), 'reading velocity')
 
-        call nc_verify(nf90_get_att(dyn_ncid, NF90_GLOBAL, 'initial_pressure', pres), &
-                       'reading initial_pressure')
-
         call nc_verify(nf90_close(dyn_ncid), 'closing dynamics file')
 
         if (abs(segment_times(1)) > 1.0e-10) then

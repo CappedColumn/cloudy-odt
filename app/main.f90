@@ -7,7 +7,7 @@ program main
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
   use dynamics, only: do_parcel_ascent, apply_adiabatic_forcing
-  use ODT, only: Tdiff
+
   implicit none
 
   real(dp) :: t_start, t_end
@@ -36,31 +36,6 @@ program main
   ! --- Initialize simulation ---
 
   call initialize_simulation()
-
-  ! Log simulation header and configuration
-  call date_and_time(date=date_str, time=time_str)
-  write(*,'(a)') ''
-  write(*,'(a)') ' ============================================'
-  write(*,'(a)') '            :) C O D T :)                     '
-  write(*,'(a)') ' ============================================'
-  write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
-       ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
-       ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
-  write(*,'(a)') ''
-  write(*,*) 'Namelist: ', trim(namelist_path)
-  write(*,*) 'simulation_mode: ', trim(simulation_mode)
-  write(*,*) 'N: ', N
-  write(*,*) 'tmax (s): ', tmax
-  if (simulation_mode == 'chamber') then
-    write(*,*) 'Tdiff (K): ', Tdiff
-    write(*,*) 'Tref (K): ', Tref
-  end if
-  write(*,*) 'H (m): ', H
-  write(*,*) 'volume_scaling: ', volume_scaling
-  write(*,*) 'do_turbulence: ', do_turbulence
-  write(*,*) 'do_microphysics: ', do_microphysics
-  write(*,*) 'do_special_effects: ', do_special_effects
-  write(*,'(a)') ' ============================================'
 
   ! -----------------------------
 

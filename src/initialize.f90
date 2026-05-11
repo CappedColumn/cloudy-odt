@@ -31,6 +31,7 @@ contains
         call initialize_arrays()
         call initialize_output()
 
+        call log_header()
         call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
         if (do_microphysics) then
             call initialize_microphysics()
@@ -212,6 +213,55 @@ contains
 
 
     end subroutine initialize_output
+
+
+    subroutine log_header()
+        character(8) :: date_str
+        character(10) :: time_str
+
+        call date_and_time(date=date_str, time=time_str)
+        write(*,'(a)') ''
+        write(*,'(a)') '              .~~.    .~~.'
+        write(*,'(a)') '          .~~.    )  (    .~~.'
+        write(*,'(a)') '        (    .~~.  ~~  .~~.    )'
+        write(*,'(a)') '         )  (                )  ('
+        write(*,'(a)') '        (    ####  ###  ####  #####  )'
+        write(*,'(a)') '         )  #     #   # #   #   #  ('
+        write(*,'(a)') '        (   #     #   # #   #   #    )'
+        write(*,'(a)') '         )   ####  ###  ####    #  ('
+        write(*,'(a)') '          (                       )'
+        write(*,'(a)') '           ~~~~~~~~~~~~~~~~~~~~~~~~'
+        write(*,'(a)') '            /  /  /  /  /  /  /  /'
+        write(*,'(a)') '              /  /  /  /  /  /  /'
+        write(*,'(a)') ''
+        write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
+             ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+             ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
+        write(*,'(a)') ''
+        write(*,'(a,a)')    ' Namelist:       ', trim(namelist_path)
+        write(*,'(a,a)')    ' Mode:           ', trim(simulation_mode)
+        write(*,'(a,i0)')   ' N:              ', N
+        write(*,'(a,f0.1)') ' tmax (s):       ', tmax
+        write(*,'(a,f0.4)') ' H (m):          ', H
+        write(*,'(a,f0.1)') ' volume_scaling: ', volume_scaling
+
+        if (simulation_mode == 'chamber') then
+            write(*,'(a,f0.2)') ' Tref (K):       ', Tref
+            write(*,'(a,f0.2)') ' Tdiff (K):      ', Tdiff
+        else if (simulation_mode == 'parcel') then
+            write(*,'(a,f0.2)')  ' Tref (K):       ', Tref
+            write(*,'(a,f0.2)')  ' pres (mb):      ', pres / Pa_per_mb
+            write(*,'(a,es9.2)') ' L_int (m):      ', integral_length_scale
+            write(*,'(a,es9.2)') ' L_kolm (m):     ', kolmogorov_length_scale
+            write(*,'(a,es9.2)') ' epsilon (m2/s3):', dissipation_rate
+        end if
+
+        write(*,'(a,l1)') ' do_turbulence:       ', do_turbulence
+        write(*,'(a,l1)') ' do_microphysics:     ', do_microphysics
+        write(*,'(a,l1)') ' do_special_effects:  ', do_special_effects
+        write(*,'(a)') ' ============================================'
+
+    end subroutine log_header
 
 
     subroutine allocate_zero_arrays(A, n_array)

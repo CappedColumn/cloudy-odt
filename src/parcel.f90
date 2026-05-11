@@ -1,11 +1,11 @@
-module dynamics
+module parcel
     use globals
     use netcdf
     use microphysics, only: virtual_temp, update_supersat
     implicit none
 
     private
-    public :: initialize_dynamics, apply_adiabatic_forcing, &
+    public :: initialize_parcel, apply_adiabatic_forcing, &
               do_parcel_ascent, parcel_height, parcel_velocity
 
     integer(i4) :: n_segments
@@ -18,19 +18,19 @@ module dynamics
 
 contains
 
-    subroutine initialize_dynamics(filepath)
+    subroutine initialize_parcel(filepath)
         character(*), intent(in) :: filepath
         integer :: dyn_ncid, varid, dimid, i
         character(64) :: conventions
 
-        write(*,*) 'Reading dynamics data from: ', trim(filepath)
+        write(*,*) 'Reading parcel data from: ', trim(filepath)
 
         call nc_verify(nf90_open(trim(filepath), NF90_NOWRITE, dyn_ncid), &
-                       'opening dynamics file')
+                       'opening parcel file')
         call nc_verify(nf90_get_att(dyn_ncid, NF90_GLOBAL, 'conventions', conventions), &
                        'reading conventions attribute')
-        if (trim(conventions) /= 'CODT_dynamics_input_v1') then
-            write(0,*) 'Error: expected CODT_dynamics_input_v1, got: ', trim(conventions)
+        if (trim(conventions) /= 'CODT_parcel_input_v1') then
+            write(0,*) 'Error: expected CODT_parcel_input_v1, got: ', trim(conventions)
             stop 1
         end if
 
@@ -45,7 +45,7 @@ contains
         call nc_verify(nf90_inq_varid(dyn_ncid, 'velocity', varid), 'finding velocity')
         call nc_verify(nf90_get_var(dyn_ncid, varid, segment_velocity), 'reading velocity')
 
-        call nc_verify(nf90_close(dyn_ncid), 'closing dynamics file')
+        call nc_verify(nf90_close(dyn_ncid), 'closing parcel file')
 
         if (abs(segment_times(1)) > 1.0e-10) then
             write(0,*) 'Error: first segment time must be 0, got: ', segment_times(1)
@@ -61,13 +61,13 @@ contains
         do_parcel_ascent = .true.
         parcel_velocity = segment_velocity(1)
 
-        write(*,*) '--- Dynamics Configuration ---'
+        write(*,*) '--- Parcel Configuration ---'
         write(*,*) 'n_segments:        ', n_segments
         write(*,*) 'initial velocity:  ', segment_velocity(1), ' m/s'
         write(*,*) 'initial pressure:  ', pres / Pa_per_mb, ' mb'
-        write(*,*) '------------------------------'
+        write(*,*) '----------------------------'
 
-    end subroutine initialize_dynamics
+    end subroutine initialize_parcel
 
 
     pure function get_velocity(query_time) result(vel)
@@ -108,4 +108,4 @@ contains
 
     end subroutine apply_adiabatic_forcing
 
-end module dynamics
+end module parcel

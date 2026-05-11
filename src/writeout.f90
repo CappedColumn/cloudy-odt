@@ -8,7 +8,7 @@ module writeout
                         dsd_varid, aerDSD_varids
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
-    use dynamics, only: do_parcel_ascent, parcel_height
+    use parcel, only: do_parcel_ascent, parcel_height
     use ODT, only: Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
     use LEM, only: integral_length_scale, kolmogorov_length_scale, dissipation_rate
     implicit none

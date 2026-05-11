@@ -14,7 +14,7 @@ module initialize
     use droplets, only: initialize_microphysics, write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
-    use dynamics, only: initialize_dynamics
+    use parcel, only: initialize_parcel
     implicit none
 
     private
@@ -58,10 +58,10 @@ contains
             end if
         end if
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
-        if (dynamics_file /= '') then
-            call copy_file(resolve_path(namelist_dir, dynamics_file), &
+        if (parcel_file /= '') then
+            call copy_file(resolve_path(namelist_dir, parcel_file), &
                            trim(sim_output_dir)// &
-                           trim(dynamics_file(scan(trim(dynamics_file), '/', back=.true.)+1:)))
+                           trim(parcel_file(scan(trim(parcel_file), '/', back=.true.)+1:)))
         end if
         call add_to_profile_buffer(time, T, WV, Tv, SS)
 
@@ -89,7 +89,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, dynamics_file, initial_RH
+        overwrite, simulation_mode, parcel_file, initial_RH
 
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
@@ -141,8 +141,8 @@ contains
                 write(0,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
                 stop 1
             end if
-            if (dynamics_file /= '') then
-                call initialize_dynamics(resolve_path(namelist_dir, dynamics_file))
+            if (parcel_file /= '') then
+                call initialize_parcel(resolve_path(namelist_dir, parcel_file))
             end if
         else
             write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)

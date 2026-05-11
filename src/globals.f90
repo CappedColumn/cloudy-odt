@@ -88,7 +88,7 @@ module globals
     character(100) :: simulation_name  ! Simulation name from namelist
     character(256) :: sim_output_dir   ! {output_directory}/{simulation_name}/ — where all output files live
     character(256) :: file_prefix      ! {sim_output_dir}{simulation_name} — base path for output files (.nc, .nml, etc.)
-    character(512) :: dynamics_file = ''
+    character(512) :: parcel_file = ''
 
     ! -----------------------------------------------
     ! -----------------------------------------------

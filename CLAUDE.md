@@ -23,7 +23,26 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 
 **Simulation modes** (`simulation_mode` namelist):
 - `'chamber'` (default) — ODT turbulence, Dirichlet BCs, nondimensional scalars, adaptive dt.
-- `'parcel'` — LEM turbulence, periodic BCs, dimensional scalars, fixed dt.
+- `'parcel'` — LEM turbulence, periodic BCs, dimensional scalars, fixed dt. Adiabatic ascent driven by `parcel_file` (piecewise-constant velocity). Particles pre-loaded from aerosol distribution at init (not injected over time), equilibrated to Köhler. Positions wrap periodically (no fallout).
+
+### Chamber vs. Parcel Mode
+
+| Aspect | Chamber | Parcel |
+|--------|---------|--------|
+| **Turbulence** | ODT (`&TURBULENCE_ODT`) | LEM (`&TURBULENCE_LEM`) |
+| **Boundary conditions** | Dirichlet (fixed T at top/bottom) | Periodic |
+| **Scalar representation** | Dual: nondimensional + dimensional | Dimensional only |
+| **Time step** | Adaptive (eddy-driven) | Fixed |
+| **Forcing** | Temperature gradient (`Tdiff`) | Adiabatic ascent (`parcel_file`) |
+| **Particle initialization** | Injected over time (`injection_time`, `injection_rate` from aerosol NC) | Pre-loaded at init (`aerosol_concentration`) + Köhler equilibration |
+| **Particle fallout** | Gravitational removal (`verify_particle_fallout`) | Periodic wrapping (`modulo(position, H)`) |
+| **`Tref`** | Bottom boundary temperature (K, converted from °C) | Uniform initial temperature (K, converted from °C) |
+| **`pres`** | Constant reference pressure | Initial pressure, evolves hydrostatically |
+| **`initial_RH`** | Ignored | Initial relative humidity (0–1), sets WV field |
+| **`aerosol_concentration`** | Ignored | Number concentration (cm⁻³) |
+| **`parcel_file`** | Not used | NetCDF with velocity segments for ascent rate |
+| **`Tdiff`** | Top-bottom ΔT driving convection | Not used |
+| **Special effects** | Sidewalls, stochastic fallout | Sidewalls use Re placeholder (needs work) |
 
 **Turbulence dispatch:** Abstract interfaces in `globals.f90` (`diffuse_iface`, `turbulence_iface`, `sync_iface`). Procedure pointers set at init, called from `main.f90`.
 
@@ -50,6 +69,7 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 - `special_effects.f90` — sidewall nudging, stochastic fallout
 - `writeout.f90` — buffered NetCDF output
 - `write_particle.f90` — particle trajectory NetCDF output
+- `parcel.f90` — reads piecewise-constant velocity from NetCDF, applies adiabatic forcing (dT, dp)
 - `initialize.f90` — namelist I/O, domain setup, pointer assignment
 
 **Dependency chain:** `globals` → `microphysics` → `particle_types` → `droplets` → `DGM`. `ode_integrators` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
@@ -70,6 +90,8 @@ Executable invocation: `codt <NAMELIST_PATH>`. Relative path `aerosol_file` reso
 **CC ↔ fallout interface:** `collision_coalescence_step` signals fallout by setting `position = -1.0`, then `verify_particle_fallout` detects this and does bookkeeping (`%fellout`, array compaction, `total_n_fellout`). Fragile because: (1) nothing between CC writeback and `verify_particle_fallout` may read `%position` or `%fellout`, (2) `do_random_fallout` can silently recycle CC-removed particles, (3) fellout counting is split across two modules. Future fix: explicit event interface instead of sentinel values.
 
 **`copy_file` self-clobber:** When input dir == output dir, `copy_file` truncates the file to 0 bytes. Workaround: keep inputs in a subdirectory.
+
+**DGM at low RH:** The RK45 solver hangs when droplets encounter strongly negative supersaturation (e.g. RH<50%). The 1/r amplification near `r_floor` creates stiffness that shrinks dt to near-zero. Parcel runs should start at RH≥0.9 until this is fixed.
 
 **Sidewall Ra in parcel mode:** `initialize_special_effects` receives a Rayleigh number from the caller. In chamber mode this is the true Ra = gΔTH³/(T_ref·ν·κ). In parcel mode the LEM Reynolds number is substituted as a placeholder — this needs a proper formulation.
 

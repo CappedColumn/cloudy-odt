@@ -65,6 +65,8 @@ contains
         ! Create file
         call nc_verify( nf90_create(trim(filename)//'_particles.nc', NF90_NETCDF4, pnc_id), &
                          "create_particle_netcdf: nf90_create" )
+        call nc_verify( nf90_put_att(pnc_id, NF90_GLOBAL, "conventions", "CODT_particle_output_v1"), &
+                         "nf90_put_att: conventions" )
 
         ! Dimensions (both unlimited)
         call nc_verify( nf90_def_dim(pnc_id, "record", NF90_UNLIMITED, rec_dimid) )

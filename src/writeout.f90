@@ -262,7 +262,9 @@ contains
         ! Create initial netCDF file
         write(*,*) file_name
         call nc_verify( nf90_create(file_name, NF90_NETCDF4, lncid), "nf90_create" )
-    
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "conventions", "CODT_output_v1"), &
+                        "nf90_put_att: conventions" )
+
         ! Establish dimensions
         call nc_verify( nf90_def_dim(lncid, "time", NF90_UNLIMITED, t_dimid), "nf90_def_dim: time"  )
         call nc_verify( nf90_def_dim(lncid, "z", nz, z_dimid), "nf90_def_dim: z" )

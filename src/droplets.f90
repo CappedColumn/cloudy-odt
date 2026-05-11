@@ -236,9 +236,13 @@ contains
             call lparticles(i)%settling(ldt)
         end do
 
-        ! Verify if particle fellout of domain
-        ! Updates number of particles currently in domain
-        call verify_particle_fallout(lparticles, current_n_particles)
+        if (simulation_mode == 'parcel') then
+            do i = 1, current_n_particles
+                lparticles(i)%position = modulo(lparticles(i)%position, H)
+            end do
+        else
+            call verify_particle_fallout(lparticles, current_n_particles)
+        end if
 
         ! For remaining particles, update gridcell index and properties
         do i = 1, current_n_particles

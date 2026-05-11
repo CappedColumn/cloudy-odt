@@ -735,7 +735,37 @@ contains
             call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
         end do
 
+        call equilibrate_particles(particles, n_total)
+
     end subroutine initialize_parcel_aerosol
+
+
+    subroutine equilibrate_particles(lparticles, n_particles)
+        type(particle), intent(inout) :: lparticles(:)
+        integer(i4), intent(in) :: n_particles
+        real(dp) :: eq_dt, r_before, max_dr
+        integer(i4) :: i, iter
+        integer(i4), parameter :: max_iter = 100
+        real(dp), parameter :: eq_tol = 1.0e-12
+
+        eq_dt = 0.01
+
+        do iter = 1, max_iter
+            max_dr = 0.0
+            do i = 1, n_particles
+                r_before = lparticles(i)%radius
+                call single_droplet_growth(lparticles(i), 0.0_dp, eq_dt)
+                call update_particle(lparticles(i))
+                max_dr = max(max_dr, abs(lparticles(i)%radius - r_before))
+            end do
+
+            if (max_dr < eq_tol) exit
+        end do
+
+        write(*,'(a,i0,a,es9.2)') ' Equilibrated particles in ', iter, &
+              ' iterations, max dr = ', max_dr
+
+    end subroutine equilibrate_particles
 
 
     subroutine netcdf_add_DSD(lncid, r_bins)

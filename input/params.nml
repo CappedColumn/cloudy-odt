@@ -59,7 +59,7 @@ aerosol_file = "aerosol_input.nc"
 ! --- Collision-Coalescence Parameters ---
 
 do_collisions = .false.
-do_coalescence = .true.
+do_coalescence = .false.
 coalescence_kernel = 'hall'
 wmax_collision = 10.0
 write_collisions = .false.

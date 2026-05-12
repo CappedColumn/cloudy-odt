@@ -6,7 +6,7 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use DGM, only: integrate_ODE, set_aerosol_properties, ode_supersat, ode_press
+    use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -464,28 +464,28 @@ contains
         type(particle), intent(inout) :: droplet
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: time_start, time_stop, time_iterate
-        real(dp) :: y_arr(4), y_before(4), inverse_grid_mass, grid_rho
+        real(dp) :: y_arr(3), y_before(3), grid_mass, inverse_grid_mass, grid_rho
         real(dp) :: wl_before, T_before
         logical :: substep_flag
 
         ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
-        inverse_grid_mass = 1.0 / (gridcell_volume*grid_rho)
+        grid_mass = gridcell_volume * grid_rho
+        inverse_grid_mass = 1.0 / grid_mass
 
         ! Save pre-growth state for budget tracking
         wl_before = droplet%water_liquid
         T_before = droplet%temperature
 
         ! set odeint parameters for different aerosol mass of each droplet
-        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, inverse_grid_mass)
+        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, &
+                                    inverse_grid_mass, droplet%supersaturation/100)
 
         ! Package droplet properties into an array for ode solver
         y_arr(1) = droplet%radius
         y_arr(2) = droplet%water_vapor
         y_arr(3) = droplet%temperature
-        y_arr(4) = droplet%water_liquid
-        ode_supersat = droplet%supersaturation/100
-        ode_press    = pres
+
         y_before = y_arr
 
         ! In an attempt to please the continuum of time
@@ -525,7 +525,7 @@ contains
         droplet%radius = y_arr(1)
         droplet%water_vapor = y_arr(2)
         droplet%temperature = y_arr(3)
-        droplet%water_liquid = y_arr(4)
+        droplet%water_liquid = wl_before - (y_arr(2) - y_before(2)) * grid_mass
         droplet%supersaturation = calc_supersat(droplet%temperature, droplet%water_vapor, pres)
         droplet%virt_temp = virtual_temp(droplet%temperature, droplet%water_vapor)
 

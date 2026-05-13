@@ -849,6 +849,7 @@ contains
     subroutine load_mie_table(filepath)
         character(*), intent(in) :: filepath
         integer :: i, funit, ierr
+        character(1) :: peek
 
         allocate(mie_table(NROWS_MIE, NCOLS_MIE))
         allocate(mie_wavelength(NCOLS_MIE - 1))
@@ -860,6 +861,15 @@ contains
             write(0,*) 'Error: cannot open mie_data_file: ', trim(filepath)
             stop 1
         end if
+        ! Skip comment lines starting with #
+        do
+            read(funit, '(a1)', iostat=ierr) peek
+            if (ierr /= 0) exit
+            if (peek /= '#') then
+                backspace(funit)
+                exit
+            end if
+        end do
         do i = 1, NROWS_MIE
             read(funit, *) mie_table(i, :)
         end do

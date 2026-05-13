@@ -20,6 +20,8 @@ module droplets
     public :: write_trajectories, trajectory_start, trajectory_end, trajectory_timer
     public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
     public :: aerosol_concentration
+    public :: do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
+    public :: aerosol_file
 
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
@@ -55,6 +57,7 @@ module droplets
     logical :: init_drop_each_gridpoint = .true.
     real(dp) :: expected_Ndrops_per_gridpoint = 1
     real(dp) :: aerosol_concentration = 0.0
+    character(256) :: aerosol_file = ''
 
     ! DGM-Controlling variables
     real(dp), parameter :: RK5_min_timestep = 0.01
@@ -614,8 +617,6 @@ contains
         ! Initialization of the MICROPHYSICS namelist and related parameters
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
-        
-        character(256):: aerosol_file
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &

@@ -5,7 +5,9 @@ module writeout
                         size_distribution, n_aer_category, n_DSD_bins, init_drop_each_gridpoint, &
                         expected_Ndrops_per_gridpoint, write_trajectories, trajectory_start, &
                         trajectory_end, trajectory_timer, initial_wet_radius, &
-                        dsd_varid, aerDSD_varids
+                        dsd_varid, aerDSD_varids, aerosol_file, aerosol_concentration, &
+                        do_collisions, do_coalescence, wmax_collision, write_collisions, &
+                        coalescence_kernel
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity
@@ -512,11 +514,12 @@ contains
 
         call nc_verify( nf90_redef(lncid), "nf90_redef: namelist attributes" )
 
-        ! PARAMETERS namelist
+        ! PARAMETERS — shared
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_name", trim(sim_name)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.simulation_mode", trim(simulation_mode)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.N", N) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.tmax", tmax) )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.pres", pres) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.H", H) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.volume_scaling", volume_scaling) )
@@ -526,17 +529,32 @@ contains
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_turbulence", merge(1, 0, do_turbulence)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_microphysics", merge(1, 0, do_microphysics)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.write_eddies", merge(1, 0, write_eddies)) )
-        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_special_effects", merge(1, 0, do_special_effects)) )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.overwrite", merge(1, 0, overwrite)) )
 
-        ! Mode-specific turbulence attributes
+        ! PARAMETERS — chamber only
         if (simulation_mode == 'chamber') then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tdiff", Tdiff) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.Tref", Tref) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_special_effects", &
+                            merge(1, 0, do_special_effects)) )
+        end if
+
+        ! PARAMETERS — parcel only
+        if (simulation_mode == 'parcel') then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.parcel_file", trim(parcel_file)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.initial_RH", initial_RH) )
+        end if
+
+        ! TURBULENCE_ODT — chamber only
+        if (simulation_mode == 'chamber') then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.Lmin", Lmin) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.Lprob", Lprob) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.max_accept_prob", max_accept_prob) )
-        else if (simulation_mode == 'parcel') then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.C2", C2) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_ODT.ZC2", ZC2) )
+        end if
+
+        ! TURBULENCE_LEM — parcel only
+        if (simulation_mode == 'parcel') then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.integral_length_scale", &
                             integral_length_scale) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.kolmogorov_length_scale", &
@@ -545,22 +563,42 @@ contains
                             dissipation_rate) )
         end if
 
-        ! MICROPHYSICS namelist (7 attributes, only when microphysics is enabled)
-        if ( do_microphysics ) then
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.init_drop_each_gridpoint", &
-                            merge(1, 0, init_drop_each_gridpoint)) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.expected_Ndrops_per_gridpoint", &
-                            expected_Ndrops_per_gridpoint) )
+        ! MICROPHYSICS — shared
+        if (do_microphysics) then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.aerosol_file", trim(aerosol_file)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.initial_wet_radius", initial_wet_radius) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.write_trajectories", &
                             merge(1, 0, write_trajectories)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_start", trajectory_start) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_end", trajectory_end) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.trajectory_timer", trajectory_timer) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.initial_wet_radius", initial_wet_radius) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.do_collisions", &
+                            merge(1, 0, do_collisions)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.do_coalescence", &
+                            merge(1, 0, do_coalescence)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.wmax_collision", wmax_collision) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.write_collisions", &
+                            merge(1, 0, write_collisions)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.coalescence_kernel", &
+                            trim(coalescence_kernel)) )
+
+            ! MICROPHYSICS — chamber only
+            if (simulation_mode == 'chamber') then
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.init_drop_each_gridpoint", &
+                                merge(1, 0, init_drop_each_gridpoint)) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.expected_Ndrops_per_gridpoint", &
+                                expected_Ndrops_per_gridpoint) )
+            end if
+
+            ! MICROPHYSICS — parcel only
+            if (simulation_mode == 'parcel') then
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.aerosol_concentration", &
+                                aerosol_concentration) )
+            end if
         end if
 
-        ! SPECIALEFFECTS namelist (10 attributes, only when special effects is enabled)
-        if ( do_special_effects ) then
+        ! SPECIALEFFECTS — chamber only
+        if (simulation_mode == 'chamber' .and. do_special_effects) then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.do_sidewalls", &
                             merge(1, 0, do_sidewalls)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.do_random_fallout", &
@@ -572,7 +610,8 @@ contains
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.RH_sw", RH_sw) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.P_sw", P_sw) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.sw_nudging_time", sw_nudging_time) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.random_fallout_rate", random_fallout_rate) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "SPECIALEFFECTS.random_fallout_rate", &
+                            random_fallout_rate) )
         end if
 
         call nc_verify( nf90_enddef(lncid), "nf90_enddef: namelist attributes" )

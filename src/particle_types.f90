@@ -3,6 +3,9 @@ module particle_types
     use microphysics
     implicit none
 
+    private
+    public :: aerosol, particle, calculate_terminal_velocity
+
     type :: aerosol
         ! Aerosol user-defined type. Aerosol is used by the
         ! particle type and attributes are used in calculations

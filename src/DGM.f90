@@ -4,7 +4,7 @@ module DGM
     use ode_integrators, only: ode_rhs, ode_integrate
     implicit none
 
-    integer(i4), parameter :: nvar = 4
+    integer(i4), parameter :: nvar = 3
 
     integer(i4)            :: dmaxa
     real(dp)               :: grid_scale, solute_mass
@@ -18,25 +18,23 @@ module DGM
     real(dp)               :: solute_c7
     real(dp)               :: raoult_coeff
     real(dp)               :: flux_coeff
-    real(dp)               :: inv_grid_scale
 
     real(dp)               :: ode_supersat
-    real(dp)               :: ode_press
 
     real(dp), parameter :: c7am   = 0.4363021
     real(dp), parameter :: c7nacl = 0.5381062
 
-    real(dp) :: ode_rtol(nvar) = [1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp]
-    real(dp) :: ode_atol(nvar) = [1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp]
+    real(dp) :: ode_rtol(nvar) = [1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp]
+    real(dp) :: ode_atol(nvar) = [1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp]
 
-    public :: integrate_ODE, set_aerosol_properties, ode_supersat, ode_press
+    public :: integrate_ODE, set_aerosol_properties
     private
 
 contains
 
-subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
+subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale, supersat)
     integer(i4), intent(in) :: dmax
-    real(dp), intent(in) :: m0_aerosol, r0_solute, gscale
+    real(dp), intent(in) :: m0_aerosol, r0_solute, gscale, supersat
 
     dmaxa = dmax
     solute_mass = m0_aerosol
@@ -64,7 +62,7 @@ subroutine set_aerosol_properties(dmax, m0_aerosol, r0_solute, gscale)
     solute_c7      = solute_mass * c7_sp
     raoult_coeff   = nions_sp * (Mw / Ms_sp) * solute_mass
     flux_coeff     = pi_4 * grid_scale * rho_l
-    inv_grid_scale = 1.0_dp / grid_scale
+    ode_supersat   = supersat
 
 end subroutine set_aerosol_properties
 
@@ -94,7 +92,7 @@ subroutine fcnkb(ltime, y, dydt)
     real(dp) :: ck, cr, denom
     real(dp) :: es, Tc_es
     real(dp) :: falpha, fbeta, rhol
-    real(dp) :: radius, qv, temp, s, press
+    real(dp) :: radius, qv, temp, s
     real(dp) :: Lcond_temp, Ktemp, D, cpm
     real(dp) :: lalpha, lbeta
     real(dp), parameter :: alph = 1
@@ -102,7 +100,7 @@ subroutine fcnkb(ltime, y, dydt)
     real(dp), parameter :: sigma = 7.392730e-2
     ! Manual inlining of saturation_vapor_pressure() for speedup
     ! due to difficulty with cross-module inlining with some compilers
-    double precision, parameter :: es_coeff(9) = [6.11239921d0, 0.443987641d0, 0.142986287d-1, &
+    real(dp), parameter :: es_coeff(9) = [6.11239921d0, 0.443987641d0, 0.142986287d-1, &
         0.264847430d-3, 0.302950461d-5, 0.206739458d-7, 0.640689451d-10, &
         -0.952447341d-13, -0.976195544d-15]
     integer :: i_es
@@ -112,14 +110,14 @@ subroutine fcnkb(ltime, y, dydt)
     qv     = y(2)
     temp   = y(3)
     s      = ode_supersat
-    press  = ode_press
+
 
     cpm = cp*((1.0+cp_wv/cp*qv)/(1.0+qv))
 
     Lcond_temp = (2.501-0.00237*(temp-Tice))*1.e6
     Ktemp = 7.7e-5*(temp-Tice)+0.02399
     D     = 1.57e-7*(temp-Tice)+2.211e-5
-    D     = D*1.e5/press
+    D     = D*1.e5/pres
 
     Tc_es = max(-80.0_dp, temp - Tice)
     es = es_coeff(9)
@@ -137,7 +135,7 @@ subroutine fcnkb(ltime, y, dydt)
       stop 1
     end if
 
-    lalpha = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*press*(cv+R_univ/2.0))
+    lalpha = Ktemp * SQRT(2.0*pi*Ma*R_univ*temp)/(alph*pres*(cv+R_univ/2.0))
     lbeta  = SQRT(2.0*pi*Mw/(Rv*temp))*D/beta
 
     falpha = radius/(radius+lalpha)
@@ -157,8 +155,6 @@ subroutine fcnkb(ltime, y, dydt)
     end if
 
     dydt(3) = -Lcond_temp/cpm*dydt(2)
-
-    dydt(4) = -dydt(2)*inv_grid_scale
 
 end subroutine fcnkb
 

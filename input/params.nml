@@ -3,17 +3,13 @@
 
 ! Domain Set-Up
 N = 2000        ! Number of Grid Cells
-Lmin = 6
-Lprob = 18
 tmax = 1500.    ! Maximum Simulation Time (seconds)
-Tdiff = 12.
 Tref = 20.85    ! Bottom boundary condition (i.e. warm)
 pres = 1.00e5
 H = 1.
+initial_RH = 1.0 ! Initial relative humidity (fraction, parcel mode only)
 
 volume_scaling = 10 ! i.e. 50 -> 50 cm3 Domain Volume
-
-max_accept_prob = 0.1
 
 same_random = .false. ! Use the same random number generator seed, for testing primarily
 
@@ -34,6 +30,21 @@ do_special_effects = .false. ! Controls special effect namelist below
 
 /
 
+&TURBULENCE_ODT
+Tdiff = 12.
+Lmin = 6
+Lprob = 18
+max_accept_prob = 0.1
+C2 = 1.5e3
+ZC2 = 1.0e5
+/
+
+&TURBULENCE_LEM
+integral_length_scale = 0.01
+kolmogorov_length_scale = 0.001
+dissipation_rate = 0.01
+/
+
 &MICROPHYSICS
 
 ! --- Droplet Injection Parameters ---
@@ -45,11 +56,12 @@ expected_Ndrops_per_gridpoint = 1.0       ! Set initial size of particle array t
 initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 
 aerosol_file = "aerosol_input.nc"
+aerosol_concentration = 100.0 ! Initial aerosol number concentration (cm-3, parcel mode only)
 
 ! --- Collision-Coalescence Parameters ---
 
 do_collisions = .false.
-do_coalescence = .true.
+do_coalescence = .false.
 coalescence_kernel = 'hall'
 wmax_collision = 10.0
 write_collisions = .false.

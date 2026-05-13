@@ -2,11 +2,17 @@ module LEM
     use globals
     use microphysics, only: virtual_temp, update_supersat
     use droplets, only: particle, particles, current_n_particles, move_particles_in_eddy
-    use writeout, only: write_eddy
     implicit none
 
     private
     public :: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
+    public :: integral_length_scale, kolmogorov_length_scale, dissipation_rate
+    public :: reynolds_number
+
+    ! LEM namelist parameters
+    real(dp) :: integral_length_scale = 0.01
+    real(dp) :: kolmogorov_length_scale = 0.001
+    real(dp) :: dissipation_rate = 0.01
 
     ! Derived LEM parameters (set in initialize_LEM)
     integer(i4) :: maps_per_event        ! Triplet maps per eddy event
@@ -24,6 +30,8 @@ contains
         real(dp), intent(in) :: domain_height
         real(dp) :: diffusion_timestep, convection_timestep
         real(dp) :: large_eddy_turnover_time, eddy_rate_per_length
+
+        call read_lem_params()
 
         reynolds_number = (integral_length_scale / kolmogorov_length_scale) ** (4./3.)
 
@@ -138,7 +146,6 @@ contains
             eddy_len = eddy_gridpoints
         end do
 
-        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
         leddy_accepted = .true.
 
     end subroutine lem_turbulence_step
@@ -237,5 +244,27 @@ contains
             Tv(k) = virtual_temp(T(k), WV(k))
         end do
     end subroutine update_virtual_temperature
+
+
+    subroutine read_lem_params()
+        integer :: ierr, nml_unit
+        character(256) :: nml_line, io_emsg
+
+        namelist /TURBULENCE_LEM/ integral_length_scale, kolmogorov_length_scale, dissipation_rate
+
+        open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
+        if (ierr /= 0) then
+            write(*,*) io_emsg; stop 1
+        end if
+        read(nml=TURBULENCE_LEM, unit=nml_unit, iostat=ierr)
+        if (ierr /= 0) then
+            backspace(nml_unit)
+            read(nml_unit,'(a)') nml_line
+            write(*,'(a)') 'Invalid TURBULENCE_LEM parameter: '//trim(nml_line)
+            stop 1
+        end if
+        close(nml_unit)
+
+    end subroutine read_lem_params
 
 end module LEM

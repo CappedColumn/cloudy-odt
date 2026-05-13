@@ -1,8 +1,7 @@
 module ODT
     use globals
-    use microphysics, only: update_dim_scalars, update_nondim_scalars, update_supersat
+    use microphysics, only: update_supersat, saturation_mixing_ratio, virtual_temp
     use droplets, only: particles, move_particles_in_eddy
-    use writeout, only: write_eddy
     implicit none
 
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
@@ -10,8 +9,40 @@ module ODT
     ! the eddy rejection/acceptance method (the entire loop)
 
     private
-    public :: initialize_ODT, diffusion, calc_eddy_length_cdf, eddy_acceptance_method
+    public :: initialize_ODT, close_ODT, odt_init_arrays
+    public :: eddy_acceptance_method
     public :: odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
+    public :: Lmin, Lprob, max_accept_prob
+    public :: Tdiff, Ttop, WVref, WVtop, WVdiff, Tvref, Tvtop, Tvdiff
+    public :: C2, ZC2
+
+    ! ODT constants (Wunsch & Kerstein 2005, Eq. 2.9)
+    real(dp), protected :: C2 = 1.5e3
+    real(dp), protected :: ZC2 = 1.0e5
+
+    ! ODT namelist parameters
+    real(dp), protected :: Tdiff = 10.
+    integer(i4), protected :: Lmin = 6
+    integer(i4), protected :: Lprob = 18
+    real(dp), protected :: max_accept_prob = 0.1
+
+
+    ! Chamber boundary-condition scaling (derived from Tdiff, Tref, pres)
+    real(dp) :: Ttop
+    real(dp) :: WVref, WVtop, WVdiff
+    real(dp) :: Tvref, Tvtop, Tvdiff
+
+    ! ODT derived parameters
+    integer(i4) :: Lmax
+    integer(i4) :: LpD
+    real(dp) :: buoy_nd
+    real(dp) :: prob_coeff
+    real(dp) :: Co, Cm
+    real(dp), allocatable :: prob_eddy_length(:)
+
+    ! Nondimensional field arrays (ODT-only)
+    real(dp), allocatable :: W_nd(:)
+    real(dp), allocatable :: T_nd(:), WV_nd(:), Tv_nd(:)
 
     ! Non-dimensional time variables
     real(dp) :: dt_nd             ! Non-dimensional time step
@@ -29,10 +60,20 @@ module ODT
 contains
 
     subroutine initialize_ODT(H_domain)
-        ! Initialize ODT module: set time conversion, timestep, and
-        ! eddy probability parameters. Must be called after namelist
-        ! read and thermodynamic boundary conditions are set.
         real(dp), intent(in) :: H_domain
+
+        call read_odt_params()
+
+        Ttop = Tref - Tdiff
+        WVref = saturation_mixing_ratio(Tref, pres)
+        WVtop = saturation_mixing_ratio(Ttop, pres)
+        WVdiff = WVref - WVtop
+        Tvref = virtual_temp(Tref, WVref)
+        Tvtop = virtual_temp(Ttop, WVtop)
+        Tvdiff = Tvref - Tvtop
+
+        Lmax = int(N / 3)
+        LpD = 2 * Lprob
 
         time_conv_nd = nu / (H_domain**2)
         dt_nd = 1.0 / (1.0 * N * N)
@@ -41,12 +82,39 @@ contains
         dt = diffusion_step
 
         buoy_nd = (8. * g * alpha * Tvdiff * C2 * H_domain**3) / (27. * nu * nu)
-        LpD = 2 * Lprob
         Co = exp(-LpD / (1.*Lmin))
         Cm = exp(-LpD / (1.*Lmax))
         prob_coeff = (exp(-LpD/(1.*Lmax)) - exp(-LpD/(1.*Lmin))) * (N/(3.*LpD))
 
+        if (do_turbulence) then
+            allocate(prob_eddy_length(N))
+            prob_eddy_length = 0.
+            call calc_eddy_length_cdf(prob_eddy_length)
+        end if
+
     end subroutine initialize_ODT
+
+
+    subroutine read_odt_params()
+        integer :: ierr, nml_unit
+        character(256) :: nml_line, io_emsg
+
+        namelist /TURBULENCE_ODT/ Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
+
+        open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
+        if (ierr /= 0) then
+            write(*,*) io_emsg; stop 1
+        end if
+        read(nml=TURBULENCE_ODT, unit=nml_unit, iostat=ierr)
+        if (ierr /= 0) then
+            backspace(nml_unit)
+            read(nml_unit,'(a)') nml_line
+            write(*,'(a)') 'Invalid TURBULENCE_ODT parameter: '//trim(nml_line)
+            stop 1
+        end if
+        close(nml_unit)
+
+    end subroutine read_odt_params
 
     subroutine diffusion(ldelta_time)
         ! Diffuses the non-dim scalar fields via Crank-Nicolson tridiagonal solver.
@@ -476,8 +544,6 @@ contains
 
         if (.not. leddy_accepted) return
 
-        if (write_eddies) call write_eddy(eddy_loc, eddy_len, ltime)
-
         if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
 
     end subroutine odt_turbulence_step
@@ -486,6 +552,66 @@ contains
     subroutine odt_sync_after_physics()
         call update_nondim_scalars(T, WV, Tv, T_nd, WV_nd, Tv_nd)
     end subroutine odt_sync_after_physics
+
+
+    subroutine odt_init_arrays()
+        real(dp) :: rand_num
+        integer(i4) :: k
+
+        allocate(T_nd(N+1), WV_nd(N+1), Tv_nd(N+1), W_nd(N+1))
+        do concurrent (k = 1:N+1)
+            T_nd(k)  = 1.*k/(N+1)
+            WV_nd(k) = 1.*k/(N+1)
+            Tv_nd(k) = 1.*k/(N+1)
+            W_nd(k)  = 1.*k/(N+1)
+        end do
+
+        do k = 1, N
+            call random_number(rand_num)
+            W_nd(k) = 2.e-10 * (rand_num - 0.5)
+        end do
+        W_nd(N+1) = 0.
+
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+    end subroutine odt_init_arrays
+
+
+    pure subroutine update_dim_scalars(lT_nd, lWV_nd, lTv_nd, lT, lWV, lTv)
+        real(dp), intent(in) :: lT_nd(:), lWV_nd(:)
+        real(dp), intent(out) :: lT(:), lWV(:), lTv_nd(:), lTv(:)
+        integer(i4) :: k
+
+        do concurrent (k = 1:N)
+            lT(k) = Tref - Tdiff * lT_nd(k)
+            lWV(k) = WVref - WVdiff * lWV_nd(k)
+        end do
+
+        do concurrent (k = 1:N)
+            lTv(k) = virtual_temp(lT(k), lWV(k))
+            lTv_nd(k) = (Tvref - lTv(k)) / Tdiff
+        end do
+
+    end subroutine update_dim_scalars
+
+
+    pure subroutine update_nondim_scalars(lT, lWV, lTv, lT_nd, lWV_nd, lTv_nd)
+        real(dp), intent(in) :: lT(:), lWV(:), lTv(:)
+        real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
+        integer(i4) :: k
+
+        do concurrent (k = 1:N)
+            lT_nd(k) = -(lT(k) - Tref) / Tdiff
+            lWV_nd(k) = -(lWV(k) - WVref) / WVdiff
+            lTv_nd(k) = -(lTv(k) - Tvref) / Tvdiff
+        end do
+
+    end subroutine update_nondim_scalars
+
+
+    subroutine close_ODT()
+        call diffusion(delta_time)
+        call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+    end subroutine close_ODT
 
 
 end module ODT

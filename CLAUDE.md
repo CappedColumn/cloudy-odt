@@ -42,7 +42,7 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 | **`aerosol_concentration`** | Ignored | Number concentration (cm⁻³) |
 | **`parcel_file`** | Not used | NetCDF with velocity segments for ascent rate |
 | **`Tdiff`** | Top-bottom ΔT driving convection | Not used |
-| **Special effects** | Sidewalls, stochastic fallout | Sidewalls use Re placeholder (needs work) |
+| **Special effects** | Sidewalls, stochastic fallout (chamber only in output attrs) | Not used |
 
 **Turbulence dispatch:** Abstract interfaces in `globals.f90` (`diffuse_iface`, `turbulence_iface`, `sync_iface`). Procedure pointers set at init, called from `main.f90`.
 
@@ -106,7 +106,7 @@ All output to `{output_directory}/{simulation_name}/`:
 
 | File | Format | Description |
 |------|--------|-------------|
-| `{name}.nc` | netCDF4 | Profiles + time series (`CODT_output_v1`) |
+| `{name}.nc` | netCDF4 | Profiles + time series (`CODT_output_v1`). Parcel mode adds `parcel_height`, `parcel_pressure`, `parcel_velocity` time series. |
 | `{name}_particles.nc` | netCDF4 | Particle data (`CODT_particle_output_v1`, if `write_trajectories=.true.`) |
 | `{name}_collisions.bin` | Binary stream | Collision/coalescence events (if `write_collisions=.true.`) |
 | `{name}_eddies.bin` | Binary stream | Eddy events (if `write_eddies=.true.`) |

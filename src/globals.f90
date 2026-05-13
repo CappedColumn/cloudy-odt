@@ -141,6 +141,7 @@ module globals
     ! -----------------------------------------------------
 
     logical :: do_special_effects = .false.
+    logical :: do_radiation = .false.
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -206,6 +207,9 @@ module globals
     integer(i4) :: budget_n_injected = 0
     integer(i4) :: budget_n_fellout = 0
     integer(i4) :: budget_n_coalesced = 0
+
+    ! Radiation budget (only when do_radiation = .true.)
+    real(dp) :: budget_radiation_delta_T = 0.0
 
     ! ----------- Turbulence Dispatch ----------------
     ! Abstract interfaces for mode-agnostic turbulence calls.
@@ -409,6 +413,9 @@ contains
             budget_n_injected = 0
             budget_n_fellout = 0
             budget_n_coalesced = 0
+        end if
+        if (do_radiation) then
+            budget_radiation_delta_T = 0.0
         end if
     end subroutine reset_budgets
 

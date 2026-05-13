@@ -298,7 +298,7 @@ contains
         call nc_verify( nf90_def_var(lncid, "QV", NF90_FLOAT, dimids, varid_QV, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: QV" )
         call nc_verify( nf90_put_att(lncid, varid_QV, "long_name", "Water Vapor Mixing Ratio"), "nf90_put_att: QV, name" )
-        call nc_verify( nf90_put_att(lncid, varid_QV, "units", "g/kg"), "nf90_put_att: QV, units")
+        call nc_verify( nf90_put_att(lncid, varid_QV, "units", "kg/kg"), "nf90_put_att: QV, units")
 
         call nc_verify( nf90_def_var(lncid, "Tv", NF90_FLOAT, dimids, varid_Tv, &
                         deflate_level=1, shuffle=.true.), "nf90_def_var: Tv" )

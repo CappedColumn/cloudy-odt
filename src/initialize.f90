@@ -15,6 +15,7 @@ module initialize
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
     use parcel, only: initialize_parcel
+    use radiation, only: initialize_radiation, finalize_radiation
     implicit none
 
     private
@@ -39,6 +40,7 @@ contains
             if (write_collisions) call initialize_collision_file(file_prefix)
         end if
         call initialize_buffers(write_buffer, N)
+        if (do_radiation) call initialize_radiation()
         if (do_special_effects) then
             if (simulation_mode == 'chamber') then
                 call initialize_special_effects((g * Tdiff * H**3) / (Tref * nu * kT))
@@ -77,6 +79,7 @@ contains
         call close_netcdf(ncid)
         if (do_microphysics .and. write_trajectories) call close_particle_netcdf()
         if (write_collisions) call close_collision_file()
+        if (do_radiation) call finalize_radiation()
         call deallocate_buffers()
 
     end subroutine close_simulation
@@ -89,7 +92,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, parcel_file, initial_RH
+        overwrite, simulation_mode, parcel_file, initial_RH, do_radiation
 
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')

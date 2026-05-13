@@ -7,6 +7,7 @@ program main
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
   use parcel, only: do_parcel_ascent, apply_adiabatic_forcing
+  use radiation, only: compute_radiation
 
   implicit none
 
@@ -60,6 +61,7 @@ program main
       call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
+      if ( do_radiation ) call compute_radiation(T, delta_time, time)
       call sync_after_physics()
       last_time_updated = time
     end if
@@ -74,6 +76,7 @@ program main
       call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)
+      if ( do_radiation ) call compute_radiation(T, delta_time, time)
       call sync_after_physics()
       last_time_updated = time
     end if

@@ -44,6 +44,10 @@ module radiation
     real(dp), allocatable :: mie_table(:,:)
     real(dp), allocatable :: mie_wavelength(:), mie_delta_lambda(:), mie_radius(:)
 
+    ! --- 3D MC geometry (computed once at init when method='3d') ---
+    real(dp), allocatable :: mc_z_edges(:), mc_z_centers(:)
+    real(dp) :: mc_A_bottom, mc_A_top, mc_A_sides
+
     ! --- Interval-based calling accumulators ---
     real(dp), allocatable :: kappa_sum(:), T_sum(:)
     real(dp) :: dt_accumulated = 0.0
@@ -301,573 +305,352 @@ contains
 ! =========================================================================
 ! 3D Monte Carlo Solver
 ! =========================================================================
-! coarse interpolation
-subroutine interp_column(n_in, z_in, var_in, n_out, z_out, var_out)
-    implicit none
-    integer, intent(in) :: n_in       ! number of input points
-    double precision, intent(in) :: z_in(n_in), var_in(n_in)
-    integer, intent(in) :: n_out      ! number of output points
-    double precision, intent(in) :: z_out(n_out)
-    double precision, intent(out) :: var_out(n_out,1)   ! column vector
 
-    integer :: i, j
-    real :: t
+    ! Linear interpolation from one 1D grid to another.
+    subroutine interp1_linear(x_in, y_in, x_out, y_out, n_in, n_out)
+        integer(i4), intent(in) :: n_in, n_out
+        real(dp), intent(in) :: x_in(n_in), y_in(n_in), x_out(n_out)
+        real(dp), intent(out) :: y_out(n_out)
+        integer :: i, j
+        real(dp) :: t_frac
 
-    j = 1
-    do i = 1, n_out
-        ! find the interval in input array
-        do while (j < n_in .and. z_out(i) > z_in(j+1))
-            j = j + 1
-        end do
-
-        ! linear interpolation
-        if (j == n_in) then
-            var_out(i,1) = var_in(n_in)
-        else
-            t = (z_out(i) - z_in(j)) / (z_in(j+1) - z_in(j))
-            var_out(i,1) = (1.0 - t)*var_in(j) + t*var_in(j+1)
-        end if
-    end do
-
-end subroutine interp_column
-
-
-!! computes photon probability from each wall ............................................
-subroutine wall_photon_probabilities(Lx, Ly, H_cloud, T_bottom, T_top, T_side, &
-                                      P_bottom, P_top, P_sides, Q_total)
-    implicit none
-    double precision, intent(in) :: Lx, Ly, H_cloud
-    double precision, intent(in) :: T_bottom, T_top, T_side
-    double precision, intent(out) :: P_bottom, P_top, P_sides
-
-    double precision :: A_bottom, A_top, A_side_x, A_side_y
-    double precision :: A_sides_total, A_total
-    double precision :: F_bottom, F_top, F_side
-    double precision :: Q_bottom, Q_top, Q_sides
-    double precision, intent(out) :: Q_total
-    double precision, parameter :: sigmaSB = 5.670374e-8  !  [W/m^2/K^4]
-
-    ! Wall areas
-    A_bottom = Lx * Ly
-    A_top    = Lx * Ly
-    A_side_x = Ly * H_cloud         ! x = 0 or x = Lx
-    A_side_y = Lx * H_cloud         ! y = 0 or y = Ly
-    A_sides_total = 2.0d0 * A_side_x + 2.0d0 * A_side_y
-    A_total = A_bottom + A_top + A_sides_total  ! not used further
-
-    ! Wall fluxes (hemispheric)
-    F_bottom = sigmaSB * T_bottom**4
-    F_top    = sigmaSB * T_top**4
-    F_side   = sigmaSB * T_side**4
-
-    ! Emitted power from each wall
-    Q_bottom = F_bottom * A_bottom
-    Q_top    = F_top    * A_top
-    Q_sides  = F_side   * A_sides_total
-
-    Q_total = Q_bottom + Q_top + Q_sides
-
-    ! Probabilities for picking emitting wall
-    P_bottom = Q_bottom / Q_total
-    P_top    = Q_top    / Q_total
-    P_sides  = Q_sides  / Q_total   ! = 1 - P_bottom - P_top
-
-end subroutine wall_photon_probabilities
-
-!! sample point and normal calculation on wall
-subroutine sample_point_and_normal(Lx, Ly, H_cloud, P_bottom, P_top, P_sides, p, n)
-    implicit none
-    ! Inputs
-    double precision, intent(in) :: Lx, Ly, H_cloud
-    double precision, intent(in) :: P_bottom, P_top, P_sides
-    ! Outputs
-    double precision, intent(out) :: p(3), n(3)
-
-    ! Local variables
-    double precision :: r, r_side
-    double precision :: rx, ry, rz
-
-    ! Sample uniform random number
-    call random_number(r)
-
-    ! --- Bottom wall ---
-    if (r < P_bottom) then
-        call random_number(rx)
-        call random_number(ry)
-        p = (/ Lx*rx, Ly*ry, 0.0d0 /)
-        n = (/ 0.0d0, 0.0d0, 1.0d0 /)
-        return
-    end if
-    r = r - P_bottom
-
-    ! --- Top wall ---
-    if (r < P_top) then
-        call random_number(rx)
-        call random_number(ry)
-        p = (/ Lx*rx, Ly*ry, H_cloud /)
-        n = (/ 0.0d0, 0.0d0, -1.0d0 /)
-        return
-    end if
-    r = (r - P_top) / P_sides   ! normalize for sides
-
-    ! --- Side walls ---
-    if (r < 0.25d0) then
-        ! x = 0, normal +x
-        call random_number(ry)
-        call random_number(rz)
-        p = (/ 0.0d0, Ly*ry, H_cloud*rz /)
-        n = (/ 1.0d0, 0.0d0, 0.0d0 /)
-    else if (r < 0.50d0) then
-        ! x = Lx, normal -x
-        call random_number(ry)
-        call random_number(rz)
-        p = (/ Lx, Ly*ry, H_cloud*rz /)
-        n = (/ -1.0d0, 0.0d0, 0.0d0 /)
-    else if (r < 0.75d0) then
-        ! y = 0, normal +y
-        call random_number(rx)
-        call random_number(rz)
-        p = (/ Lx*rx, 0.0d0, H_cloud*rz /)
-        n = (/ 0.0d0, 1.0d0, 0.0d0 /)
-    else
-        ! y = Ly, normal -y
-        call random_number(rx)
-        call random_number(rz)
-        p = (/ Lx*rx, Ly, H_cloud*rz /)
-        n = (/ 0.0d0, -1.0d0, 0.0d0 /)
-    end if
-
-end subroutine sample_point_and_normal
-
-!! sampling lambertian direction-distribution.
-subroutine sample_lambertian_direction(n, d)
-    implicit none
-    ! Input: unit normal vector along ±x, ±y, or ±z
-    double precision, intent(in)  :: n(3)
-    ! Output: sampled cosine-weighted direction
-    double precision, intent(out) :: d(3)
-
-    ! Local variables
-    double precision :: u, v, w
-    double precision :: nx, ny, nz
-    double precision :: norm_d
-    integer :: ok
-
-    nx = n(1)
-    ny = n(2)
-    nz = n(3)
-
-    ! --- Sample (u,v) inside unit disk ---
-    ok = 0
-    do while (ok == 0)
-        call random_number(u)
-        u = 2.0d0*u - 1.0d0
-        call random_number(v)
-        v = 2.0d0*v - 1.0d0
-        if (u*u + v*v <= 1.0d0) ok = 1
-    end do
-
-    w = sqrt(max(0.0d0, 1.0d0 - u*u - v*v))
-
-    ! --- Map to hemisphere around axis-aligned normal ---
-    if (nx == 0.0d0 .and. ny == 0.0d0 .and. nz == 1.0d0) then
-        ! +z
-        d = (/ u, v, w /)
-    else if (nx == 0.0d0 .and. ny == 0.0d0 .and. nz == -1.0d0) then
-        ! -z
-        d = (/ u, v, -w /)
-    else if (nx == 1.0d0 .and. ny == 0.0d0 .and. nz == 0.0d0) then
-        ! +x
-        d = (/ w, u, v /)
-    else if (nx == -1.0d0 .and. ny == 0.0d0 .and. nz == 0.0d0) then
-        ! -x
-        d = (/ -w, u, v /)
-    else if (nx == 0.0d0 .and. ny == 1.0d0 .and. nz == 0.0d0) then
-        ! +y
-        d = (/ u, w, v /)
-    else if (nx == 0.0d0 .and. ny == -1.0d0 .and. nz == 0.0d0) then
-        ! -y
-        d = (/ u, -w, v /)
-    else
-        ! fallback
-        d = (/ u, v, w /)
-    end if
-
-    norm_d = sqrt(d(1)**2 + d(2)**2 + d(3)**2)
-    d = d / norm_d
-
-end subroutine sample_lambertian_direction
-
-!! campute exit distance for a given ray. 
-subroutine compute_exit_distance_sub(p, d, Lx, Ly, H_cloud, t_exit)
-    implicit none
-    ! Inputs
-    double precision, intent(in) :: p(3)   ! starting point (x,y,z)
-    double precision, intent(in) :: d(3)   ! direction vector (dx,dy,dz)
-    double precision, intent(in) :: Lx, Ly, H_cloud
-    ! Output
-    double precision, intent(out) :: t_exit
-
-    ! Local variables
-    double precision :: ts(3)
-    integer :: n, i
-    double precision :: eps_t
-    double precision :: dx, dy, dz, x, y, z
-    double precision :: tmin
-
-    x = p(1); y = p(2); z = p(3)
-    dx = d(1); dy = d(2); dz = d(3)
-    eps_t = 1.0d-9
-
-    n = 0
-
-    ! --- x planes ---
-    if (dx > 0.0d0) then
-        n = n + 1
-        ts(n) = (Lx - x) / dx
-    else if (dx < 0.0d0) then
-        n = n + 1
-        ts(n) = (0.0d0 - x) / dx
-    end if
-
-    ! --- y planes ---
-    if (dy > 0.0d0) then
-        n = n + 1
-        ts(n) = (Ly - y) / dy
-    else if (dy < 0.0d0) then
-        n = n + 1
-        ts(n) = (0.0d0 - y) / dy
-    end if
-
-    ! --- z planes ---
-    if (dz > 0.0d0) then
-        n = n + 1
-        ts(n) = (H_cloud - z) / dz
-    else if (dz < 0.0d0) then
-        n = n + 1
-        ts(n) = (0.0d0 - z) / dz
-    end if
-
-    ! Find the minimum positive t
-    tmin = 1.0d300   ! large number
-    do i = 1, n
-        if (ts(i) > eps_t .and. ts(i) < tmin) tmin = ts(i)
-    end do
-
-    t_exit = tmin
-
-end subroutine compute_exit_distance_sub
-
-subroutine sort_real_array(a)
-    implicit none
-    double precision, intent(inout) :: a(:)
-    integer :: i, j
-    double precision :: temp
-
-    do i = 1, size(a)-1
-        do j = i+1, size(a)
-            if (a(j) < a(i)) then
-                temp = a(i)
-                a(i) = a(j)
-                a(j) = temp
+        do j = 1, n_out
+            if (x_out(j) <= x_in(1)) then
+                y_out(j) = y_in(1); cycle
             end if
+            if (x_out(j) >= x_in(n_in)) then
+                y_out(j) = y_in(n_in); cycle
+            end if
+            do i = 1, n_in - 1
+                if (x_out(j) >= x_in(i) .and. x_out(j) <= x_in(i+1)) then
+                    t_frac = (x_out(j) - x_in(i)) / (x_in(i+1) - x_in(i))
+                    y_out(j) = (1.0 - t_frac) * y_in(i) + t_frac * y_in(i+1)
+                    exit
+                end if
+            end do
         end do
-    end do
-end subroutine sort_real_array
+
+    end subroutine interp1_linear
 
 
+    ! Wall photon emission probabilities for the 3D MC domain.
+    ! Uses precomputed boundary areas (mc_A_bottom, mc_A_top, mc_A_sides).
+    subroutine wall_photon_probabilities(T_bottom, T_top_mc, lT_side, &
+                                         P_bottom, P_top_mc, P_sides, Q_total)
+        real(dp), intent(in) :: T_bottom, T_top_mc, lT_side
+        real(dp), intent(out) :: P_bottom, P_top_mc, P_sides, Q_total
 
-subroutine monte_carlo_pathlength_sub(Lx, Ly, H_cloud, z_edges, P_bottom, P_top, P_sides, &
-                                     pathLen_sum, L_mean_MC)
-    implicit none
-    ! Inputs
-    double precision, intent(in) :: Lx, Ly, H_cloud
-    double precision, intent(in) :: P_bottom, P_top, P_sides
-    double precision, intent(in) :: z_edges(nBins+1)
-    double precision, intent(out) :: pathLen_sum(nBins)
-    double precision, intent(out) :: L_mean_MC
-    
-    integer :: n, j, jj
-    double precision :: total_L, t_exit
-    double precision :: p0(3), n_wall(3), d(3)
-    double precision :: t_a, t_b, dz
-    double precision :: z0, z_a, z_b
-    double precision :: z_min, z_max
-    double precision, allocatable :: z_edges_in(:)
-    logical, allocatable :: mask(:)
-    double precision, allocatable :: t_list(:)
-    integer :: m, count_edges
-    double precision :: t1, t2, L_sub, t_mid, z_mid
-    double precision :: ze, t_e
-    double precision :: L_mean_theory
+        real(dp), parameter :: SIGMA_SB = 5.670374e-8
+        real(dp) :: Q_bottom, Q_top, Q_sides
 
-    ! Initialize
-    pathLen_sum = 0.0d0
-    total_L = 0.0d0
+        Q_bottom = SIGMA_SB * T_bottom**4 * mc_A_bottom
+        Q_top = SIGMA_SB * T_top_mc**4 * mc_A_top
+        Q_sides = SIGMA_SB * lT_side**4 * mc_A_sides
 
-    ! ------------------ Monte Carlo loop ------------------
-    do n = 1, nPhotons
+        Q_total = Q_bottom + Q_top + Q_sides
+        P_bottom = Q_bottom / Q_total
+        P_top_mc = Q_top / Q_total
+        P_sides = Q_sides / Q_total
 
-        ! 1. Pick emitting wall, point, normal
-        call sample_point_and_normal(Lx, Ly, H_cloud, P_bottom, P_top, P_sides, p0, n_wall)
+    end subroutine wall_photon_probabilities
 
-        ! 2. Sample Lambertian direction
-        call sample_lambertian_direction(n_wall, d)
 
-        ! 3. Distance to exit from the box
-        call compute_exit_distance_sub(p0, d, Lx, Ly, H_cloud, t_exit)
-        total_L = total_L + t_exit
+    ! Sample emission point and outward normal on a wall.
+    subroutine sample_point_and_normal(P_bottom, P_top_mc, P_sides, pt, norm_vec)
+        real(dp), intent(in) :: P_bottom, P_top_mc, P_sides
+        real(dp), intent(out) :: pt(3), norm_vec(3)
+        real(dp) :: r, rx, ry, rz
 
-        ! 4. Segment inside cloud
-        t_a = 0.0d0
-        t_b = t_exit
-        dz = d(3)
-        
+        call random_number(r)
 
-! === Nearly horizontal rays ===
-        if (abs(dz) < 1.0d-8) then
-            z0 = p0(3)
-            if (z0 >= 0.0d0 .and. z0 <= H_cloud) then
-                L_sub = t_b - t_a
-                if (L_sub > 0.0d0) then
-                    ! locate bin
+        if (r < P_bottom) then
+            call random_number(rx); call random_number(ry)
+            pt = (/ Lx_rad*rx, Ly_rad*ry, 0.0 /)
+            norm_vec = (/ 0.0, 0.0, 1.0 /)
+            return
+        end if
+        r = r - P_bottom
+
+        if (r < P_top_mc) then
+            call random_number(rx); call random_number(ry)
+            pt = (/ Lx_rad*rx, Ly_rad*ry, H /)
+            norm_vec = (/ 0.0, 0.0, -1.0 /)
+            return
+        end if
+        r = (r - P_top_mc) / P_sides
+
+        if (r < 0.25) then
+            call random_number(ry); call random_number(rz)
+            pt = (/ 0.0, Ly_rad*ry, H*rz /)
+            norm_vec = (/ 1.0, 0.0, 0.0 /)
+        else if (r < 0.50) then
+            call random_number(ry); call random_number(rz)
+            pt = (/ Lx_rad, Ly_rad*ry, H*rz /)
+            norm_vec = (/ -1.0, 0.0, 0.0 /)
+        else if (r < 0.75) then
+            call random_number(rx); call random_number(rz)
+            pt = (/ Lx_rad*rx, 0.0, H*rz /)
+            norm_vec = (/ 0.0, 1.0, 0.0 /)
+        else
+            call random_number(rx); call random_number(rz)
+            pt = (/ Lx_rad*rx, Ly_rad, H*rz /)
+            norm_vec = (/ 0.0, -1.0, 0.0 /)
+        end if
+
+    end subroutine sample_point_and_normal
+
+
+    ! Sample a Lambertian (cosine-weighted) direction from an axis-aligned normal.
+    subroutine sample_lambertian_direction(norm_vec, d)
+        real(dp), intent(in) :: norm_vec(3)
+        real(dp), intent(out) :: d(3)
+        real(dp) :: u, v, w, nx, ny, nz, d_mag
+        integer :: ok
+
+        nx = norm_vec(1); ny = norm_vec(2); nz = norm_vec(3)
+
+        ok = 0
+        do while (ok == 0)
+            call random_number(u); u = 2.0*u - 1.0
+            call random_number(v); v = 2.0*v - 1.0
+            if (u*u + v*v <= 1.0) ok = 1
+        end do
+        w = sqrt(max(0.0, 1.0 - u*u - v*v))
+
+        if (nz == 1.0) then
+            d = (/ u, v, w /)
+        else if (nz == -1.0) then
+            d = (/ u, v, -w /)
+        else if (nx == 1.0) then
+            d = (/ w, u, v /)
+        else if (nx == -1.0) then
+            d = (/ -w, u, v /)
+        else if (ny == 1.0) then
+            d = (/ u, w, v /)
+        else if (ny == -1.0) then
+            d = (/ u, -w, v /)
+        else
+            d = (/ u, v, w /)
+        end if
+
+        d_mag = sqrt(d(1)**2 + d(2)**2 + d(3)**2)
+        d = d / d_mag
+
+    end subroutine sample_lambertian_direction
+
+
+    ! Compute distance from point pt along direction d to exit the box.
+    subroutine compute_exit_distance(pt, d, t_exit)
+        real(dp), intent(in) :: pt(3), d(3)
+        real(dp), intent(out) :: t_exit
+        real(dp) :: ts(3), tmin
+        real(dp), parameter :: EPS_T = 1.0e-9
+        real(dp) :: dx, dy, dz, px, py, pz
+        integer :: n_ts, i
+
+        px = pt(1); py = pt(2); pz = pt(3)
+        dx = d(1); dy = d(2); dz = d(3)
+        n_ts = 0
+
+        if (dx > 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = (Lx_rad - px) / dx
+        else if (dx < 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = -px / dx
+        end if
+        if (dy > 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = (Ly_rad - py) / dy
+        else if (dy < 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = -py / dy
+        end if
+        if (dz > 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = (H - pz) / dz
+        else if (dz < 0.0) then
+            n_ts = n_ts + 1; ts(n_ts) = -pz / dz
+        end if
+
+        tmin = huge(1.0)
+        do i = 1, n_ts
+            if (ts(i) > EPS_T .and. ts(i) < tmin) tmin = ts(i)
+        end do
+        t_exit = tmin
+
+    end subroutine compute_exit_distance
+
+
+    ! Sort a small real array in ascending order (insertion sort).
+    subroutine sort_real_array(a)
+        real(dp), intent(inout) :: a(:)
+        integer :: i, j
+        real(dp) :: temp
+
+        do i = 2, size(a)
+            temp = a(i)
+            j = i - 1
+            do while (j >= 1 .and. a(j) > temp)
+                a(j+1) = a(j)
+                j = j - 1
+            end do
+            a(j+1) = temp
+        end do
+
+    end subroutine sort_real_array
+
+
+    ! Monte Carlo photon path-length accumulation into vertical bins.
+    subroutine mc_pathlength(z_edges, P_bottom, P_top_mc, P_sides, &
+                             pathLen_sum, L_mean_MC)
+        real(dp), intent(in) :: P_bottom, P_top_mc, P_sides
+        real(dp), intent(in) :: z_edges(nBins+1)
+        real(dp), intent(out) :: pathLen_sum(nBins)
+        real(dp), intent(out) :: L_mean_MC
+
+        real(dp) :: total_L, t_exit
+        real(dp) :: p0(3), n_wall(3), d(3)
+        real(dp) :: dz, z0, z_a, z_b, z_min, z_max
+        real(dp), allocatable :: z_edges_in(:), t_list(:)
+        real(dp) :: t1, t2, L_sub, z_mid, ze
+        integer :: n_photon, j, jj, m, count_edges
+
+        pathLen_sum = 0.0
+        total_L = 0.0
+
+        do n_photon = 1, nPhotons
+            call sample_point_and_normal(P_bottom, P_top_mc, P_sides, p0, n_wall)
+            call sample_lambertian_direction(n_wall, d)
+            call compute_exit_distance(p0, d, t_exit)
+            total_L = total_L + t_exit
+
+            dz = d(3)
+
+            ! Nearly horizontal rays
+            if (abs(dz) < 1.0e-8) then
+                z0 = p0(3)
+                if (z0 >= 0.0 .and. z0 <= H .and. t_exit > 0.0) then
                     do j = 1, nBins
                         if (z0 >= z_edges(j) .and. z0 <= z_edges(j+1)) then
-                            pathLen_sum(j) = pathLen_sum(j) + L_sub
+                            pathLen_sum(j) = pathLen_sum(j) + t_exit
                             exit
                         end if
                     end do
                 end if
+                cycle
             end if
-            cycle
-        end if
 
-        ! === General case ===
-        z0 = p0(3)
-        z_a = z0 + dz * t_a
-        z_b = z0 + dz * t_b
+            ! General case
+            z0 = p0(3)
+            z_a = z0
+            z_b = z0 + dz * t_exit
 
-        ! Clip
-        if ((z_a < 0.0d0 .and. z_b < 0.0d0) .or. &
-            (z_a > H_cloud .and. z_b > H_cloud)) cycle
+            if ((z_a < 0.0 .and. z_b < 0.0) .or. &
+                (z_a > H .and. z_b > H)) cycle
 
-        if (dz > 0.0d0) then
-            z_min = max(min(z_a, z_b), 0.0d0)
-            z_max = min(max(z_a, z_b), H_cloud)
-        else
-            z_min = max(min(z_a, z_b), 0.0d0)
-            z_max = min(max(z_a, z_b), H_cloud)
-        end if
+            z_min = max(min(z_a, z_b), 0.0)
+            z_max = min(max(z_a, z_b), H)
+            if (z_max <= z_min) cycle
 
-        if (z_max <= z_min) cycle
+            count_edges = 0
+            do j = 1, nBins + 1
+                if (z_edges(j) > z_min .and. z_edges(j) < z_max) &
+                    count_edges = count_edges + 1
+            end do
 
-        ! z-edges strictly between z_min and z_max
-        allocate(mask(nBins+1))
-        do j = 1, nBins+1
-            mask(j) = (z_edges(j) > z_min) .and. (z_edges(j) < z_max)
-        end do
-
-        count_edges = count(mask)
-        allocate(z_edges_in(count_edges))
-        m = 0
-        do j = 1, nBins+1
-            if (mask(j)) then
-                m = m + 1
-                z_edges_in(m) = z_edges(j)
-            end if
-        end do
-        deallocate(mask)
-
-        ! t-list = [t_a, t_b] + converted edges
-        allocate(t_list(count_edges+2))
-        t_list(1) = t_a
-        t_list(2) = t_b
-
-        do j = 1, count_edges
-            ze = z_edges_in(j)
-            t_e = (ze - z0) / dz
-            t_list(j+2) = t_e
-        end do
-
-        ! Sort t_list
-        call sort_real_array(t_list)   ! you must provide this helper
-
-        ! Accumulate segments
-        do jj = 1, size(t_list)-1
-            t1 = t_list(jj)
-            t2 = t_list(jj+1)
-            L_sub = t2 - t1
-            if (L_sub <= 0.0d0) cycle
-
-            t_mid = 0.5d0 * (t1 + t2)
-            z_mid = z0 + dz * t_mid
-            if (z_mid < 0.0d0 .or. z_mid > H_cloud) cycle
-
-            ! bin index: searchsorted(z_edges, z_mid) - 1
-            do j = 1, nBins
-                if (z_mid >= z_edges(j) .and. z_mid < z_edges(j+1)) then
-                    pathLen_sum(j) = pathLen_sum(j) + L_sub
-                    exit
+            allocate(z_edges_in(count_edges))
+            m = 0
+            do j = 1, nBins + 1
+                if (z_edges(j) > z_min .and. z_edges(j) < z_max) then
+                    m = m + 1
+                    z_edges_in(m) = z_edges(j)
                 end if
             end do
 
+            allocate(t_list(count_edges + 2))
+            t_list(1) = 0.0
+            t_list(2) = t_exit
+            do j = 1, count_edges
+                ze = z_edges_in(j)
+                t_list(j+2) = (ze - z0) / dz
+            end do
+            call sort_real_array(t_list)
+
+            do jj = 1, size(t_list) - 1
+                t1 = t_list(jj)
+                t2 = t_list(jj+1)
+                L_sub = t2 - t1
+                if (L_sub <= 0.0) cycle
+
+                z_mid = z0 + dz * 0.5 * (t1 + t2)
+                if (z_mid < 0.0 .or. z_mid > H) cycle
+
+                do j = 1, nBins
+                    if (z_mid >= z_edges(j) .and. z_mid < z_edges(j+1)) then
+                        pathLen_sum(j) = pathLen_sum(j) + L_sub
+                        exit
+                    end if
+                end do
+            end do
+
+            deallocate(z_edges_in, t_list)
         end do
 
-        deallocate(z_edges_in)
-        deallocate(t_list)
+        L_mean_MC = total_L / nPhotons
 
-    end do
-
-    L_mean_MC = total_L / nPhotons
-    !L_mean_theory = 4.0d0 * Lx * Ly * H_cloud / (2.0d0*Lx*Ly + 4.0d0*Lx*H_cloud)
-
-end subroutine monte_carlo_pathlength_sub
+    end subroutine mc_pathlength
 
 
+    ! Compute radiative heating from MC path lengths and absorption.
+    subroutine compute_mc_heating(z_edges, pathLen_sum, Q_total, &
+                                  kappa_bins, T_bins, dTdt)
+        real(dp), intent(in) :: z_edges(nBins+1)
+        real(dp), intent(in) :: pathLen_sum(nBins)
+        real(dp), intent(in) :: kappa_bins(nBins), T_bins(nBins)
+        real(dp), intent(in) :: Q_total
+        real(dp), intent(out) :: dTdt(nBins)
+
+        real(dp), parameter :: SIGMA_SB = 5.670374e-8
+        ! Fixed air density — see compute_heating_rate_1d comment
+        real(dp), parameter :: RHO_A = 1.2
+        real(dp), parameter :: C_P = 1007.0
+        real(dp) :: power_per_photon, dz_bin
+        real(dp) :: Q_abs_bins(nBins), q_abs(nBins), q_emit(nBins), q_net(nBins)
+
+        power_per_photon = Q_total / real(nPhotons, dp)
+        Q_abs_bins = kappa_bins * power_per_photon * pathLen_sum
+        dz_bin = z_edges(2) - z_edges(1)
+        q_abs = Q_abs_bins / (mc_A_bottom * dz_bin)
+        q_emit = 4.0 * kappa_bins * SIGMA_SB * T_bins**4
+        q_net = q_abs - q_emit
+        dTdt = q_net / (RHO_A * C_P)
+
+    end subroutine compute_mc_heating
 
 
+    ! Full 3D Monte Carlo radiation solve.
+    ! Populates module-level rad_heating_rate. rad_F_net is zeroed
+    ! (not directly computed by the MC method).
+    subroutine solve_3d(nrows, T_profile, T_bot, T_top, kappa_prof)
+        integer(i4), intent(in) :: nrows
+        real(dp), intent(in) :: T_profile(nrows), T_bot, T_top
+        real(dp), intent(in) :: kappa_prof(nrows)
 
+        real(dp) :: T_bins(nBins), kappa_bins(nBins)
+        real(dp) :: P_bottom, P_top_mc, P_sides, Q_total
+        real(dp) :: pathLen_sum(nBins), dTdt(nBins), L_mean_MC
 
-!*************************************************************************************************************************
-!! something seems wrong in below subroutine ............................................................................
-subroutine compute_radiative_heating(Lx, Ly, z_edges, pathLen_sum, Q_total, &
-                                     kappa_prof1, T_g, dTdt)
-    implicit none
-    ! Inputs
-    double precision, intent(in) :: Lx, Ly
-    double precision, intent(in) :: z_edges(nBins+1)
-    double precision, intent(in) :: pathLen_sum(nBins)
-    double precision, intent(in) :: kappa_prof1(nBins), T_g(nBins)
-    double precision, intent(in) :: Q_total
+        call interp1_linear(z, T_profile, mc_z_centers, T_bins, nrows, nBins)
+        call interp1_linear(z, kappa_prof, mc_z_centers, kappa_bins, nrows, nBins)
 
-    double precision, intent(out) :: dTdt(nBins)
+        call wall_photon_probabilities(T_bot, T_top, T_side, &
+                                       P_bottom, P_top_mc, P_sides, Q_total)
+        call mc_pathlength(mc_z_edges, P_bottom, P_top_mc, P_sides, &
+                           pathLen_sum, L_mean_MC)
+        call compute_mc_heating(mc_z_edges, pathLen_sum, Q_total, &
+                                kappa_bins, T_bins, dTdt)
 
-    double precision      ::sigmaSB = 5.670374e-8  ! Stefan-Boltzmann constant [W/m^2/K^4]
-    double precision      :: rho=1.2, cp=1007.0 
-    double precision :: power_per_photon, dz_bin
-    double precision :: Q_abs_bins(nBins), q_abs(nBins), q_emit(nBins), q_net(nBins)
-    integer :: i
+        call interp1_linear(mc_z_centers, dTdt, z, rad_heating_rate, nBins, nrows)
 
-    power_per_photon = Q_total / dble(nPhotons)
-    Q_abs_bins = kappa_prof1 * power_per_photon * pathLen_sum
-    dz_bin = z_edges(2) - z_edges(1)
-    q_abs = Q_abs_bins / (Lx * Ly * dz_bin)
-    q_emit = 4.0d0 * kappa_prof1 * sigmaSB * T_g**4
-    q_net = q_abs - q_emit
-    dTdt = q_net / (rho * cp)
-    !print*, dTdt*3600, "heating rate"
+        rad_F_net = 0.0
 
-end subroutine compute_radiative_heating
-
-
-subroutine interp1_linear(x, y, xin, yout, n, m)
-    implicit none
-    integer, intent(in) :: n, m
-    double precision, intent(in)  :: x(n), y(n)     ! original grid
-    double precision, intent(in)  :: xin(m)         ! new grid
-    double precision, intent(out) :: yout(m)        ! interpolated result
-
-    integer :: i, j
-
-    do j = 1, m
-
-        if (xin(j) <= x(1)) then
-            yout(j) = y(1)
-            cycle
-        end if
-
-        if (xin(j) >= x(n)) then
-            yout(j) = y(n)
-            cycle
-        end if
-
-        ! find interval x(i) <= xin(j) < x(i+1)
-        do i = 1, n-1
-            if (xin(j) >= x(i) .and. xin(j) <= x(i+1)) then
-                yout(j) = y(i) + (y(i+1)-y(i)) *                 &
-                        ( (xin(j)-x(i)) / (x(i+1)-x(i)) )
-                exit
-            end if
-        end do
-
-    end do
-end subroutine interp1_linear
-
-
-subroutine init_bins(H_cloud, z_edges, z_centers, nrows, z, T_profile, & 
-                    kappa_prof, T_profile1, kappa_prof1)
-    implicit none
-    integer, intent(in)                    :: nrows
-    double precision, intent(in)           :: H_cloud
-    double precision, intent(in)           :: z(nrows), T_profile(nrows), kappa_prof(nrows)
-    double precision, intent(out)        :: z_centers(nBins), z_edges(nBins+1)
-    double precision, intent(out)        :: T_profile1(nBins, 1), kappa_prof1(nBins, 1)
-    integer :: i
-    
-    do i = 1, nBins+1                            ! z bin edges from 0 to H_cloud
-        z_edges(i) = H_cloud * real(i-1) / real(nBins)
-    end do
-    
-    do i = 1, nBins                                   ! z bin centers
-        z_centers(i) = 0.5 * (z_edges(i) + z_edges(i+1))
-    end do
-    
-    
-    call interp_column(nrows, z, T_profile, nBins, z_centers, T_profile1)
-    call interp_column(nrows, z, kappa_prof, nBins, z_centers, kappa_prof1)
-end subroutine init_bins
-
-
-subroutine compute_kappa_local(nrows, max_droplets, nrows_mie, ncols_mie, rad_box, nums, &
-                                     dx, dy, z, T_profile, kappa_prof)
-    implicit none
-    integer, intent(in) :: nrows, max_droplets
-    integer, intent(in) :: nrows_mie, ncols_mie
-    double precision, intent(in) :: rad_box(nrows,max_droplets)
-    integer, intent(in) :: nums(nrows)
-    double precision, intent(in)  :: dx, dy
-    double precision, intent(in)  :: z(nrows), T_profile(nrows)
-    double precision, intent(out) :: kappa_prof(nrows) 
-
-    double precision :: dv(nrows), dz(nrows)
-    double precision :: Radius(nrows_mie-1), wavelength(ncols_mie-1), delta_lambda(ncols_mie-1)
-    double precision :: mie_file(nrows_mie,ncols_mie)
-
-    !! below two function can be called during initialization. -- a cost reduction step.
-    call volume_calculation(z, dx, dy, dz, dv)
-    call read_mie_data_fixed(nrows_mie, ncols_mie, mie_file, wavelength, delta_lambda, Radius)
-
-    call compute_kappa_prof(nrows, max_droplets, nrows_mie, ncols_mie, rad_box, nums, dv, T_profile, &
-                            Radius, wavelength, delta_lambda, mie_file, kappa_prof)   
-end subroutine compute_kappa_local
-
-
-
-subroutine compute_MC_heating_profile(nrows, z, T_profile, T_bot, T_top, H_cloud, kappa_prof, &
-                                      dTdt_intp)
-    implicit none
-    integer, intent(in) :: nrows
-    double precision, intent(in) :: z(nrows), T_profile(nrows)
-    double precision, intent(in) :: T_bot, T_top
-    double precision, intent(in) :: kappa_prof(nrows)
-    double precision, intent(in)               :: H_cloud
-    double precision                           :: z_centers(nBins), z_edges(nBins+1)
-    
-    double precision                           :: T_profile1(nBins, 1), kappa_prof1(nBins, 1)
-    double precision                           :: P_bottom, P_top, P_sides, Q_total
-    double precision                           :: pathLen_sum(nBins), dTdt(nBins)
-    double precision                           :: L_mean_MC
-    double precision, intent(out)              :: dTdt_intp(nrows)
-
-    call init_bins(H_cloud, z_edges, z_centers, nrows, z, T_profile, kappa_prof, T_profile1, kappa_prof1)
-    call wall_photon_probabilities(Lx, Ly, H_cloud, T_bot, T_top, T_side, &
-                                      P_bottom, P_top, P_sides, Q_total)
-    call monte_carlo_pathlength_sub(Lx, Ly, H_cloud, z_edges, P_bottom, P_top, P_sides, &
-                                     pathLen_sum, L_mean_MC)
-                                     
-    call compute_radiative_heating(Lx, Ly, z_edges, pathLen_sum, Q_total, kappa_prof1, T_profile1, dTdt)
-    call interp1_linear(z_centers, dTdt, z, dTdt_intp, nBins, nrows)      
-end subroutine compute_MC_heating_profile
+    end subroutine solve_3d
 
 
 
@@ -878,7 +661,7 @@ end subroutine compute_MC_heating_profile
 
     ! Read RADIATION namelist, load Mie table, allocate output arrays.
     subroutine initialize_radiation()
-        integer :: ierr, nml_unit
+        integer :: ierr, nml_unit, k
         character(256) :: resolved_path
 
         namelist /RADIATION/ radiation_method, mie_data_file, eps_top, eps_bot, &
@@ -905,6 +688,19 @@ end subroutine compute_MC_heating_profile
         allocate(rad_heating_rate(N))
         rad_F_net = 0.0
         rad_heating_rate = 0.0
+
+        if (radiation_method == '3d') then
+            allocate(mc_z_edges(nBins+1), mc_z_centers(nBins))
+            do k = 1, nBins + 1
+                mc_z_edges(k) = H * real(k-1, dp) / real(nBins, dp)
+            end do
+            do k = 1, nBins
+                mc_z_centers(k) = 0.5 * (mc_z_edges(k) + mc_z_edges(k+1))
+            end do
+            mc_A_bottom = Lx_rad * Ly_rad
+            mc_A_top = Lx_rad * Ly_rad
+            mc_A_sides = 2.0 * (Lx_rad + Ly_rad) * H
+        end if
 
         if (rad_call_interval > 0.0) then
             allocate(kappa_sum(N), T_sum(N))

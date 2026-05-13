@@ -2,109 +2,101 @@ module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals
     use microphysics
-    use ODT, only: calc_eddy_length_cdf, diffusion, initialize_ODT, &
-                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics
-    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
+    use ODT, only: initialize_ODT, close_ODT, odt_init_arrays, &
+                   odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics, &
+                   C2, ZC2, Tdiff
+    use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics, &
+                   integral_length_scale, kolmogorov_length_scale, dissipation_rate, reynolds_number
     use special_effects, only: initialize_special_effects
-    use writeout, only: initialize_buffers, create_netcdf, initialize_particle_buffers, &
-                initialize_eddy_file, add_to_profile_buffer, flush_buffer, close_netcdf
-    use droplets, only: initialize_microphysics, n_DSD_bins, n_aer_category, size_distribution, &
-                write_trajectories
+    use writeout, only: initialize_buffers, deallocate_buffers, create_netcdf, &
+                initialize_eddy_file, write_eddy_header_fields, &
+                add_to_profile_buffer, flush_buffer, close_netcdf
+    use droplets, only: initialize_microphysics, write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
+    use parcel, only: initialize_parcel
     implicit none
 
-    integer(i4) :: write_buffer ! Buffer size, n iterations to write to netCDF
-    
-    private :: allocate_zero_arrays, allocate_nondim_array, initialize_linear_array, &
-               initialize_velocity_arrays, initialize_params
+    private
     public :: initialize_simulation, close_simulation
-    
+
+    integer(i4) :: write_buffer
+
 contains
 
     subroutine initialize_simulation()
-        ! I make make main.f90 look approachable by
-        ! hiding the monsters under the bed
 
-        ! Life is nothing but a dream, as realistic as it seems
+        call read_params()
         call initialize_params()
+        call initialize_arrays()
+        call initialize_output()
 
-        if (simulation_mode == 'chamber') then
-            diffuse_step       => odt_diffuse_step
-            turbulence_step    => odt_turbulence_step
-            sync_after_physics => odt_sync_after_physics
-            if ( do_turbulence ) call calc_eddy_length_cdf(prob_eddy_length)
-        else if (simulation_mode == 'parcel') then
-            diffuse_step       => lem_diffuse_step
-            turbulence_step    => lem_turbulence_step
-            sync_after_physics => lem_sync_after_physics
-        else
-            write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
-            stop 1
-        end if
-
-        if ( do_microphysics ) then
+        call log_header()
+        call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
+        if (do_microphysics) then
             call initialize_microphysics()
-            call initialize_particle_buffers(n_aer_category, n_DSD_bins)
-            ! Wont work right now if init_drop_each_gridpoint = .false.
-            if ( write_trajectories ) call initialize_write_particle(file_prefix)
-            if ( write_collisions ) call initialize_collision_file(file_prefix)
+            if (write_trajectories) call initialize_write_particle(file_prefix)
+            if (write_collisions) call initialize_collision_file(file_prefix)
+        end if
+        call initialize_buffers(write_buffer, N)
+        if (do_special_effects) then
+            if (simulation_mode == 'chamber') then
+                call initialize_special_effects((g * Tdiff * H**3) / (Tref * nu * kT))
+            else
+                ! TODO: parcel mode substitutes Re for Ra as a placeholder
+                call initialize_special_effects(reynolds_number)
+            end if
         end if
 
-        if ( do_special_effects ) then
-            call initialize_special_effects()
+        if (write_eddies) then
+            call initialize_eddy_file(file_prefix, simulation_mode)
+            if (simulation_mode == 'chamber') then
+                call write_eddy_header_fields([C2, ZC2, Tdiff, Tref])
+            else if (simulation_mode == 'parcel') then
+                call write_eddy_header_fields([integral_length_scale, &
+                                               kolmogorov_length_scale, dissipation_rate])
+            end if
         end if
-
-        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+        call copy_file(namelist_path, trim(file_prefix)//'.nml')
+        if (parcel_file /= '') then
+            call copy_file(resolve_path(namelist_dir, parcel_file), &
+                           trim(sim_output_dir)// &
+                           trim(parcel_file(scan(trim(parcel_file), '/', back=.true.)+1:)))
+        end if
+        call add_to_profile_buffer(time, T, WV, Tv, SS)
 
     end subroutine initialize_simulation
 
+
     subroutine close_simulation()
 
-        if (simulation_mode == 'chamber') then
-            call diffusion(delta_time)
-            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
-        end if
+        if (simulation_mode == 'chamber') call close_ODT()
         call update_supersat(T, WV, SS, pres)
-        call add_to_profile_buffer(time, T, WV, Tv, SS, size_distribution, statistics)
+        call add_to_profile_buffer(time, T, WV, Tv, SS)
         call flush_buffer()
         call close_netcdf(ncid)
-        if ( do_microphysics .and. write_trajectories ) then
-            call close_particle_netcdf()
-        end if
-        if ( write_collisions ) then
-            call close_collision_file()
-        end if
+        if (do_microphysics .and. write_trajectories) call close_particle_netcdf()
+        if (write_collisions) call close_collision_file()
+        call deallocate_buffers()
 
     end subroutine close_simulation
 
 
-    subroutine initialize_params()
-
-        ! I/O Variables
-        integer     :: ierr, nml_unit, k
+    subroutine read_params()
+        integer     :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
-        ! parameters for initializing state of random number generator
-        integer, allocatable :: rand_seed(:) ! Some compilers have array of seeds for RNG
-        integer :: rand_size
 
-
-        logical :: file_exists
-
-        namelist /PARAMETERS/ N, Lmin, Lprob, tmax, Tdiff, Tref, pres, H, volume_scaling, &
-        max_accept_prob, same_random, write_buffer, do_turbulence, do_microphysics, &
+        namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
+        same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, &
-        integral_length_scale, kolmogorov_length_scale, dissipation_rate
+        overwrite, simulation_mode, parcel_file, initial_RH
 
-        ! Read in namelist
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) io_emsg; stop 1
         end if
         read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
-        ! Print value causing namelist read error
         if (ierr .ne. 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
@@ -113,18 +105,21 @@ contains
         end if
         close(nml_unit)
 
-        ! Validate output_directory is an absolute path
         if (output_directory(1:1) /= '/') then
             write(0,*) 'Error: output_directory must be an absolute path.'
             write(0,*) 'Got: ', trim(output_directory)
             stop 1
         end if
 
-        ! Calculate additional parameters dependent on namelist variables
+    end subroutine read_params
+
+
+    subroutine initialize_params()
+        integer, allocatable :: rand_seed(:)
+        integer :: rand_size
+
         write(*,*) 'Setting domain variables...'
-        Tref = Tref + Tice ! Convert to Kelvin
-        Ttop = Tref - Tdiff
-        Lmax = int(N / 3)
+        Tref = Tref + Tice
         time = 0.
         last_time_updated = 0.
 
@@ -132,21 +127,28 @@ contains
         domain_volume = volume_scaling * domain_width**2 * H
         gridcell_volume = domain_volume / N
 
-        ! Calculate water vapor mixing ratio and virtual temp at boundary conditions
-        WVref = saturation_mixing_ratio(Tref, pres) ! kg/kg
-        WVtop = saturation_mixing_ratio(Ttop, pres)
-        WVdiff = WVref - WVtop
-        Tvref = virtual_temp(Tref, WVref)
-        Tvtop = virtual_temp(Ttop, WVtop)
-        Tvdiff = Tvref - Tvtop
-
         if (simulation_mode == 'chamber') then
             call initialize_ODT(H)
+            diffuse_step       => odt_diffuse_step
+            turbulence_step    => odt_turbulence_step
+            sync_after_physics => odt_sync_after_physics
         else if (simulation_mode == 'parcel') then
             call initialize_LEM(H)
+            diffuse_step       => lem_diffuse_step
+            turbulence_step    => lem_turbulence_step
+            sync_after_physics => lem_sync_after_physics
+            if (initial_RH < 0.0 .or. initial_RH > 1.0) then
+                write(0,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
+                stop 1
+            end if
+            if (parcel_file /= '') then
+                call initialize_parcel(resolve_path(namelist_dir, parcel_file))
+            end if
+        else
+            write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
+            stop 1
         end if
 
-        ! initialize randomness in the model
         if (same_random) then
             call random_seed(size=rand_size)
             allocate(rand_seed(rand_size))
@@ -156,8 +158,13 @@ contains
         else
             call random_seed()
         end if
-    
-        ! Allocate scalar/vector fields
+
+    end subroutine initialize_params
+
+
+    subroutine initialize_arrays()
+        integer :: k
+
         write(*,*) 'Allocating arrays...'
         call allocate_zero_arrays(z, N)
         call allocate_zero_arrays(T, N)
@@ -165,38 +172,32 @@ contains
         call allocate_zero_arrays(Tv, N)
         call allocate_zero_arrays(SS, N)
 
-        ! Initialize positional array
         do k = 1, N
             z(k) = H*k/N
         end do
 
         if (simulation_mode == 'chamber') then
-            call allocate_nondim_array(W_nd, N)
-            call allocate_nondim_array(T_nd, N)
-            call allocate_nondim_array(WV_nd, N)
-            call allocate_nondim_array(Tv_nd, N)
-            call allocate_zero_arrays(prob_eddy_length, N)
-            call initialize_velocity_arrays(W_nd)
-            ! Nondim arrays initialized with linear profile; convert to dimensional
-            call update_dim_scalars(T_nd, WV_nd, Tv_nd, T, WV, Tv)
+            call odt_init_arrays()
         else if (simulation_mode == 'parcel') then
-            ! Uniform fields: saturated at Tref
             T(:) = Tref
-            WV(:) = WVref
+            WV(:) = initial_RH * saturation_mixing_ratio(Tref, pres)
             do k = 1, N
                 Tv(k) = virtual_temp(T(k), WV(k))
             end do
         end if
         call update_supersat(T, WV, SS, pres)
 
-        ! Build output paths:
-        !   sim_output_dir = "{output_directory}/{simulation_name}/"
-        !   file_prefix    = "{sim_output_dir}{simulation_name}"
+    end subroutine initialize_arrays
+
+
+    subroutine initialize_output()
+        integer :: ierr
+        logical :: file_exists
+
         sim_output_dir = trim(output_directory)//'/'//trim(simulation_name)//'/'
         file_prefix = trim(sim_output_dir)//trim(simulation_name)
         call system("mkdir -p "//trim(sim_output_dir))
 
-        ! Check for existing output files
         inquire(file=trim(file_prefix)//'.nc', exist=file_exists)
         if (file_exists .and. .not. overwrite) then
             write(0,*) 'Error: output file already exists: ', trim(file_prefix)//'.nc'
@@ -204,10 +205,8 @@ contains
             stop 1
         end if
 
-        ! Print output location to stderr (visible in terminal/SLURM output)
         write(error_unit,*) 'Output: ', trim(sim_output_dir)
 
-        ! Redirect stdout to log file in output directory
         close(output_unit)
         open(output_unit, file=trim(file_prefix)//'.log', &
              status='replace', action='write', iostat=ierr)
@@ -216,68 +215,67 @@ contains
             stop 1
         end if
 
-        ! Create main netCDF output file
-        call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
 
-        ! Initialize buffers for writing to netCDF
-        call initialize_buffers(write_buffer, N)
-        if ( write_eddies ) call initialize_eddy_file(file_prefix)
+    end subroutine initialize_output
 
-        ! Copy original namelist file to output directory
-        call copy_file(namelist_path, trim(file_prefix)//'.nml')
 
-    end subroutine initialize_params
+    subroutine log_header()
+        character(8) :: date_str
+        character(10) :: time_str
 
-    subroutine allocate_nondim_array(A, n_array)
-        integer(i4), intent(in) ::n_array
-        real(dp), intent(inout), allocatable :: A(:)
-        integer :: k
+        call date_and_time(date=date_str, time=time_str)
+        write(*,'(a)') ''
+        write(*,'(a)') '              .~~.    .~~.'
+        write(*,'(a)') '          .~~.    )  (    .~~.'
+        write(*,'(a)') '        (    .~~.  ~~  .~~.    )'
+        write(*,'(a)') '         )  (                )  ('
+        write(*,'(a)') '        (    ####  ###  ####  #####  )'
+        write(*,'(a)') '         )  #     #   # #   #   #  ('
+        write(*,'(a)') '        (   #     #   # #   #   #    )'
+        write(*,'(a)') '         )   ####  ###  ####    #  ('
+        write(*,'(a)') '          (                       )'
+        write(*,'(a)') '           ~~~~~~~~~~~~~~~~~~~~~~~~'
+        write(*,'(a)') '            /  /  /  /  /  /  /  /'
+        write(*,'(a)') '              /  /  /  /  /  /  /'
+        write(*,'(a)') ''
+        write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
+             ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
+             ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
+        write(*,'(a)') ''
+        write(*,'(a,a)')    ' Namelist:       ', trim(namelist_path)
+        write(*,'(a,a)')    ' Mode:           ', trim(simulation_mode)
+        write(*,'(a,i0)')   ' N:              ', N
+        write(*,'(a,f0.1)') ' tmax (s):       ', tmax
+        write(*,'(a,f0.4)') ' H (m):          ', H
+        write(*,'(a,f0.1)') ' volume_scaling: ', volume_scaling
 
-        ! Set nondimensional arrays to have a ghost point at top/bottom
-        allocate(A(N+1))
-        A = 0.
+        if (simulation_mode == 'chamber') then
+            write(*,'(a,f0.2)') ' Tref (K):       ', Tref
+            write(*,'(a,f0.2)') ' Tdiff (K):      ', Tdiff
+        else if (simulation_mode == 'parcel') then
+            write(*,'(a,f0.2)')  ' Tref (K):       ', Tref
+            write(*,'(a,f0.2)')  ' pres (mb):      ', pres / Pa_per_mb
+            write(*,'(a,f0.4)')  ' initial_RH:     ', initial_RH
+            write(*,'(a,es9.2)') ' L_int (m):      ', integral_length_scale
+            write(*,'(a,es9.2)') ' L_kolm (m):     ', kolmogorov_length_scale
+            write(*,'(a,es9.2)') ' epsilon (m2/s3):', dissipation_rate
+        end if
 
-        ! Initialize nondim with lenear profile
-        do concurrent (k = 1:N+1)
-            A(k) = 1.*k/(N+1)
-        end do
+        write(*,'(a,l1)') ' do_turbulence:       ', do_turbulence
+        write(*,'(a,l1)') ' do_microphysics:     ', do_microphysics
+        write(*,'(a,l1)') ' do_special_effects:  ', do_special_effects
+        write(*,'(a)') ' ============================================'
 
-    end subroutine allocate_nondim_array
+    end subroutine log_header
+
 
     subroutine allocate_zero_arrays(A, n_array)
         integer(i4), intent(in) ::n_array
         real(dp), intent(inout), allocatable :: A(:)
 
-        ! Dimensional arrays do not have ghost points
         allocate(A(n_array))
         A = 0.
 
     end subroutine allocate_zero_arrays
-
-    subroutine initialize_linear_array(array)
-
-        real(dp), intent(out) :: array(:)
-        integer :: k
-
-        do concurrent (k = 1:N)
-            array(k) = 1.*k/N
-        end do
-
-    end subroutine initialize_linear_array
-
-    subroutine initialize_velocity_arrays(lw_nd)
-        ! Initializes velcoity arrays with some noise. This prevents a numerical issue from
-        ! occuring when calculating the kinetic energy (i.e. KE != 0)
-        real(dp), intent(inout), allocatable :: lw_nd(:)
-        real(dp) :: rand_num
-        integer(i4) :: k
-
-        do k = 1, N
-            call random_number(rand_num)
-            lw_nd(k) = 2.e-10 * (rand_num - 0.5)
-        end do
-        lw_nd(N+1) = 0.
-
-    end subroutine initialize_velocity_arrays
 
 end module initialize

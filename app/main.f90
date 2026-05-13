@@ -2,14 +2,18 @@ program main
   use write_particle, only: write_trajectory_data
   use globals
   use initialize, only: initialize_simulation, close_simulation
-  use writeout, only: write_profiles
+  use writeout, only: write_profiles, write_eddy
   use droplets, only: particles, update_droplets, &
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
+  use parcel, only: do_parcel_ascent, apply_adiabatic_forcing
+
   implicit none
 
   real(dp) :: t_start, t_end
   integer :: done_unit
+  integer(i4) :: eddy_location, eddy_length
+  logical :: eddy_accepted
   character(8) :: date_str
   character(10) :: time_str
 
@@ -33,29 +37,6 @@ program main
 
   call initialize_simulation()
 
-  ! Log simulation header and configuration
-  call date_and_time(date=date_str, time=time_str)
-  write(*,'(a)') ''
-  write(*,'(a)') ' ============================================'
-  write(*,'(a)') '            :) C O D T :)                     '
-  write(*,'(a)') ' ============================================'
-  write(*,'(a,a,a1,a,a1,a,a,a,a1,a,a1,a)') &
-       ' Started: ', date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
-       ' ', time_str(1:2), ':', time_str(3:4), ':', time_str(5:6)
-  write(*,'(a)') ''
-  write(*,*) 'Namelist: ', trim(namelist_path)
-  write(*,*) 'simulation_mode: ', trim(simulation_mode)
-  write(*,*) 'N: ', N
-  write(*,*) 'tmax (s): ', tmax
-  write(*,*) 'Tdiff (K): ', Tdiff
-  write(*,*) 'Tref (K): ', Tref
-  write(*,*) 'H (m): ', H
-  write(*,*) 'volume_scaling: ', volume_scaling
-  write(*,*) 'do_turbulence: ', do_turbulence
-  write(*,*) 'do_microphysics: ', do_microphysics
-  write(*,*) 'do_special_effects: ', do_special_effects
-  write(*,'(a)') ' ============================================'
-
   ! -----------------------------
 
   do while (time .le. tmax)
@@ -63,6 +44,7 @@ program main
     ! Update iterators and timing
     Nt = Nt + 1
     time = time + dt
+    if (do_parcel_ascent) call apply_adiabatic_forcing(dt)
     delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------
@@ -88,6 +70,7 @@ program main
     if ( do_turbulence ) call turbulence_step(dt, time, delta_time, &
                                               eddy_accepted, eddy_location, eddy_length)
     if ( eddy_accepted ) then
+      if (write_eddies) call write_eddy(eddy_location, eddy_length, time)
       call diffuse_step(delta_time)
       if ( do_microphysics ) call update_droplets(time, delta_time)
       if ( do_special_effects ) call run_special_effects(T, WV, delta_time)

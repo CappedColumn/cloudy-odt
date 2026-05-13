@@ -4,8 +4,10 @@ module write_particle
                         trajectory_start, trajectory_end, trajectory_timer
     use collision_coalescence, only: do_collisions
     use globals
-    use writeout, only: nc_verify
     implicit none
+
+    private
+    public :: initialize_write_particle, write_trajectory_data, close_particle_netcdf
 
     ! Trajectory write timer accumulator
     real(dp) :: trajectory_time_iter = 0.
@@ -63,6 +65,8 @@ contains
         ! Create file
         call nc_verify( nf90_create(trim(filename)//'_particles.nc', NF90_NETCDF4, pnc_id), &
                          "create_particle_netcdf: nf90_create" )
+        call nc_verify( nf90_put_att(pnc_id, NF90_GLOBAL, "conventions", "CODT_particle_output_v1"), &
+                         "nf90_put_att: conventions" )
 
         ! Dimensions (both unlimited)
         call nc_verify( nf90_def_dim(pnc_id, "record", NF90_UNLIMITED, rec_dimid) )

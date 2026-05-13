@@ -65,9 +65,6 @@ module globals
     real(dp), parameter :: pi_43 = 4.1887902047863905   ! 4/3*pi
 
     real(dp), parameter :: alpha = 3.5e-3           ! Thermal Expansion Coefficient
-    real(dp), parameter :: C2 = 1.5e3                ! Turbulent strength in ODT (dimensionless, squared): see Eq. 2.9 - Wunsch and Kerstein 2005
-    real(dp), parameter :: C = sqrt(C2)
-    real(dp), parameter :: ZC2 = 1.0e5                 ! ODT viscous cut-off parameter (dimensionless): see same equation/paper
 
     ! Aerosol Calculations/Constants
     real(dp), parameter :: a_RY = 3.3e-5  ! Rogers & Yau Eq. 6.7 alpha parameter
@@ -83,6 +80,7 @@ module globals
     real(dp), parameter :: nm_per_m = 1e9
     real(dp), parameter :: g_per_kg = 1e3
     real(dp), parameter :: kg_per_g = 1e-3
+    real(dp), parameter :: Pa_per_mb = 100.0
 
     character(256) :: namelist_path    ! Path to namelist file (set from command line)
     character(256) :: namelist_dir     ! Parent directory of namelist file (for resolving relative paths)
@@ -90,6 +88,7 @@ module globals
     character(100) :: simulation_name  ! Simulation name from namelist
     character(256) :: sim_output_dir   ! {output_directory}/{simulation_name}/ — where all output files live
     character(256) :: file_prefix      ! {sim_output_dir}{simulation_name} — base path for output files (.nc, .nml, etc.)
+    character(512) :: parcel_file = ''
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -101,11 +100,6 @@ module globals
     ! -----------------------------------------------
 
     integer(i4) :: N = 6000         ! Number of Grid Cells
-    integer(i4) :: Lmin = 6        ! 1/3 of Smallest Eddy Size (gridpoints)
-    integer(i4) :: Lprob= 18        ! 1/3 of Most Probable Eddy Size (gridpoints)
-    integer(i4) :: eddy_location = 1 ! Eddy index Location (M)
-    integer(i4) :: eddy_length = 1   ! Eddy index Length (L)
-    logical :: eddy_accepted = .false. ! Eddy acceptance flag
     logical :: write_eddies = .false.
 
     ! Note default values will yeild a domain of 1 cm^3, area_frac=2 gives 2 cm^3...
@@ -114,27 +108,17 @@ module globals
     real(dp) :: domain_volume           ! Volume of domain (m^3)
     real(dp) :: gridcell_volume         ! Volume of each grid cell (m^3)
 
-    real(dp) :: Tdiff = 10.        ! Top-Bottom Temperature Difference (Celsius)
     real(dp) :: Tref = 15.          ! Bottom temperature used for reference
-    real(dp) :: Ttop
-    real(dp) :: WVref, WVtop, WVdiff
-    real(dp) :: Tvref, Tvtop, Tvdiff
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)
+    real(dp) :: initial_RH = 1.0  ! Initial relative humidity (fraction, parcel mode only)
     real(dp) :: dz_length    ! Length of each grid cell (meters)
-
-    real(dp) :: max_accept_prob = 0.1      ! Upper constraint for stability in eddy accpt. method
 
     logical :: same_random = .false.    ! Will use random numbers seeded from same state if true
     logical :: overwrite = .false.      ! Allow overwriting existing output files
 
     ! Simulation mode: 'chamber' (ODT, fixed BCs) or 'parcel' (LEM, periodic BCs)
     character(7) :: simulation_mode = 'chamber'
-
-    ! LEM parameters (only used when simulation_mode = 'parcel')
-    real(dp) :: integral_length_scale = 0.01_dp       ! Largest eddy size (m)
-    real(dp) :: kolmogorov_length_scale = 0.001_dp    ! Smallest eddy size (m)
-    real(dp) :: dissipation_rate = 0.01_dp            ! TKE dissipation rate (m^2/s^3)
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -178,35 +162,14 @@ module globals
     ! -----------------------------------------------
     ! -----------------------------------------------
 
-
-    ! ----------- Calculated Parameters -------------
-    ! Will be calculated in initialization module once
-    ! namelist parameters are fully updated
-    ! -----------------------------------------------
-
-    integer(i4) :: Lmax      ! Largest Eddy Size (1/3 of domain, in gridpoints)
-    integer(i4) :: LpD          ! Twice the most probable length
-    real(dp) :: buoy_nd           ! Dimensionless Buoyancy
-    real(dp) :: prob_coeff          ! Used in calculation of eddy acceptance probability
-    real(dp) :: Co, Cm              ! Used for initial eddy sample guess
-
-    ! Eddy acceptance/rejection related
-    real(dp), allocatable :: prob_eddy_length(:)      ! Probability of eddy sizes
-    
-    ! -----------------------------------------------
-    ! -----------------------------------------------
-    
     ! ------------------- ARRAYS --------------------
-
-    ! Velocity arrays
-    real(dp), allocatable :: W_nd(:)   ! ODT velocity (nondim, energy conservation)
 
     ! Positional arrays
     real(dp), allocatable :: z(:)
 
     ! Scalar arrays
-    ! Temperature, Water Vapor (dim and non-dim) and Virt. Temp, Supersaturation
-    real(dp), allocatable :: T_nd(:), WV_nd(:), Tv_nd(:), T(:), WV(:), Tv(:)
+    ! Temperature, Water Vapor, Virtual Temperature, Supersaturation
+    real(dp), allocatable :: T(:), WV(:), Tv(:)
     real(dp), allocatable :: SS(:)
 
     ! Statistics
@@ -224,17 +187,22 @@ module globals
     ! ----------- Budget Accumulators -----------------
     ! Accumulated over each write interval, then reset.
     ! -------------------------------------------------
-    integer(i4), parameter :: n_budgets = 13
+
+    ! Field budgets (always active)
+    integer(i4), parameter :: n_field_budgets = 4
+    real(dp) :: budget_diffusion_delta_T = 0.0
+    real(dp) :: budget_diffusion_delta_WV = 0.0
+    real(dp) :: budget_sidewall_delta_T = 0.0
+    real(dp) :: budget_sidewall_delta_WV = 0.0
+
+    ! Microphysics budgets (only when do_microphysics = .true.)
+    integer(i4), parameter :: n_micro_budgets = 9
     real(dp) :: budget_inject_solute_mass = 0.0
     real(dp) :: budget_inject_liquid_mass = 0.0
     real(dp) :: budget_fallout_liquid_mass = 0.0
     real(dp) :: budget_fallout_solute_mass = 0.0
     real(dp) :: budget_condensation = 0.0
     real(dp) :: budget_dgm_delta_T = 0.0
-    real(dp) :: budget_diffusion_delta_T = 0.0
-    real(dp) :: budget_diffusion_delta_WV = 0.0
-    real(dp) :: budget_sidewall_delta_T = 0.0
-    real(dp) :: budget_sidewall_delta_WV = 0.0
     integer(i4) :: budget_n_injected = 0
     integer(i4) :: budget_n_fellout = 0
     integer(i4) :: budget_n_coalesced = 0
@@ -427,19 +395,21 @@ contains
 
 
     subroutine reset_budgets()
-        budget_inject_solute_mass = 0.0
-        budget_inject_liquid_mass = 0.0
-        budget_fallout_liquid_mass = 0.0
-        budget_fallout_solute_mass = 0.0
-        budget_condensation = 0.0
-        budget_dgm_delta_T = 0.0
         budget_diffusion_delta_T = 0.0
         budget_diffusion_delta_WV = 0.0
         budget_sidewall_delta_T = 0.0
         budget_sidewall_delta_WV = 0.0
-        budget_n_injected = 0
-        budget_n_fellout = 0
-        budget_n_coalesced = 0
+        if (do_microphysics) then
+            budget_inject_solute_mass = 0.0
+            budget_inject_liquid_mass = 0.0
+            budget_fallout_liquid_mass = 0.0
+            budget_fallout_solute_mass = 0.0
+            budget_condensation = 0.0
+            budget_dgm_delta_T = 0.0
+            budget_n_injected = 0
+            budget_n_fellout = 0
+            budget_n_coalesced = 0
+        end if
     end subroutine reset_budgets
 
 end module globals

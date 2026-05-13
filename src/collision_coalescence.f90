@@ -18,7 +18,7 @@ module collision_coalescence
 
     ! Namelist-controlled parameters
     logical, public :: do_collisions = .false.
-    logical, public :: do_coalescence = .true.
+    logical, public :: do_coalescence = .false.
     logical, public :: write_collisions = .false.
     real(dp), public :: wmax_collision = 10.0
 

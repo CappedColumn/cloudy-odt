@@ -6,10 +6,22 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use DGM, only: integrate_ODE, set_aerosol_properties, ode_supersat, ode_press
+    use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
+
+    private
+    public :: particles, particle, current_n_particles, total_n_particles, total_n_fellout, n_injected
+    public :: initialize_microphysics, update_droplets, move_particles_in_eddy
+    public :: calculate_droplet_statistics, bin_droplet_radii
+    public :: particle_bin_edges, size_distribution, n_DSD_bins, n_aer_category
+    public :: dsd_varid, aerDSD_varids
+    public :: write_trajectories, trajectory_start, trajectory_end, trajectory_timer
+    public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
+    public :: aerosol_concentration
+    public :: do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
+    public :: aerosol_file
 
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
@@ -44,20 +56,16 @@ module droplets
     real(dp) :: initial_wet_radius
     logical :: init_drop_each_gridpoint = .true.
     real(dp) :: expected_Ndrops_per_gridpoint = 1
+    real(dp) :: aerosol_concentration = 0.0
+    character(256) :: aerosol_file = ''
 
     ! DGM-Controlling variables
     real(dp), parameter :: RK5_min_timestep = 0.01
 
     ! Particle I/O Handling
-    logical :: write_trajectories
+    logical :: write_trajectories = .false.
     real(dp) :: trajectory_start = 0., trajectory_end = 0.
     real(dp) :: trajectory_timer = 1.
-
-        ! private
-    !public :: particles, aerosol, particle, inject_particle, initialize_aerosol_type, &
-    !total_n_fellout, droplet_growth_model, initialize_injection_rate, n_injected
-
-    ! Used in Main - write_trajectories
 
 contains
 
@@ -68,7 +76,7 @@ contains
         real(dp), intent(in) :: ltime, ldt
         integer :: i
 
-        call injection_controller(time, particles)
+        if (simulation_mode == 'chamber') call injection_controller(time, particles)
 
         if (do_collisions) then
             ! CC owns settling across the ldt window (writes back final
@@ -231,9 +239,13 @@ contains
             call lparticles(i)%settling(ldt)
         end do
 
-        ! Verify if particle fellout of domain
-        ! Updates number of particles currently in domain
-        call verify_particle_fallout(lparticles, current_n_particles)
+        if (simulation_mode == 'parcel') then
+            do i = 1, current_n_particles
+                lparticles(i)%position = modulo(lparticles(i)%position, H)
+            end do
+        else
+            call verify_particle_fallout(lparticles, current_n_particles)
+        end if
 
         ! For remaining particles, update gridcell index and properties
         do i = 1, current_n_particles
@@ -455,28 +467,28 @@ contains
         type(particle), intent(inout) :: droplet
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: time_start, time_stop, time_iterate
-        real(dp) :: y_arr(4), y_before(4), inverse_grid_mass, grid_rho
+        real(dp) :: y_arr(3), y_before(3), grid_mass, inverse_grid_mass, grid_rho
         real(dp) :: wl_before, T_before
         logical :: substep_flag
 
         ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
-        inverse_grid_mass = 1.0 / (gridcell_volume*grid_rho)
+        grid_mass = gridcell_volume * grid_rho
+        inverse_grid_mass = 1.0 / grid_mass
 
         ! Save pre-growth state for budget tracking
         wl_before = droplet%water_liquid
         T_before = droplet%temperature
 
         ! set odeint parameters for different aerosol mass of each droplet
-        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, inverse_grid_mass)
+        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, &
+                                    inverse_grid_mass, droplet%supersaturation/100)
 
         ! Package droplet properties into an array for ode solver
         y_arr(1) = droplet%radius
         y_arr(2) = droplet%water_vapor
         y_arr(3) = droplet%temperature
-        y_arr(4) = droplet%water_liquid
-        ode_supersat = droplet%supersaturation/100
-        ode_press    = pres
+
         y_before = y_arr
 
         ! In an attempt to please the continuum of time
@@ -516,7 +528,7 @@ contains
         droplet%radius = y_arr(1)
         droplet%water_vapor = y_arr(2)
         droplet%temperature = y_arr(3)
-        droplet%water_liquid = y_arr(4)
+        droplet%water_liquid = wl_before - (y_arr(2) - y_before(2)) * grid_mass
         droplet%supersaturation = calc_supersat(droplet%temperature, droplet%water_vapor, pres)
         droplet%virt_temp = virtual_temp(droplet%temperature, droplet%water_vapor)
 
@@ -605,12 +617,11 @@ contains
         ! Initialization of the MICROPHYSICS namelist and related parameters
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
-        
-        character(256):: aerosol_file
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
-        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
+        do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel, &
+        aerosol_concentration
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -687,20 +698,76 @@ contains
             call netcdf_add_aerDSD(ncid, n_aer_category)
         end if
 
-        ! Set up starting injection rate
+        if (simulation_mode == 'parcel') then
+            call initialize_parcel_aerosol()
+        else
+            call initialize_chamber_aerosol()
+        end if
+
+    end subroutine initialize_microphysics
+
+
+    subroutine initialize_chamber_aerosol()
+        integer(i4) :: i
+
         call initialize_injection(injection_rates)
-
-        ! Size particle array based on the expected number of droplets
         allocate(particles(int(expected_Ndrops_per_gridpoint*N)))
-
-        ! Initialize particles in each gridpoint (approximately)
-        if ( init_drop_each_gridpoint ) then
+        if (init_drop_each_gridpoint) then
             do i = 1, N
                 call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
             end do
         end if
 
-    end subroutine initialize_microphysics
+    end subroutine initialize_chamber_aerosol
+
+
+    subroutine initialize_parcel_aerosol()
+        integer(i4) :: n_total, i
+
+        inj_time_idx = 1
+        n_total = nint(aerosol_concentration * 1.0e6 * domain_volume)
+
+        write(*,'(a,i0,a,f0.1,a)') ' Expected particles: ', n_total, &
+              ' (', aerosol_concentration, ' cm-3)'
+
+        allocate(particles(max(n_total, 1)))
+
+        do i = 1, n_total
+            call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
+        end do
+
+        call equilibrate_particles(particles, n_total)
+
+    end subroutine initialize_parcel_aerosol
+
+
+    subroutine equilibrate_particles(lparticles, n_particles)
+        type(particle), intent(inout) :: lparticles(:)
+        integer(i4), intent(in) :: n_particles
+        real(dp) :: eq_dt, r_before, max_dr
+        integer(i4) :: i, iter
+        integer(i4), parameter :: max_iter = 100
+        real(dp), parameter :: eq_tol = 1.0e-12
+
+        eq_dt = 0.01
+
+        do iter = 1, max_iter
+            max_dr = 0.0
+            do i = 1, n_particles
+                r_before = lparticles(i)%radius
+                call single_droplet_growth(lparticles(i), 0.0_dp, eq_dt)
+                call update_particle(lparticles(i))
+                max_dr = max(max_dr, abs(lparticles(i)%radius - r_before))
+            end do
+
+            if (max_dr < eq_tol) exit
+        end do
+
+        write(*,'(a,i0,a,es9.2)') ' Equilibrated particles in ', iter, &
+              ' iterations, max dr = ', max_dr
+
+    end subroutine equilibrate_particles
+
 
     subroutine netcdf_add_DSD(lncid, r_bins)
         ! Adds a DSD variable to the netcdf file

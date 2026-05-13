@@ -739,146 +739,228 @@ end subroutine compute_MC_heating_profile
 
 
 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! INterface to ODT ........................................
-subroutine rad_interface_with_odt(N, area_frac, width_dom, len_dom, &
-		       n_prtcl_curr, gcell_prtcl_curr, r_prtcl_curr,&
-		       time, te, tscale_nu, max_prtcl_dom, Tdif, T_o, T, out_dir)
-    implicit none
-    character(len=256), intent(in)            :: out_dir
-    integer, intent(in)                       :: N, n_prtcl_curr, max_prtcl_dom
-    double precision, intent(in)              :: area_frac, width_dom, len_dom
-    integer, intent(in)                       :: gcell_prtcl_curr(max_prtcl_dom)
-    double precision, intent(in)              :: r_prtcl_curr(max_prtcl_dom)
-    double precision, intent(in)              :: time, te, tscale_nu, Tdif, T_o
-    double precision, intent(inout)           :: T(N) !! input and output - non-dimenionalized
-    double precision                          :: T_dim(N), dTdt(N)
-    double precision                          :: z(N), rad_box(N,max_droplets)
-    integer                                   :: nums(N)
-    double precision             :: kappa_prof(N), kappa_prof_avg(N), temp_prof_avg(N)
-    double precision                          :: dF_dz(N), Heating_rate(N), delta_T(N)
-    double precision                          :: T_bot, T_top
-    double precision                          :: time_dim, dt_dim, dt_dim_local 
-    
-    integer :: i, j
-    
-    
-    time_dim = time*tscale_nu
-    dt_dim_local = (time-te)*tscale_nu
-    ! z discretization.
-    do i = 1, N
-        z(i) = 0.0 + (i - 1) * (len_dom - 0.0) / real(N - 1)
-    end do
-    
-    ! initialize with zeros for droplet in grids before updating
-    nums = 0*int(z)
-    do i = 1, max_droplets
-        rad_box(:, i) = 0*z    
-    end do
-    
-    !! filling the corresponding grids if particles are in grid.
-    do i = 1, n_prtcl_curr
-        j = 1
-        do while (rad_box(gcell_prtcl_curr(i), j) > 0.00000000000001)
-        !! assuming that radius of particle is not < 0.00000000000001 
-            j = j+1
-        end do
-        rad_box(gcell_prtcl_curr(i), j) = r_prtcl_curr(i)
-        nums(gcell_prtcl_curr(i)) = nums(gcell_prtcl_curr(i)) + 1
-    end do
-    
-    T_dim = 273.15 + T_o +(0.5-T)*Tdif  !! in K
-        
-    call compute_kappa_local(N, max_droplets, nrows_mie, ncols_mie, rad_box, nums, &
-                                     width_dom, width_dom, z, T_dim, kappa_prof)
-    kappa_prof_sum = kappa_prof_sum + kappa_prof*dt_dim_local
-    temp_prof_sum = temp_prof_sum + T_dim*dt_dim_local
-    dt_for_run = dt_for_run + dt_dim_local
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-    !! added for radiation call frequency
-    if (time_dim >= rad_run_counter) then
-        kappa_prof_avg = kappa_prof_sum/dt_for_run !! Temporal weighting
-        temp_prof_avg = temp_prof_sum/dt_for_run  
-        
-        !! bottom and top temperature 
-        T_bot = 273.15 + T_o + Tdif*0.5
-        if (sky_cooling_flag >0) then
-            T_top = sky_temp
-            eps_top = 1.0
-        else
-            T_top = 273.15 + T_o - Tdif*0.5
+! =========================================================================
+! Public interface routines
+! =========================================================================
+
+    !> Read RADIATION namelist, load Mie table, allocate output arrays.
+    subroutine initialize_radiation()
+        integer :: ierr, nml_unit
+        character(256) :: resolved_path
+
+        namelist /RADIATION/ radiation_method, mie_data_file, eps_top, eps_bot, &
+            sky_temp, sky_cooling_flag, max_droplets_per_cell, rad_call_interval, &
+            nPhotons, nBins, Lx_rad, Ly_rad, T_side
+
+        open(newunit=nml_unit, file=namelist_path, action='read', status='old', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: cannot open namelist for RADIATION'
+            stop 1
         end if
-    	call compute_MC_heating_profile(N, z, temp_prof_avg, T_bot, T_top, len_dom, kappa_prof_avg, &
-                                      dTdt)
-        print*, "time (s)", time_dim 
-                                      
-    	T_dim = T_dim + dTdt*dt_for_run
-        T = 0.5 - (T_dim - 273.15 - T_o)/Tdif  !! non-dimensionalize, again in Celcius to return back.
-        !! heating rate is +ve, means it is heating.
-        call rad_var_writing(time_dim, dt_for_run, N, dTdt, temp_prof_avg)
-    
-        rad_run_counter = rad_run_counter + rad_run_time_step
-        kappa_prof_sum = 0.0d0
-        temp_prof_sum = 0.0d0
-        dt_for_run = 0.0d0
-    else
-        T = T + 0.0d0 !! no change in temperature if radiation is not called.
-    end if       
-end subroutine rad_interface_with_odt
+        read(nml=RADIATION, unit=nml_unit, iostat=ierr)
+        close(nml_unit)
+
+        if (mie_data_file == '') then
+            write(0,*) 'Error: mie_data_file must be set when do_radiation = .true.'
+            stop 1
+        end if
+
+        resolved_path = resolve_path(namelist_dir, mie_data_file)
+        call load_mie_table(resolved_path)
+
+        allocate(rad_F_net(N))
+        allocate(rad_heating_rate(N))
+        rad_F_net = 0.0
+        rad_heating_rate = 0.0
+
+        if (rad_call_interval > 0.0) then
+            allocate(kappa_sum(N), T_sum(N))
+            kappa_sum = 0.0
+            T_sum = 0.0
+            dt_accumulated = 0.0
+            next_rad_time = rad_call_interval
+        end if
+
+    end subroutine initialize_radiation
 
 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-subroutine rad_var_writing(time_dim, dt_for_run, N, Heating_rate, T_dim)
-    implicit none
-    double precision, intent(in)              :: time_dim, dt_for_run
-    integer, intent (in)                      :: N
-    double precision, intent(in)              :: Heating_rate(N), T_dim(N)
-    
-    write(file_Heating_rate,   '(10000E16.8)' )   time_dim, dt_for_run, Heating_rate
-    write(file_T_dim,   '(10000E16.8)' )          time_dim, dt_for_run, T_dim
-    
-    flush(file_Heating_rate)
-    flush(file_T_dim)
-       
-end subroutine rad_var_writing
+    !> Main radiation driver — called from the time loop.
+    !>
+    !> Bins droplets into grid cells, computes absorption, dispatches to
+    !> the selected solver, and applies the heating rate to Tarr.
+    !> When rad_call_interval > 0, accumulates kappa and T between calls
+    !> and only fires the solver when enough time has elapsed.
+    subroutine compute_radiation(Tarr, delta_t, current_time)
+        real(dp), intent(inout) :: Tarr(:)
+        real(dp), intent(in) :: delta_t, current_time
+
+        real(dp) :: rad_box(N, max_droplets_per_cell)
+        integer(i4) :: nums(N)
+        real(dp) :: dx, T_bot, T_top
+        real(dp) :: kappa_prof(N), dv(N), dz_arr(N)
+        real(dp) :: kappa_avg(N), T_avg(N)
+        integer :: i
+
+        dx = sqrt(gridcell_volume / dz_length)
+
+        call build_rad_box(rad_box, nums)
+
+        if (rad_call_interval > 0.0) then
+            call compute_dz_dv(dx, dx, dz_arr, dv)
+            call compute_kappa_prof(N, max_droplets_per_cell, rad_box, nums, &
+                                    dv, Tarr, kappa_prof)
+            kappa_sum = kappa_sum + kappa_prof * delta_t
+            T_sum = T_sum + Tarr * delta_t
+            dt_accumulated = dt_accumulated + delta_t
+
+            if (current_time >= next_rad_time) then
+                kappa_avg = kappa_sum / dt_accumulated
+                T_avg = T_sum / dt_accumulated
+
+                call get_boundary_temps(T_avg, T_bot, T_top)
+
+                if (radiation_method == '1d') then
+                    call solve_1d(N, max_droplets_per_cell, rad_box, nums, &
+                                  dx, dx, T_avg, T_bot, T_top, kappa_avg)
+                else
+                    call solve_3d(N, T_avg, T_bot, T_top, kappa_avg)
+                end if
+
+                do i = 1, N
+                    Tarr(i) = Tarr(i) + rad_heating_rate(i) * dt_accumulated
+                end do
+                budget_radiation_delta_T = budget_radiation_delta_T + &
+                    sum(rad_heating_rate) * dt_accumulated
+
+                kappa_sum = 0.0
+                T_sum = 0.0
+                dt_accumulated = 0.0
+                next_rad_time = next_rad_time + rad_call_interval
+            end if
+        else
+            call get_boundary_temps(Tarr, T_bot, T_top)
+
+            if (radiation_method == '1d') then
+                call solve_1d(N, max_droplets_per_cell, rad_box, nums, &
+                              dx, dx, Tarr, T_bot, T_top)
+            else
+                call compute_dz_dv(dx, dx, dz_arr, dv)
+                call compute_kappa_prof(N, max_droplets_per_cell, rad_box, nums, &
+                                        dv, Tarr, kappa_prof)
+                call solve_3d(N, Tarr, T_bot, T_top, kappa_prof)
+            end if
+
+            do i = 1, N
+                Tarr(i) = Tarr(i) + rad_heating_rate(i) * delta_t
+            end do
+            budget_radiation_delta_T = budget_radiation_delta_T + &
+                sum(rad_heating_rate) * delta_t
+        end if
+
+    end subroutine compute_radiation
 
 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-subroutine rad_initialization(out_dir, N)
-    implicit none
-    character(len=256), intent(in)            :: out_dir
-    integer, intent(in)                       :: N
-    
-    allocate(kappa_prof_sum(N))
-    allocate(temp_prof_sum(N))
-    
-    kappa_prof_sum       = 0.0d0
-    temp_prof_sum        = 0.0d0
-    
+    !> Deallocate all radiation arrays.
+    subroutine finalize_radiation()
 
-    file_Heating_rate    = 2400
-    file_T_dim           = 2401
-    
-    
-    open(file_Heating_rate,  file = trim(out_dir)//"Heating_rate_rad.txt")
-    write(file_Heating_rate, '(A,I6,A)') "#In each row, 1st colume - dim_time, 2nd - dim_delta_time &
-     and remaining column - mean heating_rate (+ means heating) & at all simulation-grid levels" !! header
-    flush(file_Heating_rate)
-    
-    open(file_T_dim,  file = trim(out_dir)//"T_dim_rad.txt")
-    write(file_T_dim, '(A,I6,A)') "#In each row, 1st colume - dim_time, 2nd - dim_delta_time &
-     and remaining column - mean Temperature & at all simulation-grid levels" !! header
-    flush(file_T_dim)
-    
-end subroutine rad_initialization
+        if (allocated(rad_F_net)) deallocate(rad_F_net)
+        if (allocated(rad_heating_rate)) deallocate(rad_heating_rate)
+        if (allocated(mie_table)) deallocate(mie_table)
+        if (allocated(mie_wavelength)) deallocate(mie_wavelength)
+        if (allocated(mie_delta_lambda)) deallocate(mie_delta_lambda)
+        if (allocated(mie_radius)) deallocate(mie_radius)
+        if (allocated(kappa_sum)) deallocate(kappa_sum)
+        if (allocated(T_sum)) deallocate(T_sum)
 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!   
-subroutine rad_file_close()
+    end subroutine finalize_radiation
 
-    close(file_Heating_rate)
-    close(file_T_dim)
-    print*, "closed all files related to radiation"
 
-end subroutine rad_file_close
+! =========================================================================
+! Internal helpers
+! =========================================================================
+
+    !> Set boundary temperatures from field endpoints, with sky cooling override.
+    subroutine get_boundary_temps(Tarr, T_bot, T_top)
+        real(dp), intent(in) :: Tarr(:)
+        real(dp), intent(out) :: T_bot, T_top
+
+        T_bot = Tarr(1)
+        if (sky_cooling_flag > 0) then
+            T_top = sky_temp
+        else
+            T_top = Tarr(N)
+        end if
+
+    end subroutine get_boundary_temps
+
+
+    !> Bin activated droplet radii into grid cells for radiation.
+    subroutine build_rad_box(rad_box, nums)
+        real(dp), intent(out) :: rad_box(:,:)
+        integer(i4), intent(out) :: nums(:)
+        integer :: i, gc, slot
+
+        rad_box = 0.0
+        nums = 0
+
+        do i = 1, current_n_particles
+            if (.not. particles(i)%activated) cycle
+            gc = particles(i)%gridcell
+            if (gc < 1 .or. gc > N) cycle
+            if (nums(gc) >= max_droplets_per_cell) cycle
+            nums(gc) = nums(gc) + 1
+            slot = nums(gc)
+            rad_box(gc, slot) = particles(i)%radius
+        end do
+
+    end subroutine build_rad_box
+
+
+    !> Load Mie Q_abs table from text file (called once at init).
+    subroutine load_mie_table(filepath)
+        character(*), intent(in) :: filepath
+        integer :: i, funit, ierr
+
+        allocate(mie_table(NROWS_MIE, NCOLS_MIE))
+        allocate(mie_wavelength(NCOLS_MIE - 1))
+        allocate(mie_delta_lambda(NCOLS_MIE - 1))
+        allocate(mie_radius(NROWS_MIE - 1))
+
+        open(newunit=funit, file=trim(filepath), status='old', action='read', iostat=ierr)
+        if (ierr /= 0) then
+            write(0,*) 'Error: cannot open mie_data_file: ', trim(filepath)
+            stop 1
+        end if
+        do i = 1, NROWS_MIE
+            read(funit, *) mie_table(i, :)
+        end do
+        close(funit)
+
+        mie_wavelength = mie_table(1, 2:NCOLS_MIE)
+        mie_radius = mie_table(2:NROWS_MIE, 1)
+
+        mie_delta_lambda(1) = mie_wavelength(2) - mie_wavelength(1)
+        do i = 2, NCOLS_MIE - 2
+            mie_delta_lambda(i) = (mie_wavelength(i+1) - mie_wavelength(i-1)) / 2.0
+        end do
+        mie_delta_lambda(NCOLS_MIE - 1) = &
+            mie_wavelength(NCOLS_MIE - 1) - mie_wavelength(NCOLS_MIE - 2)
+
+    end subroutine load_mie_table
+
+
+    !> Compute dz and dv arrays from the global z grid.
+    subroutine compute_dz_dv(dx, dy, dz_arr, dv)
+        real(dp), intent(in) :: dx, dy
+        real(dp), intent(out) :: dz_arr(:), dv(:)
+        integer :: i
+
+        dz_arr(1) = z(2) - z(1)
+        do i = 2, N
+            dz_arr(i) = z(i) - z(i-1)
+        end do
+        dv = dx * dy * dz_arr
+
+    end subroutine compute_dz_dv
 
 end module radiation

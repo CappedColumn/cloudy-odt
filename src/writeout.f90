@@ -8,7 +8,7 @@ module writeout
                         dsd_varid, aerDSD_varids
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
-    use parcel, only: do_parcel_ascent, parcel_height
+    use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity
     use ODT, only: Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
     use LEM, only: integral_length_scale, kolmogorov_length_scale, dissipation_rate
     implicit none
@@ -36,10 +36,10 @@ module writeout
     integer :: varid_stats(7)  ! Np, Nact, Nun, Ravg, LWC, N_collisions, N_coalescences
     integer :: varid_field_budgets(n_field_budgets)
     integer :: varid_micro_budgets(n_micro_budgets)
-    integer :: varid_parcel_height, varid_parcel_pressure
+    integer :: varid_parcel_height, varid_parcel_pressure, varid_parcel_velocity
 
     ! Parcel ascent buffers
-    real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:)
+    real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:), buffer_parcel_velocity(:)
 
     public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
@@ -108,8 +108,10 @@ contains
         if (do_parcel_ascent) then
             allocate(buffer_parcel_height(buff_len))
             allocate(buffer_parcel_pressure(buff_len))
+            allocate(buffer_parcel_velocity(buff_len))
             buffer_parcel_height = 0.
             buffer_parcel_pressure = 0.
+            buffer_parcel_velocity = 0.
         end if
 
     end subroutine initialize_buffers
@@ -122,6 +124,7 @@ contains
         if (allocated(buffer_DSD)) deallocate(buffer_DSD)
         if (allocated(buffer_parcel_height)) deallocate(buffer_parcel_height)
         if (allocated(buffer_parcel_pressure)) deallocate(buffer_parcel_pressure)
+        if (allocated(buffer_parcel_velocity)) deallocate(buffer_parcel_velocity)
     end subroutine deallocate_buffers
 
 
@@ -155,6 +158,7 @@ contains
             if (do_parcel_ascent) then
                 buffer_parcel_height(buffer_count) = parcel_height
                 buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
+                buffer_parcel_velocity(buffer_count) = parcel_velocity
             end if
         else
             ! Flush buffer and start new buffer
@@ -398,6 +402,14 @@ contains
                             "nf90_put_att: parcel_pressure, name" )
             call nc_verify( nf90_put_att(lncid, varid_parcel_pressure, "units", "mb"), &
                             "nf90_put_att: parcel_pressure, units" )
+
+            call nc_verify( nf90_def_var(lncid, "parcel_velocity", NF90_FLOAT, t_dimid, &
+                            varid_parcel_velocity, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: parcel_velocity" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_velocity, "long_name", "Parcel Vertical Velocity"), &
+                            "nf90_put_att: parcel_velocity, name" )
+            call nc_verify( nf90_put_att(lncid, varid_parcel_velocity, "units", "m/s"), &
+                            "nf90_put_att: parcel_velocity, units" )
         end if
 
         ! Exit define mode, however netCDF is still open
@@ -469,6 +481,8 @@ contains
                             buffer_parcel_height(1:buffer_count), start=(/nc_write_iter/)) )
             call nc_verify( nf90_put_var(lncid, varid_parcel_pressure, &
                             buffer_parcel_pressure(1:buffer_count), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, varid_parcel_velocity, &
+                            buffer_parcel_velocity(1:buffer_count), start=(/nc_write_iter/)) )
         end if
 
         ! Move 'start' time location to end of buffer for next write

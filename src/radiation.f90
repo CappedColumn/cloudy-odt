@@ -1,14 +1,15 @@
-!> Longwave radiative heating for chamber-mode CODT.
-!>
-!> Two solvers available via radiation_method namelist parameter:
-!>   '1d' — 1D two-stream (diffusivity-factor approximation)
-!>   '3d' — 3D Monte Carlo photon path-length method
-!>
-!> Ported from Suryadev Singh's radiation module (Oct 2025).
+! Longwave radiative heating for chamber-mode CODT.
+!
+! Two solvers available via radiation_method namelist parameter:
+!   '1d' — 1D two-stream (diffusivity-factor approximation)
+!   '3d' — 3D Monte Carlo photon path-length method
+!
+! Ported from Suryadev Singh's radiation module (Oct 2025).
 module radiation
     use globals, only: dp, i4, N, H, z, T, gridcell_volume, dz_length, &
                        do_radiation, budget_radiation_delta_T, &
-                       nc_verify, resolve_path, namelist_path, namelist_dir
+                       nc_verify, resolve_path, namelist_path, namelist_dir, &
+                       pi, pi_43, rho_l
     use droplets, only: particles, current_n_particles
     implicit none
 
@@ -49,125 +50,257 @@ module radiation
     real(dp) :: next_rad_time = 0.0
 
 contains
-    subroutine planck_lambda(wavelength_m, T, B_lambda)
-    	implicit none
-   	double precision, intent(in) :: wavelength_m, T
-    	double precision, intent(out) :: B_lambda
-    	double precision, parameter :: h = 6.62607015d-34
-    	double precision, parameter :: c = 2.99792458d8
-    	double precision, parameter :: k = 1.380649d-23
-    	double precision :: exponent
 
-    	exponent = h * c / (wavelength_m * k * T)
-    	B_lambda = (2.d0 * h * c**2 / wavelength_m**5) / (dexp(exponent) - 1.d0)
+! =========================================================================
+! Shared physics subroutines
+! =========================================================================
 
-    end subroutine planck_lambda 
-    
-    
-    subroutine volume_calculation(z, dx, dy, dz, dv)
-       implicit none
-       double precision, intent(in) :: z(:)
-       double precision, intent(in) :: dx, dy
-       double precision, intent(out) :: dz(:), dv(:)
-       integer :: i, n
-       
-       n = size(z)
-       dz(1) = z(2) - z(1)
-       do i = 2, n
-          dz(i) = z(i) - z(i-1)
-       end do
-       dv = dx*dy*dz
-   end subroutine volume_calculation
-   
-   
-   
- !!!! reading mie file   
-subroutine read_mie_data_fixed(nrows_mie, ncols_mie, mie_file, wavelength, delta_lambda, Radius)
-    implicit none
-    integer, intent(in) :: nrows_mie, ncols_mie
-    double precision, intent(out) :: wavelength(ncols_mie-1), delta_lambda(ncols_mie-1), Radius(nrows_mie-1)
+    ! Planck spectral radiance B(lambda, T) [W m^-3 sr^-1].
+    subroutine planck_lambda(wavelength_m, temp, B_lambda)
+        real(dp), intent(in) :: wavelength_m, temp
+        real(dp), intent(out) :: B_lambda
 
-    double precision, intent(out) :: mie_file(nrows_mie, ncols_mie)
-    integer :: i
+        real(dp), parameter :: H_PLANCK = 6.62607015e-34
+        real(dp), parameter :: C_LIGHT = 2.99792458e8
+        real(dp), parameter :: K_BOLTZ = 1.380649e-23
+        real(dp) :: exponent_val
 
-    open(unit=10, file="../../../mie_qabs_wavelength_vs_radius.txt",&
-     status="old", action="read")
-    !! change with relative path.  
-    !! if you want to update this dataset, see mie_scattering_data_file.ipynb in the folder and run accordingly.
-    do i = 1, nrows_mie
-        read(10, *) mie_file(i, :)
-    end do
-    close(10)
+        exponent_val = H_PLANCK * C_LIGHT / (wavelength_m * K_BOLTZ * temp)
+        B_lambda = (2.0 * H_PLANCK * C_LIGHT**2 / wavelength_m**5) / &
+                   (exp(exponent_val) - 1.0)
 
-    wavelength = mie_file(1, 2:ncols_mie)
+    end subroutine planck_lambda
 
-    delta_lambda = 0.0d0
-    do i = 2, ncols_mie-2
-        delta_lambda(i) = (wavelength(i+1) - wavelength(i-1)) / 2.0d0
-    end do
-    delta_lambda(1) = wavelength(2) - wavelength(1)
-    delta_lambda(ncols_mie-1) = wavelength(ncols_mie-1) - wavelength(ncols_mie-2)
 
-    Radius = mie_file(2:nrows_mie, 1)
+    ! Planck-mean absorption coefficient profile from droplet radii.
+    ! Uses module-level Mie table arrays (loaded once at init).
+    subroutine compute_kappa_prof(nrows, ncols_max, rad_box, nums, dv, T_profile, kappa_prof)
+        integer(i4), intent(in) :: nrows, ncols_max
+        real(dp), intent(in) :: rad_box(nrows, ncols_max)
+        integer(i4), intent(in) :: nums(nrows)
+        real(dp), intent(in) :: dv(nrows), T_profile(nrows)
+        real(dp), intent(out) :: kappa_prof(nrows)
 
-end subroutine read_mie_data_fixed
+        integer(i4), parameter :: N_WAVE = NCOLS_MIE - 1
+        integer(i4), parameter :: N_RADIUS = NROWS_MIE - 1
+        real(dp) :: C_abs(N_WAVE), kappa(N_WAVE), kappa_mean
+        real(dp) :: B_planck(N_WAVE), qabs(N_WAVE)
+        integer :: i, j, k, idx
 
-subroutine compute_kappa_prof(nrows, ncols_max, nrows_mie, ncols_mie, rad_box, nums, dv, T_profile, &
-                              Radius, wavelength, delta_lambda, mie_file, kappa_prof)
-    implicit none
-    integer, intent(in) :: nrows, ncols_max
-    integer, intent(in) :: nrows_mie, ncols_mie
-    double precision, intent(in) :: rad_box(nrows, ncols_max)
-    integer, intent(in) :: nums(nrows)
-    double precision, intent(in) :: dv(nrows)
-    double precision, intent(in) :: T_profile(nrows)
-    double precision, intent(in) :: Radius(nrows_mie-1)
-    double precision, intent(in) :: wavelength(ncols_mie-1)
-    double precision, intent(in) :: delta_lambda(ncols_mie-1)
-    double precision, intent(in) :: mie_file(nrows_mie, ncols_mie)
-    double precision, intent(out) :: kappa_prof(nrows)
+        kappa_prof = 0.0
 
-    double precision :: C_abs(ncols_mie-1), kappa(ncols_mie-1), kappa_mean
-    double precision :: B(ncols_mie-1), qabs(ncols_mie-1)
-    integer :: i, j, k, idx
-    integer :: n_wave, n_radius
+        do i = 1, nrows
+            if (nums(i) == 0) cycle
 
-    n_wave = ncols_mie - 1
-    n_radius = nrows_mie - 1
-
-    kappa_prof = 0.0d0
-
-    do i = 1, nrows
-        if (nums(i) > 0) then
-            C_abs = 0.0d0
+            C_abs = 0.0
             do j = 1, nums(i)
                 idx = 0
-                do while (idx < n_radius .and. Radius(idx+1) <= rad_box(i,j))
+                do while (idx < N_RADIUS .and. mie_radius(idx+1) <= rad_box(i,j))
                     idx = idx + 1
                 end do
-                qabs = mie_file(idx+1, 2:n_wave+1)
-                C_abs = C_abs + 3.141592653589793d0 * rad_box(i,j)**2 * qabs
+                qabs = mie_table(idx+1, 2:N_WAVE+1)
+                C_abs = C_abs + pi * rad_box(i,j)**2 * qabs
             end do
 
-            
             kappa = C_abs / dv(i)
 
-            do k = 1, n_wave
-                call planck_lambda(wavelength(k), T_profile(i), B(k))
+            do k = 1, N_WAVE
+                call planck_lambda(mie_wavelength(k), T_profile(i), B_planck(k))
             end do
 
-            ! Planck mean
-            kappa_mean = sum(kappa * B * delta_lambda) / sum(B * delta_lambda)
+            kappa_mean = sum(kappa * B_planck * mie_delta_lambda) / &
+                         sum(B_planck * mie_delta_lambda)
             kappa_prof(i) = kappa_mean
-        else
-            kappa_prof(i) = 0.0d0
+        end do
+
+    end subroutine compute_kappa_prof
+
+
+! =========================================================================
+! 1D Two-Stream Solver
+! =========================================================================
+
+    ! Optical depth profile from absorption coefficient.
+    ! Applies diffusivity factor (1.66) to account for cosine-weighted
+    ! angular integration in the two-stream approximation.
+    subroutine compute_tau(nrows, kappa_prof, dz_arr, tau, kappa_d)
+        integer(i4), intent(in) :: nrows
+        real(dp), intent(in) :: kappa_prof(nrows), dz_arr(nrows)
+        real(dp), intent(out) :: tau(nrows), kappa_d(nrows)
+        integer :: i
+
+        real(dp), parameter :: DIFF_FAC = 1.66
+
+        kappa_d = kappa_prof * DIFF_FAC
+        tau(1) = 0.0
+        do i = 2, nrows
+            tau(i) = sum(kappa_d(1:i-1) * dz_arr(1:i-1))
+        end do
+
+    end subroutine compute_tau
+
+
+    ! Upward media-emitted radiation at z-level z_ind.
+    subroutine upward_media_emitted(z_ind, B_emm, kappa_d, tau, dz_arr, sum_val)
+        integer(i4), intent(in) :: z_ind
+        real(dp), intent(in) :: B_emm(:), kappa_d(:), tau(:), dz_arr(:)
+        real(dp), intent(out) :: sum_val
+        integer :: i
+
+        sum_val = 0.0
+        if (z_ind > 1) then
+            do i = 1, z_ind - 1
+                sum_val = sum_val + B_emm(i) * kappa_d(i) * dz_arr(i) * &
+                          exp(-(tau(z_ind) - tau(i)))
+            end do
         end if
-    end do
 
-end subroutine compute_kappa_prof
+    end subroutine upward_media_emitted
 
 
-!!! for 3-D model -----------------------------------------------------------------------------------------------------------------
+    ! Downward media-emitted radiation at z-level z_ind.
+    subroutine downward_media_emitted(z_ind, B_emm, kappa_d, tau, dz_arr, sum_val)
+        integer(i4), intent(in) :: z_ind
+        real(dp), intent(in) :: B_emm(:), kappa_d(:), tau(:), dz_arr(:)
+        real(dp), intent(out) :: sum_val
+        integer :: i, n_lev
+
+        n_lev = size(B_emm)
+        sum_val = 0.0
+        if (z_ind <= n_lev) then
+            do i = z_ind, n_lev
+                sum_val = sum_val + B_emm(i) * kappa_d(i) * dz_arr(i) * &
+                          exp(-(tau(i) - tau(z_ind)))
+            end do
+        end if
+
+    end subroutine downward_media_emitted
+
+
+    ! Compute upward/downward intensities, net flux, and flux divergence.
+    subroutine compute_fluxes(nrows, dz_arr, z_arr, tau, kappa_d, T_profile, &
+                              l_eps_top, l_eps_bot, T_bot, T_top, &
+                              I_plus, I_minus, F_net, dF_dz)
+        integer(i4), intent(in) :: nrows
+        real(dp), intent(in) :: dz_arr(nrows), z_arr(nrows), tau(nrows)
+        real(dp), intent(in) :: kappa_d(nrows), T_profile(nrows)
+        real(dp), intent(in) :: l_eps_bot, l_eps_top, T_bot, T_top
+        real(dp), intent(out) :: I_plus(nrows), I_minus(nrows)
+        real(dp), intent(out) :: F_net(nrows), dF_dz(nrows)
+
+        real(dp), parameter :: SIGMA_SB = 5.67e-8
+        real(dp) :: B_emm(nrows)
+        real(dp) :: J_t, J_b
+        real(dp) :: t1, t2_1, t2_2, t2_3, t_3
+        real(dp) :: tmp_up, tmp_down
+        integer :: i
+
+        B_emm = SIGMA_SB * T_profile**4
+
+        t1 = l_eps_top * SIGMA_SB * T_top**4
+        t2_1 = l_eps_bot * SIGMA_SB * T_bot**4 * exp(-tau(nrows))
+
+        call downward_media_emitted(1, B_emm, kappa_d, tau, dz_arr, tmp_down)
+        t2_2 = (1.0 - l_eps_bot) * exp(-tau(nrows)) * tmp_down
+
+        call upward_media_emitted(nrows, B_emm, kappa_d, tau, dz_arr, tmp_up)
+        t2_3 = tmp_up
+
+        t_3 = 1.0 - ((1.0 - l_eps_bot) * (1.0 - l_eps_top) * exp(-tau(nrows))**2)
+        J_t = (t1 + (1.0 - l_eps_top) * (t2_1 + t2_2 + t2_3)) / t_3
+
+        call downward_media_emitted(1, B_emm, kappa_d, tau, dz_arr, tmp_down)
+        J_b = l_eps_bot * SIGMA_SB * T_bot**4 + &
+              (1.0 - l_eps_bot) * (J_t * exp(-tau(nrows)) + tmp_down)
+
+        I_plus = 0.0
+        I_minus = 0.0
+
+        do i = 1, nrows
+            call upward_media_emitted(i, B_emm, kappa_d, tau, dz_arr, tmp_up)
+            call downward_media_emitted(i, B_emm, kappa_d, tau, dz_arr, tmp_down)
+            I_plus(i) = J_b * exp(-tau(i)) + tmp_up
+            I_minus(i) = J_t * exp(-(tau(nrows) - tau(i))) + tmp_down
+        end do
+
+        F_net = I_plus - I_minus
+
+        dF_dz(1) = (F_net(2) - F_net(1)) / (z_arr(2) - z_arr(1))
+        do i = 2, nrows - 1
+            dF_dz(i) = (F_net(i+1) - F_net(i-1)) / (z_arr(i+1) - z_arr(i-1))
+        end do
+        dF_dz(nrows) = (F_net(nrows) - F_net(nrows-1)) / &
+                        (z_arr(nrows) - z_arr(nrows-1))
+
+    end subroutine compute_fluxes
+
+
+    ! Heating rate from flux divergence, accounting for liquid water heat capacity.
+    subroutine compute_heating_rate_1d(nrows, ncols_max, nums, rad_box, dv, dF_dz, heating)
+        integer(i4), intent(in) :: nrows, ncols_max
+        integer(i4), intent(in) :: nums(nrows)
+        real(dp), intent(in) :: rad_box(nrows, ncols_max), dv(nrows), dF_dz(nrows)
+        real(dp), intent(out) :: heating(nrows)
+
+        ! Fixed air density — valid for Pi-Chamber near STP.
+        ! Must be computed from equation of state if radiation is
+        ! extended to parcel mode or chamber at lower pressures.
+        real(dp), parameter :: RHO_A = 1.2
+        real(dp), parameter :: C_A = 1007.0
+        real(dp), parameter :: C_D = 4186.0
+        real(dp) :: w_d, vol_water
+        integer :: i, j
+
+        do i = 1, nrows
+            vol_water = 0.0
+            do j = 1, nums(i)
+                vol_water = vol_water + &
+                    pi_43 * rad_box(i,j)**3
+            end do
+            w_d = vol_water * rho_l / dv(i)
+            heating(i) = -dF_dz(i) / (RHO_A * C_A + w_d * C_D)
+        end do
+
+    end subroutine compute_heating_rate_1d
+
+
+    ! Full 1D two-stream radiation solve.
+    ! Populates module-level rad_F_net and rad_heating_rate.
+    subroutine solve_1d(nrows, ncols_max, rad_box, nums, dx, dy, &
+                        T_profile, T_bot, T_top, precomputed_kappa)
+        integer(i4), intent(in) :: nrows, ncols_max
+        real(dp), intent(in) :: rad_box(nrows, ncols_max)
+        integer(i4), intent(in) :: nums(nrows)
+        real(dp), intent(in) :: dx, dy
+        real(dp), intent(in) :: T_profile(nrows), T_bot, T_top
+        real(dp), intent(in), optional :: precomputed_kappa(:)
+
+        real(dp) :: dz_arr(nrows), dv(nrows)
+        real(dp) :: kappa_prof(nrows), kappa_d(nrows), tau(nrows)
+        real(dp) :: I_plus(nrows), I_minus(nrows), dF_dz(nrows)
+
+        call compute_dz_dv(dx, dy, dz_arr, dv)
+
+        if (present(precomputed_kappa)) then
+            kappa_prof = precomputed_kappa
+        else
+            call compute_kappa_prof(nrows, ncols_max, rad_box, nums, &
+                                    dv, T_profile, kappa_prof)
+        end if
+
+        call compute_tau(nrows, kappa_prof, dz_arr, tau, kappa_d)
+        call compute_fluxes(nrows, dz_arr, z, tau, kappa_d, T_profile, &
+                            eps_top, eps_bot, T_bot, T_top, &
+                            I_plus, I_minus, rad_F_net, dF_dz)
+        call compute_heating_rate_1d(nrows, ncols_max, nums, rad_box, &
+                                     dv, dF_dz, rad_heating_rate)
+
+    end subroutine solve_1d
+
+
+! =========================================================================
+! 3D Monte Carlo Solver
+! =========================================================================
 ! coarse interpolation
 subroutine interp_column(n_in, z_in, var_in, n_out, z_out, var_out)
     implicit none
@@ -743,7 +876,7 @@ end subroutine compute_MC_heating_profile
 ! Public interface routines
 ! =========================================================================
 
-    !> Read RADIATION namelist, load Mie table, allocate output arrays.
+    ! Read RADIATION namelist, load Mie table, allocate output arrays.
     subroutine initialize_radiation()
         integer :: ierr, nml_unit
         character(256) :: resolved_path
@@ -784,12 +917,12 @@ end subroutine compute_MC_heating_profile
     end subroutine initialize_radiation
 
 
-    !> Main radiation driver — called from the time loop.
-    !>
-    !> Bins droplets into grid cells, computes absorption, dispatches to
-    !> the selected solver, and applies the heating rate to Tarr.
-    !> When rad_call_interval > 0, accumulates kappa and T between calls
-    !> and only fires the solver when enough time has elapsed.
+    ! Main radiation driver — called from the time loop.
+    !
+    ! Bins droplets into grid cells, computes absorption, dispatches to
+    ! the selected solver, and applies the heating rate to Tarr.
+    ! When rad_call_interval > 0, accumulates kappa and T between calls
+    ! and only fires the solver when enough time has elapsed.
     subroutine compute_radiation(Tarr, delta_t, current_time)
         real(dp), intent(inout) :: Tarr(:)
         real(dp), intent(in) :: delta_t, current_time
@@ -860,7 +993,7 @@ end subroutine compute_MC_heating_profile
     end subroutine compute_radiation
 
 
-    !> Deallocate all radiation arrays.
+    ! Deallocate all radiation arrays.
     subroutine finalize_radiation()
 
         if (allocated(rad_F_net)) deallocate(rad_F_net)
@@ -879,7 +1012,7 @@ end subroutine compute_MC_heating_profile
 ! Internal helpers
 ! =========================================================================
 
-    !> Set boundary temperatures from field endpoints, with sky cooling override.
+    ! Set boundary temperatures from field endpoints, with sky cooling override.
     subroutine get_boundary_temps(Tarr, T_bot, T_top)
         real(dp), intent(in) :: Tarr(:)
         real(dp), intent(out) :: T_bot, T_top
@@ -894,7 +1027,7 @@ end subroutine compute_MC_heating_profile
     end subroutine get_boundary_temps
 
 
-    !> Bin activated droplet radii into grid cells for radiation.
+    ! Bin activated droplet radii into grid cells for radiation.
     subroutine build_rad_box(rad_box, nums)
         real(dp), intent(out) :: rad_box(:,:)
         integer(i4), intent(out) :: nums(:)
@@ -916,7 +1049,7 @@ end subroutine compute_MC_heating_profile
     end subroutine build_rad_box
 
 
-    !> Load Mie Q_abs table from text file (called once at init).
+    ! Load Mie Q_abs table from text file (called once at init).
     subroutine load_mie_table(filepath)
         character(*), intent(in) :: filepath
         integer :: i, funit, ierr
@@ -949,7 +1082,7 @@ end subroutine compute_MC_heating_profile
     end subroutine load_mie_table
 
 
-    !> Compute dz and dv arrays from the global z grid.
+    ! Compute dz and dv arrays from the global z grid.
     subroutine compute_dz_dv(dx, dy, dz_arr, dv)
         real(dp), intent(in) :: dx, dy
         real(dp), intent(out) :: dz_arr(:), dv(:)

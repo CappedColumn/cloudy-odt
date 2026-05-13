@@ -442,10 +442,9 @@ contains
     subroutine compute_exit_distance(pt, d, t_exit)
         real(dp), intent(in) :: pt(3), d(3)
         real(dp), intent(out) :: t_exit
-        real(dp) :: ts(3), tmin
-        real(dp), parameter :: EPS_T = 1.0e-9
+        real(dp) :: ts(3)
         real(dp) :: dx, dy, dz, px, py, pz
-        integer :: n_ts, i
+        integer :: n_ts
 
         px = pt(1); py = pt(2); pz = pt(3)
         dx = d(1); dy = d(2); dz = d(3)
@@ -467,11 +466,7 @@ contains
             n_ts = n_ts + 1; ts(n_ts) = -pz / dz
         end if
 
-        tmin = huge(tmin)
-        do i = 1, n_ts
-            if (ts(i) > EPS_T .and. ts(i) < tmin) tmin = ts(i)
-        end do
-        t_exit = tmin
+        t_exit = minval(ts(1:n_ts))
 
     end subroutine compute_exit_distance
 

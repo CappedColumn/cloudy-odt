@@ -9,7 +9,7 @@ module radiation
     use globals, only: dp, i4, N, H, z, T, gridcell_volume, dz_length, &
                        do_radiation, budget_radiation_delta_T, &
                        nc_verify, resolve_path, namelist_path, namelist_dir, &
-                       pi, pi_43, rho_l
+                       pi, pi_43, rho_l, cp, c_l
     use droplets, only: particles, current_n_particles
     implicit none
 
@@ -38,6 +38,13 @@ module radiation
     ! --- Public output arrays (written to NetCDF by writeout) ---
     real(dp), allocatable :: rad_F_net(:)
     real(dp), allocatable :: rad_heating_rate(:)
+
+    ! --- Shared physical constants ---
+    real(dp), parameter :: SIGMA_SB = 5.670374e-8   ! Stefan-Boltzmann [W m^-2 K^-4]
+    ! Fixed air density — valid for Pi-Chamber near STP.
+    ! Must be computed from equation of state if radiation is
+    ! extended to parcel mode or chamber at lower pressures.
+    real(dp), parameter :: RHO_A = 1.2              ! air density [kg m^-3]
 
     ! --- Mie table (read once at init) ---
     integer(i4), parameter :: NROWS_MIE = 501, NCOLS_MIE = 112
@@ -192,7 +199,6 @@ contains
         real(dp), intent(out) :: I_plus(nrows), I_minus(nrows)
         real(dp), intent(out) :: F_net(nrows), dF_dz(nrows)
 
-        real(dp), parameter :: SIGMA_SB = 5.67e-8
         real(dp) :: B_emm(nrows)
         real(dp) :: J_t, J_b
         real(dp) :: t1, t2_1, t2_2, t2_3, t_3
@@ -246,12 +252,6 @@ contains
         real(dp), intent(in) :: rad_box(nrows, ncols_max), dv(nrows), dF_dz(nrows)
         real(dp), intent(out) :: heating(nrows)
 
-        ! Fixed air density — valid for Pi-Chamber near STP.
-        ! Must be computed from equation of state if radiation is
-        ! extended to parcel mode or chamber at lower pressures.
-        real(dp), parameter :: RHO_A = 1.2
-        real(dp), parameter :: C_A = 1007.0
-        real(dp), parameter :: C_D = 4186.0
         real(dp) :: w_d, vol_water
         integer :: i, j
 
@@ -262,7 +262,7 @@ contains
                     pi_43 * rad_box(i,j)**3
             end do
             w_d = vol_water * rho_l / dv(i)
-            heating(i) = -dF_dz(i) / (RHO_A * C_A + w_d * C_D)
+            heating(i) = -dF_dz(i) / (RHO_A * cp + w_d * c_l)
         end do
 
     end subroutine compute_heating_rate_1d
@@ -340,7 +340,6 @@ contains
         real(dp), intent(in) :: T_bottom, T_top_mc, lT_side
         real(dp), intent(out) :: P_bottom, P_top_mc, P_sides, Q_total
 
-        real(dp), parameter :: SIGMA_SB = 5.670374e-8
         real(dp) :: Q_bottom, Q_top, Q_sides
 
         Q_bottom = SIGMA_SB * T_bottom**4 * mc_A_bottom
@@ -468,7 +467,7 @@ contains
             n_ts = n_ts + 1; ts(n_ts) = -pz / dz
         end if
 
-        tmin = huge(1.0)
+        tmin = huge(tmin)
         do i = 1, n_ts
             if (ts(i) > EPS_T .and. ts(i) < tmin) tmin = ts(i)
         end do
@@ -606,10 +605,6 @@ contains
         real(dp), intent(in) :: Q_total
         real(dp), intent(out) :: dTdt(nBins)
 
-        real(dp), parameter :: SIGMA_SB = 5.670374e-8
-        ! Fixed air density — see compute_heating_rate_1d comment
-        real(dp), parameter :: RHO_A = 1.2
-        real(dp), parameter :: C_P = 1007.0
         real(dp) :: power_per_photon, dz_bin
         real(dp) :: Q_abs_bins(nBins), q_abs(nBins), q_emit(nBins), q_net(nBins)
 
@@ -619,7 +614,7 @@ contains
         q_abs = Q_abs_bins / (mc_A_bottom * dz_bin)
         q_emit = 4.0 * kappa_bins * SIGMA_SB * T_bins**4
         q_net = q_abs - q_emit
-        dTdt = q_net / (RHO_A * C_P)
+        dTdt = q_net / (RHO_A * cp)
 
     end subroutine compute_mc_heating
 

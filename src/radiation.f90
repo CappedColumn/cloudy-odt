@@ -26,7 +26,7 @@ module radiation
     real(dp) :: eps_top = 1.0
     real(dp) :: eps_bot = 1.0
     real(dp) :: sky_temp = 263.15
-    integer(i4) :: sky_cooling_flag = 0
+    logical :: sky_cooling_flag = .false.
     integer(i4) :: max_droplets_per_cell = 20
     real(dp) :: rad_call_interval = 0.0
     integer(i4) :: nPhotons = 700000
@@ -814,7 +814,7 @@ contains
         real(dp), intent(out) :: T_bot, T_top
 
         T_bot = Tarr(1)
-        if (sky_cooling_flag > 0) then
+        if (sky_cooling_flag) then
             T_top = sky_temp
         else
             T_top = Tarr(N)

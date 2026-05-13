@@ -11,6 +11,9 @@ module writeout
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity
+    use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
+                         eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
+                         nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
     use ODT, only: Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
     use LEM, only: integral_length_scale, kolmogorov_length_scale, dissipation_rate
     implicit none
@@ -42,6 +45,11 @@ module writeout
 
     ! Parcel ascent buffers
     real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:), buffer_parcel_velocity(:)
+
+    ! Radiation varids and buffers (only when do_radiation = .true.)
+    integer :: varid_rad_F_net, varid_rad_heating_rate, varid_rad_budget
+    real(dp), allocatable :: buffer_rad_F_net(:,:), buffer_rad_heating_rate(:,:)
+    real(dp), allocatable :: buffer_rad_budget(:)
 
     public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
@@ -116,6 +124,15 @@ contains
             buffer_parcel_velocity = 0.
         end if
 
+        if (do_radiation) then
+            allocate(buffer_rad_F_net(N_grid, buff_len))
+            allocate(buffer_rad_heating_rate(N_grid, buff_len))
+            allocate(buffer_rad_budget(buff_len))
+            buffer_rad_F_net = 0.
+            buffer_rad_heating_rate = 0.
+            buffer_rad_budget = 0.
+        end if
+
     end subroutine initialize_buffers
 
 
@@ -127,6 +144,9 @@ contains
         if (allocated(buffer_parcel_height)) deallocate(buffer_parcel_height)
         if (allocated(buffer_parcel_pressure)) deallocate(buffer_parcel_pressure)
         if (allocated(buffer_parcel_velocity)) deallocate(buffer_parcel_velocity)
+        if (allocated(buffer_rad_F_net)) deallocate(buffer_rad_F_net)
+        if (allocated(buffer_rad_heating_rate)) deallocate(buffer_rad_heating_rate)
+        if (allocated(buffer_rad_budget)) deallocate(buffer_rad_budget)
     end subroutine deallocate_buffers
 
 
@@ -161,6 +181,11 @@ contains
                 buffer_parcel_height(buffer_count) = parcel_height
                 buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
                 buffer_parcel_velocity(buffer_count) = parcel_velocity
+            end if
+            if (do_radiation) then
+                buffer_rad_F_net(:, buffer_count) = rad_F_net
+                buffer_rad_heating_rate(:, buffer_count) = rad_heating_rate
+                buffer_rad_budget(buffer_count) = budget_radiation_delta_T
             end if
         else
             ! Flush buffer and start new buffer
@@ -243,7 +268,7 @@ contains
         integer :: old_nc, stat
         integer :: t_dimid, z_dimid, dimids(2)
         integer :: z_varid
-        integer :: j, k, nz, nbins
+        integer :: j, k, nz
 
         nz = size(z_m)
         nc_write_iter = 1
@@ -414,6 +439,33 @@ contains
                             "nf90_put_att: parcel_velocity, units" )
         end if
 
+        ! Radiation variables (chamber mode with do_radiation only)
+        if (do_radiation) then
+            call nc_verify( nf90_def_var(lncid, "rad_F_net", NF90_FLOAT, dimids, varid_rad_F_net, &
+                            deflate_level=1, shuffle=.true.), "nf90_def_var: rad_F_net" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_F_net, "long_name", "Net Radiative Flux"), &
+                            "nf90_put_att: rad_F_net, name" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_F_net, "units", "W/m2"), &
+                            "nf90_put_att: rad_F_net, units" )
+
+            call nc_verify( nf90_def_var(lncid, "rad_heating_rate", NF90_FLOAT, dimids, &
+                            varid_rad_heating_rate, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: rad_heating_rate" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_heating_rate, "long_name", &
+                            "Radiative Heating Rate"), "nf90_put_att: rad_heating_rate, name" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_heating_rate, "units", "K/s"), &
+                            "nf90_put_att: rad_heating_rate, units" )
+
+            call nc_verify( nf90_def_var(lncid, "budget_radiation_delta_T", NF90_DOUBLE, &
+                            t_dimid, varid_rad_budget, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: budget_radiation_delta_T" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_budget, "long_name", &
+                            "Domain-sum T change from radiation"), &
+                            "nf90_put_att: budget_radiation_delta_T, name" )
+            call nc_verify( nf90_put_att(lncid, varid_rad_budget, "units", "K"), &
+                            "nf90_put_att: budget_radiation_delta_T, units" )
+        end if
+
         ! Exit define mode, however netCDF is still open
         call nc_verify( nf90_enddef(lncid), "nf90_enddef" )
     
@@ -485,6 +537,17 @@ contains
                             buffer_parcel_pressure(1:buffer_count), start=(/nc_write_iter/)) )
             call nc_verify( nf90_put_var(lncid, varid_parcel_velocity, &
                             buffer_parcel_velocity(1:buffer_count), start=(/nc_write_iter/)) )
+        end if
+
+        if (do_radiation) then
+            call nc_verify( nf90_put_var(lncid, varid_rad_F_net, &
+                            buffer_rad_F_net(:, 1:buffer_count), &
+                            start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(lncid, varid_rad_heating_rate, &
+                            buffer_rad_heating_rate(:, 1:buffer_count), &
+                            start=start_dim, count=count_dim) )
+            call nc_verify( nf90_put_var(lncid, varid_rad_budget, &
+                            buffer_rad_budget(1:buffer_count), start=(/nc_write_iter/)) )
         end if
 
         ! Move 'start' time location to end of buffer for next write
@@ -595,6 +658,33 @@ contains
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.aerosol_concentration", &
                                 aerosol_concentration) )
             end if
+        end if
+
+        ! RADIATION
+        if (do_radiation) then
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_radiation", 1) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.radiation_method", &
+                            trim(radiation_method)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.mie_data_file", &
+                            trim(mie_data_file)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.eps_top", eps_top) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.eps_bot", eps_bot) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.sky_temp", sky_temp) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.sky_cooling_flag", &
+                            merge(1, 0, sky_cooling_flag)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.rad_call_interval", &
+                            rad_call_interval) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.max_droplets_per_cell", &
+                            max_droplets_per_cell) )
+            if (radiation_method == '3d') then
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.nPhotons", nPhotons) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.nBins", nBins) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.Lx_rad", Lx_rad) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.Ly_rad", Ly_rad) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "RADIATION.T_side", T_side) )
+            end if
+        else
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_radiation", 0) )
         end if
 
         ! SPECIALEFFECTS — chamber only

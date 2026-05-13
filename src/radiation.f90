@@ -1,27 +1,53 @@
+!> Longwave radiative heating for chamber-mode CODT.
+!>
+!> Two solvers available via radiation_method namelist parameter:
+!>   '1d' — 1D two-stream (diffusivity-factor approximation)
+!>   '3d' — 3D Monte Carlo photon path-length method
+!>
+!> Ported from Suryadev Singh's radiation module (Oct 2025).
 module radiation
+    use globals, only: dp, i4, N, H, z, T, gridcell_volume, dz_length, &
+                       do_radiation, budget_radiation_delta_T, &
+                       nc_verify, resolve_path, namelist_path, namelist_dir
+    use droplets, only: particles, current_n_particles
     implicit none
-  
-    integer, save                       :: file_Heating_rate, file_T_dim
-    double precision, allocatable, save :: kappa_prof_sum(:), temp_prof_sum(:)
-    double precision, save              :: rad_run_time_step = 5 !! run as well as save, dimensional time (s)  hard-coded
-    double precision, save              :: rad_run_counter = 10 !! first-time stamp of run and save  -- dimensional time (s) hard-coded 
-    double precision, save              :: dt_for_run = 0.0d0
-    integer, save                       :: nrows_mie=501, ncols_mie=112, max_droplets=6  !! hard-coded
-    double precision, save              :: eps_top=1.0, eps_bot=1.0 !! hard_coded
-    double precision, save              :: sky_temp =  263.15 !! in K, for cloud-top cooling (hard-coded) 
-    integer, save                       :: sky_cooling_flag = 0 !! 0 no-cloud top cooling, 1 - with cooling
-    
-    integer, save                       :: nPhotons=700000, nBins=30
-    double precision, save              :: T_side = 293.15
-    double precision, save              :: Lx = 2.0, Ly = 2.0
-    
-    !! write kappa_prof
-    !open(10, file='/home/ssingh45/Downloads/scratch/kappa_prof.txt', status='replace', action='write')
-    !do i = 1, nrows
-    !    write(10, '(F12.6)') kappa_prof(i)
-    !end do
-    !close(10)    
-    
+
+    private
+    public :: initialize_radiation, compute_radiation, finalize_radiation
+    public :: rad_F_net, rad_heating_rate
+    public :: radiation_method, mie_data_file, eps_top, eps_bot, sky_temp, &
+              sky_cooling_flag, max_droplets_per_cell, rad_call_interval, &
+              nPhotons, nBins, Lx_rad, Ly_rad, T_side
+
+    ! --- RADIATION namelist parameters ---
+    character(4)  :: radiation_method = '1d'
+    character(256) :: mie_data_file = ''
+    real(dp) :: eps_top = 1.0
+    real(dp) :: eps_bot = 1.0
+    real(dp) :: sky_temp = 263.15
+    integer(i4) :: sky_cooling_flag = 0
+    integer(i4) :: max_droplets_per_cell = 20
+    real(dp) :: rad_call_interval = 0.0
+    integer(i4) :: nPhotons = 700000
+    integer(i4) :: nBins = 30
+    real(dp) :: Lx_rad = 2.0
+    real(dp) :: Ly_rad = 2.0
+    real(dp) :: T_side = 293.15
+
+    ! --- Public output arrays (written to NetCDF by writeout) ---
+    real(dp), allocatable :: rad_F_net(:)
+    real(dp), allocatable :: rad_heating_rate(:)
+
+    ! --- Mie table (read once at init) ---
+    integer(i4), parameter :: NROWS_MIE = 501, NCOLS_MIE = 112
+    real(dp), allocatable :: mie_table(:,:)
+    real(dp), allocatable :: mie_wavelength(:), mie_delta_lambda(:), mie_radius(:)
+
+    ! --- Interval-based calling accumulators ---
+    real(dp), allocatable :: kappa_sum(:), T_sum(:)
+    real(dp) :: dt_accumulated = 0.0
+    real(dp) :: next_rad_time = 0.0
+
 contains
     subroutine planck_lambda(wavelength_m, T, B_lambda)
     	implicit none

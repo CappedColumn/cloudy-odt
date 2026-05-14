@@ -7,7 +7,7 @@ module parcel
     private
     public :: initialize_parcel, apply_adiabatic_forcing, apply_entrainment, &
               do_parcel_ascent, parcel_height, parcel_velocity, &
-              parcel_file, initial_RH, &
+              parcel_file, initial_RH, pressure_limit, &
               do_entrainment, ent_rate, n_blob, psigma, random_entrainment
 
     ! --- PARCEL namelist variables ---
@@ -18,6 +18,7 @@ module parcel
     integer(i4) :: n_blob = 1
     real(dp) :: psigma = 0.1
     logical  :: random_entrainment = .true.
+    real(dp) :: pressure_limit = 0.0
 
     ! --- Velocity segments ---
     integer(i4) :: n_segments
@@ -42,7 +43,7 @@ contains
         integer :: nml_unit, ierr, i
         character(256) :: nml_line, io_emsg
 
-        namelist /PARCEL/ parcel_file, initial_RH, &
+        namelist /PARCEL/ parcel_file, initial_RH, pressure_limit, &
             do_entrainment, ent_rate, n_blob, psigma, random_entrainment
 
         ! --- Read PARCEL namelist ---
@@ -222,6 +223,14 @@ contains
 
         rho_air = pres / (Rd * sum(Tv) / N)
         pres = pres - rho_air * g * parcel_velocity * ldt
+
+        if (pressure_limit > 0.0 .and. pres <= pressure_limit) then
+            pres = pressure_limit
+            write(*,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
+            write(0,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
+            time = tmax + 1.0
+            return
+        end if
 
         qv_mean = sum(WV) / N
         cp_m = cp * (1.0 + cp_wv / cp * qv_mean) / (1.0 + qv_mean)

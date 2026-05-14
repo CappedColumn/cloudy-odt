@@ -67,7 +67,11 @@ contains
 
         write_time_iter = write_time_iter + ldt
         if (write_time_iter >= write_timer) then
-            write(*,*) 'Writing time: ', time
+            if (do_parcel_ascent) then
+                write(*,'(a,f10.2,a,f8.1,a)') ' Writing time: ', time, '  P: ', pres / 100.0, ' mb'
+            else
+                write(*,*) 'Writing time: ', time
+            end if
             if (do_microphysics) then
                 call calculate_droplet_statistics(particles, statistics)
                 call bin_droplet_radii(particles, particle_bin_edges, size_distribution)

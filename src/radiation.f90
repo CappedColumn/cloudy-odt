@@ -6,9 +6,9 @@
 !
 ! Ported from Suryadev Singh's radiation module (Oct 2025).
 module radiation
-    use globals, only: dp, i4, N, H, z, T, gridcell_volume, dz_length, &
+    use globals, only: dp, i4, N, H, z, gridcell_volume, dz_length, &
                        do_radiation, budget_radiation_delta_T, &
-                       nc_verify, resolve_path, namelist_path, namelist_dir, &
+                       resolve_path, namelist_path, namelist_dir, &
                        pi, pi_43, rho_l, cp, c_l
     use droplets, only: particles, current_n_particles
     implicit none

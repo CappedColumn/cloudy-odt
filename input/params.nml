@@ -27,6 +27,7 @@ do_turbulence = .true.
 do_microphysics = .true. ! triggers aerosol-droplet processes
 
 do_special_effects = .false. ! Controls special effect namelist below
+do_radiation = .false.
 
 /
 
@@ -75,6 +76,32 @@ trajectory_timer = 1.0 ! How frequently to write particle data
 
 /
 
+
+&RADIATION
+
+radiation_method = '1d'       ! '1d' (two-stream) or '3d' (Monte Carlo)
+mie_data_file = 'mie_absorption.txt'
+
+! Boundary emissivities
+eps_top = 1.0
+eps_bot = 1.0
+
+! Sky cooling (overrides top boundary with sky_temp)
+sky_cooling_flag = .false.
+sky_temp = 263.15
+
+! Radiation calling interval (0 = every physics step)
+rad_call_interval = 0.0
+max_droplets_per_cell = 20
+
+! 3D Monte Carlo parameters (only used when radiation_method = '3d')
+nPhotons = 700000
+nBins = 30
+Lx_rad = 2.0
+Ly_rad = 2.0
+T_side = 293.15
+
+/
 
 &SPECIALEFFECTS
 

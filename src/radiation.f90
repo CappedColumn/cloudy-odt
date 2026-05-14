@@ -66,19 +66,18 @@ contains
 ! Shared physics subroutines
 ! =========================================================================
 
-    ! Planck spectral radiance B(lambda, T) [W m^-3 sr^-1].
-    subroutine planck_lambda(wavelength_m, temp, B_lambda)
-        real(dp), intent(in) :: wavelength_m, temp
-        real(dp), intent(out) :: B_lambda
+    ! Planck spectral radiance B(lambda, T) [W m^-3 sr^-1] for an array of wavelengths.
+    subroutine planck_lambda(n_wave, wavelength_m, temp, B_lambda)
+        integer(i4), intent(in) :: n_wave
+        real(dp), intent(in) :: wavelength_m(n_wave), temp
+        real(dp), intent(out) :: B_lambda(n_wave)
 
         real(dp), parameter :: H_PLANCK = 6.62607015e-34
         real(dp), parameter :: C_LIGHT = 2.99792458e8
         real(dp), parameter :: K_BOLTZ = 1.380649e-23
-        real(dp) :: exponent_val
 
-        exponent_val = H_PLANCK * C_LIGHT / (wavelength_m * K_BOLTZ * temp)
         B_lambda = (2.0 * H_PLANCK * C_LIGHT**2 / wavelength_m**5) / &
-                   (exp(exponent_val) - 1.0)
+                   (exp(H_PLANCK * C_LIGHT / (wavelength_m * K_BOLTZ * temp)) - 1.0)
 
     end subroutine planck_lambda
 
@@ -96,7 +95,7 @@ contains
         integer(i4), parameter :: N_RADIUS = NROWS_MIE - 1
         real(dp) :: C_abs(N_WAVE), kappa(N_WAVE), kappa_mean
         real(dp) :: B_planck(N_WAVE), qabs(N_WAVE)
-        integer :: i, j, k, idx
+        integer :: i, j, idx
 
         kappa_prof = 0.0
 
@@ -114,10 +113,7 @@ contains
             end do
 
             kappa = C_abs / dv(i)
-
-            do k = 1, N_WAVE
-                call planck_lambda(mie_wavelength(k), T_profile(i), B_planck(k))
-            end do
+            call planck_lambda(N_WAVE, mie_wavelength, T_profile(i), B_planck)
 
             kappa_mean = sum(kappa * B_planck * mie_delta_lambda) / &
                          sum(B_planck * mie_delta_lambda)
@@ -145,7 +141,7 @@ contains
         kappa_d = kappa_prof * DIFF_FAC
         tau(1) = 0.0
         do i = 2, nrows
-            tau(i) = sum(kappa_d(1:i-1) * dz_arr(1:i-1))
+            tau(i) = tau(i-1) + kappa_d(i-1) * dz_arr(i-1)
         end do
 
     end subroutine compute_tau
@@ -219,7 +215,6 @@ contains
         t_3 = 1.0 - ((1.0 - l_eps_bot) * (1.0 - l_eps_top) * exp(-tau(nrows))**2)
         J_t = (t1 + (1.0 - l_eps_top) * (t2_1 + t2_2 + t2_3)) / t_3
 
-        call downward_media_emitted(1, B_emm, kappa_d, tau, dz_arr, tmp_down)
         J_b = l_eps_bot * SIGMA_SB * T_bot**4 + &
               (1.0 - l_eps_bot) * (J_t * exp(-tau(nrows)) + tmp_down)
 
@@ -403,18 +398,18 @@ contains
     subroutine sample_lambertian_direction(norm_vec, d)
         real(dp), intent(in) :: norm_vec(3)
         real(dp), intent(out) :: d(3)
-        real(dp) :: u, v, w, nx, ny, nz, d_mag
-        integer :: ok
+        real(dp) :: u, v, w, nx, ny, nz
+        logical :: accepted
 
         nx = norm_vec(1); ny = norm_vec(2); nz = norm_vec(3)
 
-        ok = 0
-        do while (ok == 0)
+        accepted = .false.
+        do while (.not. accepted)
             call random_number(u); u = 2.0*u - 1.0
             call random_number(v); v = 2.0*v - 1.0
-            if (u*u + v*v <= 1.0) ok = 1
+            accepted = (u*u + v*v <= 1.0)
         end do
-        w = sqrt(max(0.0, 1.0 - u*u - v*v))
+        w = sqrt(1.0 - u*u - v*v)
 
         if (nz == 1.0) then
             d = (/ u, v, w /)
@@ -431,9 +426,6 @@ contains
         else
             d = (/ u, v, w /)
         end if
-
-        d_mag = sqrt(d(1)**2 + d(2)**2 + d(3)**2)
-        d = d / d_mag
 
     end subroutine sample_lambertian_direction
 

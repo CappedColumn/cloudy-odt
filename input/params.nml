@@ -7,8 +7,6 @@ tmax = 1500.    ! Maximum Simulation Time (seconds)
 Tref = 20.85    ! Bottom boundary condition (i.e. warm)
 pres = 1.00e5
 H = 1.
-initial_RH = 1.0 ! Initial relative humidity (fraction, parcel mode only)
-
 volume_scaling = 10 ! i.e. 50 -> 50 cm3 Domain Volume
 
 same_random = .false. ! Use the same random number generator seed, for testing primarily
@@ -28,6 +26,20 @@ do_microphysics = .true. ! triggers aerosol-droplet processes
 
 do_special_effects = .false. ! Controls special effect namelist below
 do_radiation = .false.
+
+/
+
+&PARCEL
+
+parcel_file = "parcel_input.nc"
+initial_RH = 1.0
+
+! Entrainment (Krueger et al. 1997 blobs method)
+do_entrainment = .false.
+ent_rate = 2.0             ! fractional entrainment rate (1/m)
+n_blob = 1                 ! number of blobs per entrainment event
+psigma = 0.1               ! blob fraction of domain per blob
+random_entrainment = .true. ! Poisson-randomize entrainment timing
 
 /
 

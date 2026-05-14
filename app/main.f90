@@ -6,7 +6,7 @@ program main
   use droplets, only: particles, update_droplets, &
                       total_n_fellout, current_n_particles, n_injected, write_trajectories
   use special_effects, only: run_special_effects
-  use parcel, only: do_parcel_ascent, apply_adiabatic_forcing
+  use parcel, only: do_parcel_ascent, apply_adiabatic_forcing, apply_entrainment, do_entrainment
   use radiation, only: compute_radiation
 
   implicit none
@@ -46,6 +46,7 @@ program main
     Nt = Nt + 1
     time = time + dt
     if (do_parcel_ascent) call apply_adiabatic_forcing(dt)
+    if (do_entrainment) call apply_entrainment()
     delta_time = time - last_time_updated
 
     ! ---------------------------------------------------------

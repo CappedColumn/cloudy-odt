@@ -88,7 +88,6 @@ module globals
     character(100) :: simulation_name  ! Simulation name from namelist
     character(256) :: sim_output_dir   ! {output_directory}/{simulation_name}/ — where all output files live
     character(256) :: file_prefix      ! {sim_output_dir}{simulation_name} — base path for output files (.nc, .nml, etc.)
-    character(512) :: parcel_file = ''
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -111,7 +110,6 @@ module globals
     real(dp) :: Tref = 15.          ! Bottom temperature used for reference
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)
-    real(dp) :: initial_RH = 1.0  ! Initial relative humidity (fraction, parcel mode only)
     real(dp) :: dz_length    ! Length of each grid cell (meters)
 
     logical :: same_random = .false.    ! Will use random numbers seeded from same state if true

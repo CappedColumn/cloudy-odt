@@ -14,7 +14,7 @@ module initialize
     use droplets, only: initialize_microphysics, write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
-    use parcel, only: initialize_parcel
+    use parcel, only: initialize_parcel, parcel_file, initial_RH, do_entrainment
     use radiation, only: initialize_radiation, finalize_radiation
     implicit none
 
@@ -31,6 +31,7 @@ contains
         call initialize_params()
         call initialize_arrays()
         call initialize_output()
+        if (simulation_mode == 'parcel') call initialize_parcel()
 
         call log_header()
         call create_netcdf(trim(file_prefix)//'.nc', z, ncid, simulation_name, write_buffer)
@@ -60,11 +61,6 @@ contains
             end if
         end if
         call copy_file(namelist_path, trim(file_prefix)//'.nml')
-        if (parcel_file /= '') then
-            call copy_file(resolve_path(namelist_dir, parcel_file), &
-                           trim(sim_output_dir)// &
-                           trim(parcel_file(scan(trim(parcel_file), '/', back=.true.)+1:)))
-        end if
         call add_to_profile_buffer(time, T, WV, Tv, SS)
 
     end subroutine initialize_simulation
@@ -92,7 +88,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, parcel_file, initial_RH, do_radiation
+        overwrite, simulation_mode, do_radiation
 
         write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
@@ -140,13 +136,6 @@ contains
             diffuse_step       => lem_diffuse_step
             turbulence_step    => lem_turbulence_step
             sync_after_physics => lem_sync_after_physics
-            if (initial_RH < 0.0 .or. initial_RH > 1.0) then
-                write(0,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
-                stop 1
-            end if
-            if (parcel_file /= '') then
-                call initialize_parcel(resolve_path(namelist_dir, parcel_file))
-            end if
         else
             write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
             stop 1
@@ -181,12 +170,6 @@ contains
 
         if (simulation_mode == 'chamber') then
             call odt_init_arrays()
-        else if (simulation_mode == 'parcel') then
-            T(:) = Tref
-            WV(:) = initial_RH * saturation_mixing_ratio(Tref, pres)
-            do k = 1, N
-                Tv(k) = virtual_temp(T(k), WV(k))
-            end do
         end if
         call update_supersat(T, WV, SS, pres)
 

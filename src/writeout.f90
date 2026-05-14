@@ -10,7 +10,9 @@ module writeout
                         coalescence_kernel
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
-    use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity
+    use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
+                      parcel_file, initial_RH, do_entrainment, ent_rate, n_blob, psigma, &
+                      random_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
@@ -601,10 +603,19 @@ contains
                             merge(1, 0, do_special_effects)) )
         end if
 
-        ! PARAMETERS — parcel only
+        ! PARCEL namelist — parcel only
         if (simulation_mode == 'parcel') then
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.parcel_file", trim(parcel_file)) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.initial_RH", initial_RH) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.parcel_file", trim(parcel_file)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_RH", initial_RH) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.do_entrainment", &
+                            merge(1, 0, do_entrainment)) )
+            if (do_entrainment) then
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.ent_rate", ent_rate) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.n_blob", n_blob) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.psigma", psigma) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.random_entrainment", &
+                                merge(1, 0, random_entrainment)) )
+            end if
         end if
 
         ! TURBULENCE_ODT — chamber only

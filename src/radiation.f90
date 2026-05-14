@@ -359,8 +359,8 @@ contains
 
         if (r < P_bottom) then
             call random_number(rx); call random_number(ry)
-            pt = (/ Lx_rad*rx, Ly_rad*ry, 0.0 /)
-            norm_vec = (/ 0.0, 0.0, 1.0 /)
+            pt = (/ Lx_rad*rx, Ly_rad*ry, 0.0_dp /)
+            norm_vec = (/ 0.0_dp, 0.0_dp, 1.0_dp /)
             return
         end if
         r = r - P_bottom
@@ -368,27 +368,27 @@ contains
         if (r < P_top_mc) then
             call random_number(rx); call random_number(ry)
             pt = (/ Lx_rad*rx, Ly_rad*ry, H /)
-            norm_vec = (/ 0.0, 0.0, -1.0 /)
+            norm_vec = (/ 0.0_dp, 0.0_dp, -1.0_dp /)
             return
         end if
         r = (r - P_top_mc) / P_sides
 
         if (r < 0.25) then
             call random_number(ry); call random_number(rz)
-            pt = (/ 0.0, Ly_rad*ry, H*rz /)
-            norm_vec = (/ 1.0, 0.0, 0.0 /)
+            pt = (/ 0.0_dp, Ly_rad*ry, H*rz /)
+            norm_vec = (/ 1.0_dp, 0.0_dp, 0.0_dp /)
         else if (r < 0.50) then
             call random_number(ry); call random_number(rz)
             pt = (/ Lx_rad, Ly_rad*ry, H*rz /)
-            norm_vec = (/ -1.0, 0.0, 0.0 /)
+            norm_vec = (/ -1.0_dp, 0.0_dp, 0.0_dp /)
         else if (r < 0.75) then
             call random_number(rx); call random_number(rz)
-            pt = (/ Lx_rad*rx, 0.0, H*rz /)
-            norm_vec = (/ 0.0, 1.0, 0.0 /)
+            pt = (/ Lx_rad*rx, 0.0_dp, H*rz /)
+            norm_vec = (/ 0.0_dp, 1.0_dp, 0.0_dp /)
         else
             call random_number(rx); call random_number(rz)
             pt = (/ Lx_rad*rx, Ly_rad, H*rz /)
-            norm_vec = (/ 0.0, -1.0, 0.0 /)
+            norm_vec = (/ 0.0_dp, -1.0_dp, 0.0_dp /)
         end if
 
     end subroutine sample_point_and_normal

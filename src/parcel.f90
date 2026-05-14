@@ -182,8 +182,9 @@ contains
         ! --- Log ---
         write(*,*) '--- Parcel Configuration ---'
         write(*,*) 'n_segments:        ', n_segments
-        write(*,*) 'initial velocity:  ', segment_velocity(1), ' m/s'
-        write(*,*) 'initial pressure:  ', pres / Pa_per_mb, ' mb'
+        write(*,'(a,f8.2,a)')  '  initial velocity:  ', segment_velocity(1), ' m/s'
+        write(*,'(a,f8.1,a)')  '  initial pressure:  ', pres / Pa_per_mb, ' mb'
+        write(*,'(a,f8.3)')    '  initial RH:        ', initial_RH
         if (do_entrainment) then
             write(*,*) 'entrainment:       ON'
             write(*,*) '  ent_rate:        ', ent_rate

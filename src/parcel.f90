@@ -7,7 +7,7 @@ module parcel
     private
     public :: initialize_parcel, apply_adiabatic_forcing, apply_entrainment, &
               do_parcel_ascent, parcel_height, parcel_velocity, &
-              parcel_file, initial_RH, pressure_limit, &
+              parcel_file, initial_RH, pressure_limit, pressure_limit_reached, &
               do_entrainment, ent_rate, n_blob, psigma, random_entrainment
 
     ! --- PARCEL namelist variables ---
@@ -29,6 +29,7 @@ module parcel
     real(dp) :: parcel_height   = 0.0
     real(dp) :: parcel_velocity = 0.0
     logical  :: do_parcel_ascent = .false.
+    logical  :: pressure_limit_reached = .false.
 
     ! --- Environmental profile for entrainment ---
     integer(i4) :: n_env_levels
@@ -229,7 +230,7 @@ contains
             pres = pressure_limit
             write(*,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
             write(0,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
-            time = tmax + 1.0
+            pressure_limit_reached = .true.
             return
         end if
 

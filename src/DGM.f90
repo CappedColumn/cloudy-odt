@@ -27,7 +27,10 @@ module DGM
     real(dp) :: ode_rtol(nvar) = [1.0e-4_dp, 1.0e-4_dp, 1.0e-4_dp]
     real(dp) :: ode_atol(nvar) = [1.0e-10_dp, 1.0e-10_dp, 1.0e-10_dp]
 
+    real(dp), parameter :: tau_ratio = 0.01_dp
+
     public :: integrate_ODE, set_aerosol_properties
+    public :: kohler_equilibrium_radius, equilibrium_timescale
     private
 
 contains
@@ -157,5 +160,62 @@ subroutine fcnkb(ltime, y, dydt)
     dydt(3) = -Lcond_temp/cpm*dydt(2)
 
 end subroutine fcnkb
+
+function kohler_equilibrium_radius(supersat) result(r_eq)
+    real(dp), intent(in) :: supersat
+    real(dp) :: r_eq
+
+    r_eq = (solute_mass * (1.0_dp - c7_sp) + raoult_coeff / abs(supersat)) &
+         / (pi_43 * rho_l)
+    r_eq = r_eq**(1.0_dp / 3.0_dp)
+
+end function kohler_equilibrium_radius
+
+
+function equilibrium_timescale(radius, supersat, temp) result(tau)
+    real(dp), intent(in) :: radius, supersat, temp
+    real(dp) :: tau
+
+    real(dp) :: D_r, fp, denom_thermo
+    real(dp) :: ck_coeff, es, Tc_es, Lcond_T, Ktemp, D_diff, lambda
+    real(dp), parameter :: sigma = 7.392730e-2_dp
+    real(dp), parameter :: es_coeff(9) = [6.11239921d0, 0.443987641d0, 0.142986287d-1, &
+        0.264847430d-3, 0.302950461d-5, 0.206739458d-7, 0.640689451d-10, &
+        -0.952447341d-13, -0.976195544d-15]
+    integer :: i_es
+
+    ck_coeff = 2.0_dp * sigma / (Rv * temp * rho_l)
+
+    D_r = pi_43 * radius**3 * rho_l - solute_mass * (1.0_dp - c7_sp)
+    if (D_r < 1.0e-30_dp) then
+        tau = 0.0_dp
+        return
+    end if
+
+    fp = ck_coeff / radius**2 - 3.0_dp * pi_43 * rho_l * radius**2 * raoult_coeff / D_r**2
+
+    Tc_es = max(-80.0_dp, temp - Tice)
+    es = es_coeff(9)
+    do i_es = 8, 1, -1
+        es = es * Tc_es + es_coeff(i_es)
+    end do
+    es = es * 100.0_dp
+
+    Lcond_T = (2.501_dp - 0.00237_dp * (temp - Tice)) * 1.0e6_dp
+    Ktemp = 7.7e-5_dp * (temp - Tice) + 0.02399_dp
+    D_diff = (1.57e-7_dp * (temp - Tice) + 2.211e-5_dp) * 1.0e5_dp / pres
+
+    denom_thermo = rho_l * (Rv * temp / (D_diff * es) + Lcond_T**2 / (Ktemp * Rv * temp**2))
+
+    lambda = (1.0_dp / radius) * fp / denom_thermo
+
+    if (abs(lambda) < 1.0e-30_dp) then
+        tau = huge(1.0_dp)
+    else
+        tau = 1.0_dp / abs(lambda)
+    end if
+
+end function equilibrium_timescale
+
 
 end module DGM

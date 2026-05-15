@@ -1,138 +1,136 @@
 module ode_integrators
-    use globals, only: dp, i4
-    implicit none
+  use globals, only: dp, i4
+  implicit none
 
-    abstract interface
-        subroutine ode_rhs(t, y, dydt)
-            import dp
-            real(dp), intent(in) :: t
-            real(dp), intent(in) :: y(:)
-            real(dp), intent(out) :: dydt(:)
-        end subroutine ode_rhs
-    end interface
+  private
+  public :: ode_rhs, ode_integrate, rkck45_integrate, integrator_iface
 
-    procedure(integrator_iface), pointer :: ode_integrate => rkck45_integrate
+  abstract interface
+    subroutine ode_rhs(t, y, dydt)
+      import dp
+      real(dp), intent(in)  :: t
+      real(dp), intent(in)  :: y(:)
+      real(dp), intent(out) :: dydt(:)
+    end subroutine ode_rhs
+  end interface
 
-    abstract interface
-        subroutine integrator_iface(f, n, y, t1, t2, h, rtol, atol, ierr)
-            import dp, i4, ode_rhs
-            procedure(ode_rhs) :: f
-            integer(i4), intent(in) :: n
-            real(dp), intent(inout) :: y(n)
-            real(dp), intent(in) :: t1, t2, h
-            real(dp), intent(in) :: rtol(n), atol(n)
-            integer(i4), intent(out) :: ierr
-        end subroutine integrator_iface
-    end interface
+  abstract interface
+    subroutine integrator_iface(rhs, n, y, t_start, t_end, h, rtol, atol, ierr)
+      import dp, i4, ode_rhs
+      procedure(ode_rhs) :: rhs
+      integer(i4), intent(in)    :: n
+      real(dp),    intent(inout) :: y(n)
+      real(dp),    intent(in)    :: t_start, t_end, h
+      real(dp),    intent(in)    :: rtol(n), atol(n)
+      integer(i4), intent(out)   :: ierr
+    end subroutine integrator_iface
+  end interface
 
-    private
-    public :: ode_rhs, ode_integrate, rkck45_integrate, integrator_iface
+  procedure(integrator_iface), pointer :: ode_integrate => rkck45_integrate
 
 contains
 
-subroutine rkck45_integrate(f, n, y, t1, t2, h, rtol, atol, ierr)
-    procedure(ode_rhs) :: f
-    integer(i4), intent(in) :: n
-    real(dp), intent(inout) :: y(n)
-    real(dp), intent(in) :: t1, t2, h
-    real(dp), intent(in) :: rtol(n), atol(n)
-    integer(i4), intent(out) :: ierr
+! Cash-Karp embedded Runge-Kutta 4(5) adaptive integrator.
+! Reference: Cash & Karp (1990), ACM Trans. Math. Software, 16, 201-222.
+subroutine rkck45_integrate(rhs, n, y, t_start, t_end, h, rtol, atol, ierr)
+  procedure(ode_rhs) :: rhs
+  integer(i4), intent(in)    :: n
+  real(dp),    intent(inout) :: y(n)
+  real(dp),    intent(in)    :: t_start, t_end, h
+  real(dp),    intent(in)    :: rtol(n), atol(n)
+  integer(i4), intent(out)   :: ierr
 
-    real(dp), parameter :: a2 = 0.2_dp
-    real(dp), parameter :: a3 = 0.3_dp
-    real(dp), parameter :: a4 = 0.6_dp
-    real(dp), parameter :: a5 = 1.0_dp
-    real(dp), parameter :: a6 = 0.875_dp
+  ! Butcher tableau — Cash-Karp coefficients
+  real(dp), parameter :: a2 = 0.2,  a3 = 0.3, a4 = 0.6, a5 = 1.0, a6 = 0.875
 
-    real(dp), parameter :: b21 = 0.2_dp
-    real(dp), parameter :: b31 = 3.0_dp/40.0_dp,  b32 = 9.0_dp/40.0_dp
-    real(dp), parameter :: b41 = 0.3_dp,           b42 = -0.9_dp,          b43 = 1.2_dp
-    real(dp), parameter :: b51 = -11.0_dp/54.0_dp, b52 = 2.5_dp,          b53 = -70.0_dp/27.0_dp, b54 = 35.0_dp/27.0_dp
-    real(dp), parameter :: b61 = 1631.0_dp/55296.0_dp, b62 = 175.0_dp/512.0_dp, &
-                           b63 = 575.0_dp/13824.0_dp,  b64 = 44275.0_dp/110592.0_dp, b65 = 253.0_dp/4096.0_dp
+  real(dp), parameter :: b21 = 0.2
+  real(dp), parameter :: b31 = 3.0/40.0,     b32 = 9.0/40.0
+  real(dp), parameter :: b41 = 0.3,           b42 = -0.9,           b43 = 1.2
+  real(dp), parameter :: b51 = -11.0/54.0,    b52 = 2.5,            b53 = -70.0/27.0,    b54 = 35.0/27.0
+  real(dp), parameter :: b61 = 1631.0/55296.0, b62 = 175.0/512.0, &
+                         b63 = 575.0/13824.0,  b64 = 44275.0/110592.0, b65 = 253.0/4096.0
 
-    real(dp), parameter :: c1 = 37.0_dp/378.0_dp, c3 = 250.0_dp/621.0_dp, &
-                           c4 = 125.0_dp/594.0_dp, c6 = 512.0_dp/1771.0_dp
+  ! 4th-order solution weights
+  real(dp), parameter :: c1 = 37.0/378.0,  c3 = 250.0/621.0, &
+                         c4 = 125.0/594.0, c6 = 512.0/1771.0
 
-    real(dp), parameter :: dc1 = c1 - 2825.0_dp/27648.0_dp
-    real(dp), parameter :: dc3 = c3 - 18575.0_dp/48384.0_dp
-    real(dp), parameter :: dc4 = c4 - 13525.0_dp/55296.0_dp
-    real(dp), parameter :: dc5 = -277.0_dp/14336.0_dp
-    real(dp), parameter :: dc6 = c6 - 0.25_dp
+  ! Error estimate weights (4th - 5th order difference)
+  real(dp), parameter :: dc1 = c1 - 2825.0/27648.0
+  real(dp), parameter :: dc3 = c3 - 18575.0/48384.0
+  real(dp), parameter :: dc4 = c4 - 13525.0/55296.0
+  real(dp), parameter :: dc5 = -277.0/14336.0
+  real(dp), parameter :: dc6 = c6 - 0.25
 
-    real(dp), parameter :: safety = 0.9_dp
-    real(dp), parameter :: grow_max = 5.0_dp
-    real(dp), parameter :: shrink_min = 0.1_dp
-    integer, parameter  :: max_steps = 10000
+  ! Step control parameters
+  real(dp), parameter :: safety    = 0.9
+  real(dp), parameter :: grow_max  = 5.0
+  real(dp), parameter :: shrink_min = 0.1
+  integer,  parameter :: max_steps = 10000
 
-    real(dp) :: k1(n), k2(n), k3(n), k4(n), k5(n), k6(n)
-    real(dp) :: ytmp(n), yerr(n)
-    real(dp) :: t, dt, dt_new, errmax, scale
-    integer :: i, step
+  real(dp) :: k1(n), k2(n), k3(n), k4(n), k5(n), k6(n)
+  real(dp) :: ytmp(n), yerr(n)
+  real(dp) :: t, dt, dt_new, errmax, scale
+  integer  :: i, step
 
-    ierr = 0
-    t = t1
-    dt = h
+  ierr = 0
+  t  = t_start
+  dt = min(h, t_end - t_start)
 
-    if (dt > t2 - t1) dt = t2 - t1
+  do step = 1, max_steps
+    if (t >= t_end) return
+    if (t + dt > t_end) dt = t_end - t
 
-    do step = 1, max_steps
-        if (t >= t2) return
+    ! Stage 1
+    call rhs(t, y, k1)
+    ytmp = y + dt * b21 * k1
 
-        if (t + dt > t2) dt = t2 - t
+    ! Stage 2
+    call rhs(t + a2 * dt, ytmp, k2)
+    ytmp = y + dt * (b31 * k1 + b32 * k2)
 
-        call f(t, y, k1)
-        do i = 1, n
-            ytmp(i) = y(i) + dt*b21*k1(i)
-        end do
+    ! Stage 3
+    call rhs(t + a3 * dt, ytmp, k3)
+    ytmp = y + dt * (b41 * k1 + b42 * k2 + b43 * k3)
 
-        call f(t + a2*dt, ytmp, k2)
-        do i = 1, n
-            ytmp(i) = y(i) + dt*(b31*k1(i) + b32*k2(i))
-        end do
+    ! Stage 4
+    call rhs(t + a4 * dt, ytmp, k4)
+    ytmp = y + dt * (b51 * k1 + b52 * k2 + b53 * k3 + b54 * k4)
 
-        call f(t + a3*dt, ytmp, k3)
-        do i = 1, n
-            ytmp(i) = y(i) + dt*(b41*k1(i) + b42*k2(i) + b43*k3(i))
-        end do
+    ! Stage 5
+    call rhs(t + a5 * dt, ytmp, k5)
+    ytmp = y + dt * (b61 * k1 + b62 * k2 + b63 * k3 + b64 * k4 + b65 * k5)
 
-        call f(t + a4*dt, ytmp, k4)
-        do i = 1, n
-            ytmp(i) = y(i) + dt*(b51*k1(i) + b52*k2(i) + b53*k3(i) + b54*k4(i))
-        end do
+    ! Stage 6
+    call rhs(t + a6 * dt, ytmp, k6)
 
-        call f(t + a5*dt, ytmp, k5)
-        do i = 1, n
-            ytmp(i) = y(i) + dt*(b61*k1(i) + b62*k2(i) + b63*k3(i) + b64*k4(i) + b65*k5(i))
-        end do
-
-        call f(t + a6*dt, ytmp, k6)
-
-        errmax = 0.0_dp
-        do i = 1, n
-            ytmp(i) = y(i) + dt*(c1*k1(i) + c3*k3(i) + c4*k4(i) + c6*k6(i))
-            yerr(i) = dt*(dc1*k1(i) + dc3*k3(i) + dc4*k4(i) + dc5*k5(i) + dc6*k6(i))
-            scale = atol(i) + rtol(i) * max(abs(y(i)), abs(ytmp(i)))
-            errmax = max(errmax, abs(yerr(i)) / scale)
-        end do
-
-        if (errmax <= 1.0_dp) then
-            t = t + dt
-            y = ytmp
-
-            if (errmax > 1.0e-30_dp) then
-                dt_new = safety * dt * errmax**(-0.2_dp)
-                dt = min(dt_new, grow_max * dt)
-            else
-                dt = grow_max * dt
-            end if
-        else
-            dt_new = safety * dt * errmax**(-0.25_dp)
-            dt = max(dt_new, shrink_min * dt)
-        end if
+    ! 4th-order solution and error estimate
+    errmax = 0.0
+    do i = 1, n
+      ytmp(i) = y(i) + dt * (c1 * k1(i) + c3 * k3(i) + c4 * k4(i) + c6 * k6(i))
+      yerr(i) = dt * (dc1 * k1(i) + dc3 * k3(i) + dc4 * k4(i) + dc5 * k5(i) + dc6 * k6(i))
+      scale   = atol(i) + rtol(i) * max(abs(y(i)), abs(ytmp(i)))
+      errmax  = max(errmax, abs(yerr(i)) / scale)
     end do
 
-    ierr = -1
+    if (errmax <= 1.0) then
+      ! Accept step
+      t = t + dt
+      y = ytmp
+
+      if (errmax > 1.0e-30) then
+        dt_new = safety * dt * errmax**(-0.2)
+        dt = min(dt_new, grow_max * dt)
+      else
+        dt = grow_max * dt
+      end if
+    else
+      ! Reject step — reduce dt
+      dt_new = safety * dt * errmax**(-0.25)
+      dt = max(dt_new, shrink_min * dt)
+    end if
+  end do
+
+  ierr = -1
 
 end subroutine rkck45_integrate
 

@@ -6,7 +6,8 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use DGM, only: integrate_ODE, set_aerosol_properties
+    use DGM, only: integrate_ODE, set_aerosol_properties, &
+                   kohler_equilibrium_radius, equilibrium_timescale, tau_ratio
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -469,6 +470,7 @@ contains
         real(dp) :: time_start, time_stop, time_iterate
         real(dp) :: y_arr(3), y_before(3), grid_mass, inverse_grid_mass, grid_rho
         real(dp) :: wl_before, T_before
+        real(dp) :: tau, r_eq, delta_qv, Lcond_T, cpm
         logical :: substep_flag
 
         ! Determine mass of air in gridcell
@@ -491,37 +493,41 @@ contains
 
         y_before = y_arr
 
-        ! In an attempt to please the continuum of time
-        ! within a world of discrete tendencies,
-        ! we may have to iterate the iterator.
-        ! Eddies occur so frequently that this rarely happens.
-
-        ! Test to ensure timestep is not too large for Runge-Kutta solver
-        ! must be <1 sec, Mani - chose 0.01 sec to be safe
-        substep_flag = .false.
-        if ( dt >= RK5_min_timestep ) then
-            substep_flag = .true.
+        if (droplet%supersaturation < 0.0_dp) then
+            tau = equilibrium_timescale(droplet%radius, droplet%supersaturation/100, &
+                                        droplet%temperature)
         end if
 
-        if ( substep_flag ) then 
-            ! Set time bounds for iterative calls to ode solver
-            time_stop = ltime + ldt
-            time_start = ltime
-            time_iterate = ltime + RK5_min_timestep
-            ! Iterate through time in RK5_min_timestep steps
-            do while ( time_iterate < time_stop )
-                ! Call with RK5_min_timestep dt
-                call integrate_ODE(y_arr, time_start, time_iterate, RK5_min_timestep)
-                time_start = time_iterate
-                time_iterate = time_iterate + RK5_min_timestep
-            end do
-            ! Call ode solver for remainder of time
-            if ( time_stop > time_start .and. time_stop < time_iterate ) then
-                call integrate_ODE(y_arr, time_start, time_stop, time_stop - time_start)
+        if (droplet%supersaturation < 0.0_dp .and. tau < ldt * tau_ratio) then
+            r_eq = kohler_equilibrium_radius(droplet%supersaturation/100)
+            delta_qv = -pi_43 * rho_l * (r_eq**3 - y_arr(1)**3) * inverse_grid_mass
+            Lcond_T = (2.501_dp - 0.00237_dp * (y_arr(3) - Tice)) * 1.0e6_dp
+            cpm = cp * ((1.0_dp + cp_wv/cp * y_arr(2)) / (1.0_dp + y_arr(2)))
+
+            y_arr(1) = r_eq
+            y_arr(2) = y_arr(2) + delta_qv
+            y_arr(3) = y_arr(3) - Lcond_T / cpm * delta_qv
+        else
+            substep_flag = .false.
+            if ( dt >= RK5_min_timestep ) then
+                substep_flag = .true.
             end if
 
-        else ! Call me maybe
-            call integrate_ODE(y_arr, ltime, ltime + ldt, ldt)
+            if ( substep_flag ) then
+                time_stop = ltime + ldt
+                time_start = ltime
+                time_iterate = ltime + RK5_min_timestep
+                do while ( time_iterate < time_stop )
+                    call integrate_ODE(y_arr, time_start, time_iterate, RK5_min_timestep)
+                    time_start = time_iterate
+                    time_iterate = time_iterate + RK5_min_timestep
+                end do
+                if ( time_stop > time_start .and. time_stop < time_iterate ) then
+                    call integrate_ODE(y_arr, time_start, time_stop, time_stop - time_start)
+                end if
+            else
+                call integrate_ODE(y_arr, ltime, ltime + ldt, ldt)
+            end if
         end if
 
         ! Unpack droplet properties from array

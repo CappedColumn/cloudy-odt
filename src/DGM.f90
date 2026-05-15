@@ -30,7 +30,7 @@ module DGM
     real(dp), parameter :: tau_ratio = 0.01_dp
 
     public :: integrate_ODE, set_aerosol_properties
-    public :: kohler_equilibrium_radius, equilibrium_timescale
+    public :: kohler_equilibrium_radius, equilibrium_timescale, tau_ratio
     private
 
 contains

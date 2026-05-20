@@ -8,7 +8,7 @@ description = "Cloudy-ODT simulates turbulent convective cloud chambers, specifi
 
 [build]
 auto-executables = true
-auto-tests = true
+auto-tests = false
 auto-examples = false
 link = ["netcdf", "netcdff"]
 external-modules = ["netcdf", "netcdff"]
@@ -18,10 +18,12 @@ source-dir = "src"
 # Note: include-dir can be handled by shell env variable: FPM_FFLAGS, declared in the script "fpm_env"
 # include-dir = "-I/path/to/netcdf/include"
 
+
 [install]
 library = false
 
 [dependencies]
+odepack = { git = "https://github.com/Nicholaswogan/odepack.git" }
 
 [[executable]]
 name = "CODT"

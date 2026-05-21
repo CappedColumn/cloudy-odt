@@ -18,14 +18,27 @@ source-dir = "src"
 # Note: include-dir can be handled by shell env variable: FPM_FFLAGS, declared in the script "fpm_env"
 # include-dir = "-I/path/to/netcdf/include"
 
-
 [install]
 library = false
 
 [dependencies]
-odepack = { git = "https://github.com/Nicholaswogan/odepack.git" }
 
 [[executable]]
 name = "CODT"
 source-dir = "app"
 main = "main.f90"
+
+[[test]]
+name = "test_dgm_solvers"
+source-dir = "test"
+main = "test_dgm_solvers.f90"
+
+[[test]]
+name = "test_jac"
+source-dir = "test"
+main = "test_jac.f90"
+
+[[test]]
+name = "test_ros_simple"
+source-dir = "test"
+main = "test_ros_simple.f90"

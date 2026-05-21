@@ -6,7 +6,8 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use lsoda_integrator, only: lsoda_solver
+    use DGM, only: integrate_ODE, set_aerosol_properties, &
+                   kohler_equilibrium_radius, equilibrium_timescale, tau_ratio
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -59,8 +60,8 @@ module droplets
     real(dp) :: aerosol_concentration = 0.0
     character(256) :: aerosol_file = ''
 
-    ! DGM solver instance
-    type(lsoda_solver) :: dgm_solver
+    ! DGM-Controlling variables
+    real(dp), parameter :: RK5_min_timestep = 0.01
 
     ! Particle I/O Handling
     logical :: write_trajectories = .false.
@@ -462,28 +463,54 @@ contains
 
 
     subroutine single_droplet_growth(droplet, ltime, ldt)
+        ! Interface to droplet growth model. Packages an individual particle's
+        ! properties and calls the ODE integrator in DGM.f90.
         type(particle), intent(inout) :: droplet
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: y_arr(3), y_before(3), grid_mass, inverse_grid_mass, grid_rho
         real(dp) :: wl_before, T_before
+        real(dp) :: tau, r_eq, delta_qv, Lcond_T, cpm
 
+        ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
         grid_mass = gridcell_volume * grid_rho
         inverse_grid_mass = 1.0 / grid_mass
 
+        ! Save pre-growth state for budget tracking
         wl_before = droplet%water_liquid
         T_before = droplet%temperature
 
-        call dgm_solver%set_properties(1_i4, droplet%solute_gross_mass, droplet%solute_radius, &
-                                       inverse_grid_mass, droplet%supersaturation / 100.0)
+        ! set odeint parameters for different aerosol mass of each droplet
+        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, &
+                                    inverse_grid_mass, droplet%supersaturation/100)
 
+        ! Package droplet properties into an array for ode solver
         y_arr(1) = droplet%radius
         y_arr(2) = droplet%water_vapor
         y_arr(3) = droplet%temperature
+
         y_before = y_arr
 
-        call dgm_solver%solve(y_arr, ltime, ltime + ldt)
+        if (droplet%supersaturation < 0.0_dp) then
+            tau = equilibrium_timescale(droplet%radius, droplet%supersaturation/100, &
+                                        droplet%temperature)
+            if (tau < ldt * tau_ratio) then
+                r_eq = kohler_equilibrium_radius(droplet%supersaturation/100, droplet%temperature)
+                delta_qv = -pi_43 * rho_l * (r_eq**3 - y_arr(1)**3) * inverse_grid_mass
+                Lcond_T = (2.501_dp - 0.00237_dp * (y_arr(3) - Tice)) * 1.0e6_dp
+                cpm = cp * ((1.0_dp + cp_wv/cp * y_arr(2)) / (1.0_dp + y_arr(2)))
 
+                y_arr(1) = r_eq
+                y_arr(2) = y_arr(2) + delta_qv
+                y_arr(3) = y_arr(3) - Lcond_T / cpm * delta_qv
+            else
+                call integrate_ODE_substep(y_arr, ltime, ldt)
+            end if
+        else
+            call integrate_ODE_substep(y_arr, ltime, ldt)
+        end if
+
+        ! Unpack droplet properties from array
         droplet%radius = y_arr(1)
         droplet%water_vapor = y_arr(2)
         droplet%temperature = y_arr(3)
@@ -491,10 +518,35 @@ contains
         droplet%supersaturation = calc_supersat(droplet%temperature, droplet%water_vapor, pres)
         droplet%virt_temp = virtual_temp(droplet%temperature, droplet%water_vapor)
 
+        ! Accumulate condensation/evaporation budget
         budget_condensation = budget_condensation + (droplet%water_liquid - wl_before)
         budget_dgm_delta_T = budget_dgm_delta_T + (droplet%temperature - T_before)
 
     end subroutine single_droplet_growth
+
+
+    subroutine integrate_ODE_substep(y_arr, ltime, ldt)
+        real(dp), intent(inout) :: y_arr(3)
+        real(dp), intent(in) :: ltime, ldt
+        real(dp) :: time_start, time_stop, time_iterate
+
+        if (ldt >= RK5_min_timestep) then
+            time_stop = ltime + ldt
+            time_start = ltime
+            time_iterate = ltime + RK5_min_timestep
+            do while (time_iterate < time_stop)
+                call integrate_ODE(y_arr, time_start, time_iterate, RK5_min_timestep)
+                time_start = time_iterate
+                time_iterate = time_iterate + RK5_min_timestep
+            end do
+            if (time_stop > time_start .and. time_stop < time_iterate) then
+                call integrate_ODE(y_arr, time_start, time_stop, time_stop - time_start)
+            end if
+        else
+            call integrate_ODE(y_arr, ltime, ltime + ldt, ldt)
+        end if
+
+    end subroutine integrate_ODE_substep
 
 
     subroutine update_scalar_fields_DGM(droplet, lT, lWV, lTv, lSS)

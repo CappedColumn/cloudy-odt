@@ -1,10 +1,12 @@
-"""Plot CODT parcel ascent/descent on a Skew-T diagram using MetPy.
+"""Plot CODT parcel ascent trajectories on a Skew-T diagram using MetPy.
 
 Usage:
-    python plot_skewt.py <path_to_output.nc> [output_image.png]
+    python plot_skewt.py <nc_file1> [nc_file2 ...] [-o output_image.png] [-e parcel_input.nc]
 
-Overlays the domain-mean T and Td profiles (ascent in solid, descent in dashed)
-on a Skew-T log-P diagram. Prints T, QV, and S at 10 mb intervals.
+Overlays domain-mean T and Td ascent profiles from multiple simulations.
+Each simulation gets a unique color. Optionally plots the environmental
+sounding and a moist adiabat from the parcel starting conditions.
+Prints T, QV, and S at 10 mb intervals.
 """
 import sys
 import numpy as np
@@ -13,13 +15,17 @@ import matplotlib.pyplot as plt
 import metpy.calc as mpcalc
 from metpy.plots import SkewT
 from metpy.units import units
+from pathlib import Path
+
+COLORS = ['r', 'b', 'darkorange', 'purple', 'green', 'brown', 'teal', 'magenta']
+
 
 def load_parcel_data(ncpath):
     ds = nc.Dataset(ncpath, 'r')
-    pres = ds['parcel_pressure'][:]  # mb
-    T_mean = np.mean(ds['T'][:], axis=1)  # domain-mean T (C)
-    QV_mean = np.mean(ds['QV'][:], axis=1)  # domain-mean QV (g/kg)
-    S_mean = np.mean(ds['S'][:], axis=1)  # domain-mean SS (%)
+    pres = ds['parcel_pressure'][:]
+    T_mean = np.mean(ds['T'][:], axis=1)
+    QV_mean = np.mean(ds['QV'][:], axis=1)
+    S_mean = np.mean(ds['S'][:], axis=1)
     ds.close()
     return pres, T_mean, QV_mean, S_mean
 
@@ -40,9 +46,20 @@ def print_table(pres, T, QV, S, label, targets):
 
 
 def dewpoint_from_qv(qv_kgkg, pres_mb):
-    e = (qv_kgkg * pres_mb * 100.0) / (0.622 + qv_kgkg)  # vapor pressure in Pa
+    e = (qv_kgkg * pres_mb * 100.0) / (0.622 + qv_kgkg)
     e_unit = (e / 100.0) * units.mbar
-    return mpcalc.dewpoint(e_unit).magnitude  # C
+    return mpcalc.dewpoint(e_unit).magnitude
+
+
+def dewpoint_from_rh(T_K, rh):
+    T_C = T_K - 273.15
+    e_sat = mpcalc.saturation_vapor_pressure(T_C * units.degC)
+    e = rh * e_sat
+    return mpcalc.dewpoint(e).magnitude
+
+
+def label_from_path(ncpath):
+    return Path(ncpath).stem
 
 
 def main():
@@ -50,53 +67,108 @@ def main():
         print(__doc__)
         sys.exit(1)
 
-    ncpath = sys.argv[1]
-    outpath = sys.argv[2] if len(sys.argv) > 2 else ncpath.replace('.nc', '_skewt.png')
+    args = sys.argv[1:]
+    outpath = None
+    env_path = None
 
-    pres, T, QV, S = load_parcel_data(ncpath)
-    asc, desc = split_ascent_descent(pres)
+    if '-o' in args:
+        oi = args.index('-o')
+        outpath = args[oi + 1]
+        args = args[:oi] + args[oi + 2:]
 
-    # Print tables at 10 mb intervals
-    p_min = int(np.ceil(np.min(pres) / 10.0) * 10)
-    targets_up = np.arange(950, p_min - 1, -10)
-    targets_down = np.arange(p_min, 951, 10)
+    if '-e' in args:
+        ei = args.index('-e')
+        env_path = args[ei + 1]
+        args = args[:ei] + args[ei + 2:]
 
-    print_table(pres[asc], T[asc], QV[asc], S[asc], 'ASCENT', targets_up)
-    print_table(pres[desc], T[desc], QV[desc], S[desc], 'DESCENT', targets_down)
+    nc_files = args
+    if not outpath:
+        outpath = str(Path(__file__).resolve().parent.parent / 'data' / 'figs' / 'skewt_comparison.png')
 
-    # Compute dewpoint
-    Td_asc = np.array([dewpoint_from_qv(q, p) for q, p in zip(QV[asc], pres[asc])])
-    Td_desc = np.array([dewpoint_from_qv(q, p) for q, p in zip(QV[desc], pres[desc])])
-
-    # Plot
     fig = plt.figure(figsize=(10, 12))
     skew = SkewT(fig, rotation=45)
 
-    # Ascent (solid)
-    skew.plot(pres[asc] * units.mbar, T[asc] * units.degC, 'r-', linewidth=2, label='T ascent')
-    skew.plot(pres[asc] * units.mbar, Td_asc * units.degC, 'g-', linewidth=2, label='Td ascent')
+    all_pmin = []
+    all_T = []
+    all_Td = []
+    all_P = []
 
-    # Descent (dashed)
-    skew.plot(pres[desc] * units.mbar, T[desc] * units.degC, 'r--', linewidth=1.5, label='T descent')
-    skew.plot(pres[desc] * units.mbar, Td_desc * units.degC, 'g--', linewidth=1.5, label='Td descent')
+    for i, ncpath in enumerate(nc_files):
+        color = COLORS[i % len(COLORS)]
+        label = label_from_path(ncpath)
 
-    # Moist adiabat from LCL (where T ≈ Td on ascent)
-    lcl_idx = np.argmin(np.abs(T[asc] - Td_asc))
-    lcl_p = pres[asc][lcl_idx] * units.mbar
-    lcl_T = T[asc][lcl_idx] * units.degC
-    p_profile = np.arange(float(lcl_p.magnitude), float(max(p_min - 20, 800)) - 1, -1) * units.mbar
-    moist_T = mpcalc.moist_lapse(p_profile, lcl_T, lcl_p)
-    skew.plot(p_profile, moist_T, 'k--', linewidth=0.8, label='Moist adiabat (LCL)')
+        pres, T, QV, S = load_parcel_data(ncpath)
+        asc, desc = split_ascent_descent(pres)
+        all_pmin.append(np.min(pres))
 
-    # Reference lines
+        p_min = int(np.ceil(np.min(pres) / 10.0) * 10)
+        targets_up = np.arange(950, p_min - 1, -10)
+        print_table(pres[asc], T[asc], QV[asc], S[asc], f'{label} ASCENT', targets_up)
+
+        Td_asc = np.array([dewpoint_from_qv(q, p) for q, p in zip(QV[asc], pres[asc])])
+
+        all_T.extend(T[asc])
+        all_Td.extend(Td_asc)
+        all_P.extend(pres[asc])
+
+        skew.plot(pres[asc] * units.mbar, T[asc] * units.degC, '-',
+                  color=color, linewidth=2, label=f'{label} T')
+        skew.plot(pres[asc] * units.mbar, Td_asc * units.degC, '--',
+                  color=color, linewidth=1.5, label=f'{label} Td')
+
+    # Environmental sounding and moist adiabat
+    if env_path:
+        ds_env = nc.Dataset(env_path, 'r')
+        env_p = ds_env['env_pressure'][:] / 100.0  # Pa -> mb
+        env_T_K = ds_env['env_temperature'][:]
+        env_T_C = env_T_K - 273.15
+        env_rh = ds_env['env_RH'][:]
+        ds_env.close()
+
+        env_Td_C = np.array([dewpoint_from_rh(tk, rh) for tk, rh in zip(env_T_K, env_rh)])
+
+        skew.plot(env_p * units.mbar, env_T_C * units.degC, 'k-',
+                  linewidth=1.5, label='Env T')
+        skew.plot(env_p * units.mbar, env_Td_C * units.degC, 'k--',
+                  linewidth=1.5, label='Env Td')
+
+        p_hi = max(all_P)
+        p_lo = min(all_pmin)
+        mask = (env_p <= p_hi + 10) & (env_p >= p_lo - 10)
+        all_T.extend(env_T_C[mask])
+        all_Td.extend(env_Td_C[mask])
+        all_P.extend(env_p[mask])
+
+    # Moist adiabat from parcel starting conditions
+    p0 = all_P[0]
+    T0 = all_T[0]
+    p_min_all = int(np.ceil(min(all_pmin) / 10.0) * 10)
+    p_profile = np.arange(p0, max(p_min_all - 20, 700) - 1, -1) * units.mbar
+    moist_T = mpcalc.moist_lapse(p_profile, T0 * units.degC, p0 * units.mbar)
+    skew.plot(p_profile, moist_T, 'k:', linewidth=1.0, label='Moist adiabat')
+
     skew.plot_dry_adiabats(alpha=0.3)
     skew.plot_moist_adiabats(alpha=0.3)
     skew.plot_mixing_lines(alpha=0.3)
 
-    skew.ax.set_ylim(960, max(p_min - 20, 800))
-    skew.ax.set_xlim(14, 18)
-    skew.ax.legend(loc='upper left')
-    skew.ax.set_title('CODT Parcel Ascent/Descent')
+    skew.ax.set_ylim(960, max(p_min_all - 20, 700))
+
+    # Skew-aware x-limits
+    p_bot = skew.ax.get_ylim()[0]
+    rot = 45.0
+    all_T = np.array(all_T)
+    all_Td = np.array(all_Td)
+    all_P = np.array(all_P)
+    shift = rot * np.log10(p_bot / all_P)
+    x_t = all_T + shift
+    x_td = all_Td + shift
+    x_hi = max(np.max(x_t), np.max(x_td))
+    x_lo = min(np.min(all_T), np.min(all_Td))
+    pad = 5.0
+    skew.ax.set_xlim(x_lo, x_hi + pad)
+
+        skew.ax.legend(loc='upper left', fontsize=8)
+    skew.ax.set_title('CODT Parcel Entrainment Comparison')
 
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     print(f'\nSaved: {outpath}')

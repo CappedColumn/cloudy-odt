@@ -147,7 +147,7 @@ ax.set_xscale("log")
 ax.set_ylim(-71, 1)
 
 fig.tight_layout()
-png_path = repo / "test" / "data" / "dgm_solver_trajectories.png"
+png_path = repo / "test" / "data" / "figs" / "dgm_solver_trajectories.png"
 fig.savefig(png_path, dpi=150)
 print(f"Saved trajectory plot to {png_path}")
 
@@ -211,7 +211,7 @@ ax_rel.ticklabel_format(axis="y", style="scientific", scilimits=(-2, 2))
 fig2.suptitle("ROS3 − RK45 Radius Differences (dt=0.01s steps)", fontsize=13)
 fig2.tight_layout(rect=(0, 0, 1, 0.95))
 
-diff_png = repo / "test" / "data" / "dgm_solver_diffs.png"
+diff_png = repo / "test" / "data" / "figs" / "dgm_solver_diffs.png"
 fig2.savefig(diff_png, dpi=150)
 print(f"Saved difference plot to {diff_png}")
 

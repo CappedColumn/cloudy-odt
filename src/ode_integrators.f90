@@ -18,7 +18,7 @@ module ode_integrators
   implicit none
 
   private
-  public :: ode_rhs, ode_jacobian, rkck45_integrate, ros3_integrate
+  public :: ode_rhs, ode_rhs_jac, rkck45_integrate, ros3_integrate
 
   ! Step-size controller constants (shared by both solvers)
   real(dp), parameter :: SAFETY     = 0.9   ! safety factor on new step size
@@ -36,13 +36,16 @@ module ode_integrators
       integer(i4), intent(out) :: ierr
     end subroutine ode_rhs
 
-    ! Analytical Jacobian: jac(i,j) = df_i/dy_j evaluated at (t, y).
-    pure subroutine ode_jacobian(t, y, jac)
-      import dp
-      real(dp), intent(in)  :: t
-      real(dp), intent(in)  :: y(:)
-      real(dp), intent(out) :: jac(:,:)
-    end subroutine ode_jacobian
+    ! Fused RHS + Jacobian: computes both dydt and jac at (t, y) in one call,
+    ! sharing intermediate quantities (thermodynamic properties, etc.).
+    pure subroutine ode_rhs_jac(t, y, dydt, jac, ierr)
+      import dp, i4
+      real(dp),    intent(in)  :: t
+      real(dp),    intent(in)  :: y(:)
+      real(dp),    intent(out) :: dydt(:)
+      real(dp),    intent(out) :: jac(:,:)
+      integer(i4), intent(out) :: ierr
+    end subroutine ode_rhs_jac
   end interface
 
 contains
@@ -174,8 +177,9 @@ end subroutine rkck45_integrate
 ! ROS3 Rosenbrock 3(2) — L-stable implicit adaptive integrator
 ! Reference: Sandu et al. (1997), T-formulation per Hairer & Wanner
 !
-! 2 RHS evaluations + 1 Jacobian evaluation + 3 linear solves per step.
-! Embedded 2nd-order pair for error estimation.
+! Per step: 1 fused RHS+Jacobian (Stage 1) + 1 RHS (Stage 2) + 3 solves.
+! The fused call avoids redundant computation of shared thermodynamic
+! intermediates between the RHS and Jacobian evaluations.
 !
 ! T-formulation stages (W = I/(h*gamma) - J):
 !   W * k1 = f(y)
@@ -185,8 +189,8 @@ end subroutine rkck45_integrate
 !   y_err  =     e1*k1 + e2*k2 + e3*k3
 !
 ! Arguments:
-!   rhs      — RHS subroutine matching ode_rhs interface
-!   jac      — Jacobian subroutine matching ode_jacobian interface
+!   rhs      — RHS-only subroutine (ode_rhs) for Stage 2
+!   rhs_jac  — fused RHS+Jacobian subroutine (ode_rhs_jac) for Stage 1
 !   nvar     — system size
 !   y        — state vector, overwritten with solution at t_end
 !   t_start  — integration start time
@@ -196,9 +200,9 @@ end subroutine rkck45_integrate
 !   atol     — absolute error tolerance per component
 !   ierr     — 0 on success, -1 if max_steps exceeded, or RHS error code
 ! ==========================================================================
-subroutine ros3_integrate(rhs, jac, nvar, y, t_start, t_end, h_last, rtol, atol, ierr)
+subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, atol, ierr)
   procedure(ode_rhs)         :: rhs
-  procedure(ode_jacobian)    :: jac
+  procedure(ode_rhs_jac)     :: rhs_jac
   integer(i4), intent(in)    :: nvar
   real(dp),    intent(inout) :: y(nvar)
   real(dp),    intent(in)    :: t_start, t_end
@@ -226,7 +230,7 @@ subroutine ros3_integrate(rhs, jac, nvar, y, t_start, t_end, h_last, rtol, atol,
   real(dp), parameter :: e3 =  0.22354069897811569627360909276199
 
   ! ---- Work arrays ----
-  real(dp) :: jacobian(nvar,nvar)  ! Jacobian matrix J = df/dy
+  real(dp) :: J_mat(nvar,nvar)     ! Jacobian matrix J = df/dy
   real(dp) :: W_matrix(nvar,nvar)  ! iteration matrix W = I/(h*gamma) - J
   real(dp) :: f_current(nvar)      ! f(t, y) at current state
   real(dp) :: f_stage2(nvar)       ! f(t + gamma*h, y + k1)
@@ -257,22 +261,26 @@ subroutine ros3_integrate(rhs, jac, nvar, y, t_start, t_end, h_last, rtol, atol,
     end if
     if (t + h > t_end) h = t_end - t
 
-    ! Recompute Jacobian after each accepted step
+    ! Stage 1: evaluate f(y) and (if needed) J(y) at the current state.
+    ! When the Jacobian is needed, the fused call computes both together,
+    ! sharing thermodynamic intermediates.  On rejected steps the Jacobian
+    ! is reused and only the RHS is recomputed.
     if (need_jacobian) then
-      call jac(t, y, jacobian)
+      call rhs_jac(t, y, f_current, J_mat, rhs_err)
       need_jacobian = .false.
+    else
+      call rhs(t, y, f_current, rhs_err)
     end if
+    if (rhs_err /= 0) then; ierr = rhs_err; return; end if
 
     ! Build iteration matrix: W = I/(h*gamma) - J
     inv_gamma_h = 1.0 / (gamma * h)
-    W_matrix = -jacobian
+    W_matrix = -J_mat
     do i = 1, nvar
       W_matrix(i,i) = W_matrix(i,i) + inv_gamma_h
     end do
 
-    ! Stage 1: solve W * k1 = f(y)
-    call rhs(t, y, f_current, rhs_err)
-    if (rhs_err /= 0) then; ierr = rhs_err; return; end if
+    ! Stage 1 solve: W * k1 = f(y)
     k1 = f_current
     call solve3(W_matrix, k1)
 
@@ -299,7 +307,6 @@ subroutine ros3_integrate(rhs, jac, nvar, y, t_start, t_end, h_last, rtol, atol,
     end do
 
     ! Accept or reject, then adjust step size
-    ! Order 3 method: growth exponent = -1/3, shrink exponent = -1/2
     call adjust_step_size(h, err_max, 1.0_dp/3.0_dp, 0.5_dp, h_new)
     if (err_max <= 1.0) then
       t = t + h

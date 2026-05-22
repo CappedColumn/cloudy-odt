@@ -19,7 +19,7 @@ module DGM
 
   private
   public :: integrate_ODE, set_aerosol_properties
-  public :: growth_rhs, growth_jacobian
+  public :: growth_rhs, growth_jacobian, growth_rhs_jac
   public :: growth_rate, critical_radius
 
   integer(i4), parameter :: nvar = 3
@@ -144,7 +144,7 @@ subroutine integrate_ODE(y, t_start, t_end, h_last, stat, rtol, atol)
     atol_use = ode_atol
   end if
 
-  call ros3_integrate(growth_rhs, growth_jacobian, nvar, y, t_start, t_end, &
+  call ros3_integrate(growth_rhs, growth_rhs_jac, nvar, y, t_start, t_end, &
                       h_last, rtol_use, atol_use, ierr)
 
   if (present(stat)) then
@@ -456,6 +456,188 @@ pure subroutine growth_jacobian(t, y, jac)
            - (d_lv_dt / cp_moist) * (-flux_coeff * r2 * drdt)
 
 end subroutine growth_jacobian
+
+
+! ==========================================================================
+! Fused RHS + Jacobian: computes both dydt and jac at the same (t, y),
+! sharing all thermodynamic intermediates (esat, Lv, K, Dv, jump lengths,
+! ventilation, Köhler terms, diffusion denominator).
+!
+! Called by ros3_integrate at Stage 1 where both are needed at the same
+! point.  Avoids the redundant recomputation that separate growth_rhs +
+! growth_jacobian calls would perform.
+! ==========================================================================
+pure subroutine growth_rhs_jac(t, y, dydt, jac, ierr)
+  real(dp),    intent(in)  :: t
+  real(dp),    intent(in)  :: y(:)
+  real(dp),    intent(out) :: dydt(:)
+  real(dp),    intent(out) :: jac(:,:)
+  integer(i4), intent(out) :: ierr
+
+  ! State
+  real(dp) :: r, qv, temp
+  real(dp) :: r2, r3, r4
+
+  ! Shared intermediates (used by both RHS and Jacobian)
+  real(dp) :: es, cp_moist, latent_heat, thermal_cond, vapor_diff
+  real(dp) :: jump_th, jump_vp, vent_th, vent_vp
+  real(dp) :: rho_sol, kelvin_term, raoult_term, denom_water
+  real(dp) :: ss_eff, diff_denom, drdt
+
+  ! Derivatives w.r.t. radius
+  real(dp) :: d_rho_dr
+  real(dp) :: d_vth_dr, d_vvp_dr
+  real(dp) :: d_kelvin_dr, d_raoult_dr
+  real(dp) :: d_diff_dr, d_drdt_dr
+
+  ! Derivatives w.r.t. temperature
+  real(dp) :: des_dt_val
+  real(dp) :: d_lv_dt, d_k_dt, d_dv_dt
+  real(dp) :: d_jth_dt, d_jvp_dt, d_vth_dt, d_vvp_dt
+  real(dp) :: d_kelvin_dt, d_diff_dt, d_drdt_dt
+
+  ! =====================================================================
+  ! Unpack state
+  ! =====================================================================
+  r    = max(y(1), r_floor)
+  qv   = y(2)
+  temp = y(3)
+
+  if (qv < 0.0 .or. temp > 320.0 .or. temp < 193.0) then
+    ierr = 1
+    dydt = 0.0
+    jac  = 0.0
+    return
+  end if
+
+  ierr = 0
+
+  r2 = r * r
+  r3 = r2 * r
+  r4 = r3 * r
+
+  ! =====================================================================
+  ! Shared intermediates (computed once, used by both RHS and Jacobian)
+  ! =====================================================================
+
+  cp_moist     = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
+  latent_heat  = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
+  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399
+  vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
+  es = esat(temp)
+
+  jump_th = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
+          / (thermal_accom * pres * (cv + R_univ / 2.0))
+  jump_vp = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
+
+  vent_th = r / (r + jump_th)
+  vent_vp = r / (r + jump_vp)
+
+  rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
+
+  kelvin_term = 2.0 * sigma_w / (Rv * temp * rho_sol * r)
+  denom_water = pi_43 * r3 * rho_sol - solute_mass
+  raoult_term = raoult_coeff / denom_water
+
+  ss_eff = ode_supersat - kelvin_term + raoult_term
+  diff_denom = rho_sol &
+    * (Rv * temp / (vent_vp * vapor_diff * es) &
+     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2))
+
+  drdt = (1.0 / r) * ss_eff / diff_denom
+
+  ! =====================================================================
+  ! RHS output
+  ! =====================================================================
+  dydt(1) = drdt
+  dydt(2) = -flux_coeff * r2 * drdt
+
+  if (dydt(2) < 0.0 .and. abs(dydt(2)) > qv) then
+    dydt(2) = -qv
+    dydt(1) = -dydt(2) / (flux_coeff * r2)
+  end if
+
+  dydt(3) = -latent_heat / cp_moist * dydt(2)
+
+  ! =====================================================================
+  ! Jacobian: derivatives w.r.t. radius
+  ! =====================================================================
+  d_rho_dr = -3.0 * solute_c7 / (pi_43 * r4)
+
+  d_vth_dr = jump_th / (r + jump_th)**2
+  d_vvp_dr = jump_vp / (r + jump_vp)**2
+
+  d_kelvin_dr = -2.0 * sigma_w * (rho_sol + r * d_rho_dr) &
+              / (Rv * temp * (rho_sol * r)**2)
+  d_raoult_dr = -raoult_coeff * (3.0 * pi_43 * r2 * rho_sol + pi_43 * r3 * d_rho_dr) &
+              / denom_water**2
+
+  d_diff_dr = d_rho_dr &
+    * (Rv * temp / (vent_vp * vapor_diff * es) &
+     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2)) &
+    + rho_sol &
+    * (-Rv * temp * d_vvp_dr / (vent_vp**2 * vapor_diff * es) &
+     - latent_heat**2 * d_vth_dr / (vent_th**2 * thermal_cond * Rv * temp**2))
+
+  d_drdt_dr = (-1.0 / r2) * ss_eff / diff_denom &
+            + (1.0 / r) * (-d_kelvin_dr + d_raoult_dr) / diff_denom &
+            - (1.0 / r) * ss_eff * d_diff_dr / diff_denom**2
+
+  ! =====================================================================
+  ! Jacobian: derivatives w.r.t. temperature
+  ! =====================================================================
+  des_dt_val = desat_dT(temp)
+  d_lv_dt = -0.00237e6
+  d_k_dt  = 7.7e-5
+  d_dv_dt = 1.57e-7 * 1.0e5 / pres
+
+  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Ma * R_univ * temp) &
+           + thermal_cond * pi * Ma * R_univ / sqrt(2.0 * pi * Ma * R_univ * temp)) &
+           / (thermal_accom * pres * (cv + R_univ / 2.0))
+  d_jvp_dt = -0.5 * sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+           + sqrt(2.0 * pi * Mw / (Rv * temp)) * d_dv_dt / condensation_eff
+
+  d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
+  d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
+
+  d_kelvin_dt = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
+
+  d_diff_dt = rho_sol * ( &
+    (Rv * vent_vp * vapor_diff * es &
+     - Rv * temp * (d_vvp_dt * vapor_diff * es + vent_vp * d_dv_dt * es &
+                  + vent_vp * vapor_diff * des_dt_val)) &
+    / (vent_vp * vapor_diff * es)**2 &
+    + (2.0 * latent_heat * d_lv_dt * vent_th * thermal_cond * Rv * temp**2 &
+     - latent_heat**2 * (d_vth_dt * thermal_cond * Rv * temp**2 &
+              + vent_th * d_k_dt * Rv * temp**2 &
+              + vent_th * thermal_cond * Rv * 2.0 * temp)) &
+    / (vent_th * thermal_cond * Rv * temp**2)**2 )
+
+  d_drdt_dt = (1.0 / r) * (-d_kelvin_dt / diff_denom &
+            - ss_eff * d_diff_dt / diff_denom**2)
+
+  ! =====================================================================
+  ! Assemble Jacobian
+  ! =====================================================================
+
+  ! Column 1: d(f)/dr
+  jac(1,1) = d_drdt_dr
+  jac(2,1) = -flux_coeff * (2.0 * r * drdt + r2 * d_drdt_dr)
+  jac(3,1) = -(latent_heat / cp_moist) * jac(2,1)
+
+  ! Column 2: d(f)/dqv
+  jac(1,2) = 0.0
+  jac(2,2) = 0.0
+  jac(3,2) = -(latent_heat / cp_moist**2) * flux_coeff * r2 * drdt &
+           * (cp_wv - cp) / (1.0 + qv)**2
+
+  ! Column 3: d(f)/dT
+  jac(1,3) = d_drdt_dt
+  jac(2,3) = -flux_coeff * r2 * d_drdt_dt
+  jac(3,3) = -(latent_heat / cp_moist) * jac(2,3) &
+           - (d_lv_dt / cp_moist) * (-flux_coeff * r2 * drdt)
+
+end subroutine growth_rhs_jac
 
 
 ! ==========================================================================

@@ -1,7 +1,7 @@
 program test_dgm_solvers
   use globals
   use microphysics, only: saturation_vapor_pressure
-  use DGM, only: set_aerosol_properties, integrate_ODE, growth_jacobian, growth_rhs
+  use DGM, only: set_aerosol_properties, integrate_ODE, growth_rhs, growth_rhs_jac
   use ode_integrators, only: ros3_integrate, rkck45_integrate
   implicit none
 
@@ -121,7 +121,7 @@ program test_dgm_solvers
 
         ! ROS3
         call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, ss_env)
-        call ros3_integrate(growth_rhs, growth_jacobian, 3, y_ros, tstart, tend, &
+        call ros3_integrate(growth_rhs, growth_rhs_jac, 3, y_ros, tstart, tend, &
                               h_ros, rtol_arr, atol_arr, istat)
         y_ros(1) = max(y_ros(1), r_sol * 1.01)
         ss_out = compute_ss(y_ros(2), y_ros(3))
@@ -166,7 +166,7 @@ program test_dgm_solvers
   do ib = 1, n_bench
     y_bench = y0
     h_bench = h_init
-    call ros3_integrate(growth_rhs, growth_jacobian, 3, y_bench, 0.0_dp, dt_fine, &
+    call ros3_integrate(growth_rhs, growth_rhs_jac, 3, y_bench, 0.0_dp, dt_fine, &
                           h_bench, rtol_arr, atol_arr, istat)
   end do
   call cpu_time(t_cpu_end)
@@ -201,7 +201,7 @@ program test_dgm_solvers
   do ib = 1, n_bench
     y_bench = y0
     h_bench = h_init
-    call ros3_integrate(growth_rhs, growth_jacobian, 3, y_bench, 0.0_dp, dt_fine, &
+    call ros3_integrate(growth_rhs, growth_rhs_jac, 3, y_bench, 0.0_dp, dt_fine, &
                           h_bench, rtol_arr, atol_arr, istat)
   end do
   call cpu_time(t_cpu_end)

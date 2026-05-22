@@ -219,6 +219,7 @@ contains
                     ! Record pre-coalescence state
                     lparticles(keep)%radius_before_coalescence = r_keep
                     lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
+                    lparticles(keep)%h_last = 1.0e-3
 
                     ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
                     lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)

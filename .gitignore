@@ -6,3 +6,4 @@ build/
 fpm_env
 .vscode/
 .claude
+test/data/

@@ -1,3 +1,16 @@
+! Droplet Growth Model (DGM)
+!
+! Solves the coupled ODE system for single-droplet condensational growth:
+!   y(1) = droplet radius        [m]
+!   y(2) = water vapor mixing ratio [kg/kg]
+!   y(3) = temperature           [K]
+!
+! Physics: Su et al. (1998) growth equation with Fukuta & Walter (1970)
+! kinetic corrections and full Köhler equilibrium (Kelvin + Raoult).
+!
+! The module maintains per-droplet aerosol state (solute mass, species
+! properties, derived coefficients) via set_aerosol_properties, which must
+! be called before each integration.
 module DGM
   use globals
   use ode_integrators, only: ode_rhs, ros3_integrate
@@ -5,55 +18,70 @@ module DGM
   implicit none
 
   private
-  public :: integrate_ODE, set_aerosol_properties, growth_jacobian, growth_rhs
-  public :: critical_radius
-  public :: growth_rate
+  public :: integrate_ODE, set_aerosol_properties
+  public :: growth_rhs, growth_jacobian
+  public :: growth_rate, critical_radius
 
   integer(i4), parameter :: nvar = 3
 
-  ! Aerosol properties (set per-droplet by set_aerosol_properties)
-  integer(i4) :: aerosol_type
-  real(dp)    :: solute_mass
-  real(dp)    :: solute_c7
-  real(dp)    :: raoult_coeff
-  real(dp)    :: flux_coeff
-  real(dp)    :: r_floor
-  real(dp)    :: ode_supersat
+  ! ---- Per-droplet aerosol state (set by set_aerosol_properties) ----
+  integer(i4) :: aerosol_type       ! species index (1=NaCl, 2=(NH4)2SO4, 3=fumaric)
+  real(dp)    :: solute_mass         ! dry solute mass [kg]
+  real(dp)    :: solute_c7           ! solute_mass * c7 — density correction product
+  real(dp)    :: raoult_coeff        ! Raoult prefactor: n_ions * (Mw/M_s) * m_s
+  real(dp)    :: flux_coeff          ! vapor flux coupling: (4/3)*pi * (1/grid_mass) * rho_l
+  real(dp)    :: r_floor             ! minimum radius: dry radius * (1 + eps_r)
+  real(dp)    :: ode_supersat        ! ambient supersaturation [fraction, not %]
 
-  ! Aerosol species parameters
-  real(dp) :: molar_mass_solute
-  real(dp) :: c7_solute
-  real(dp) :: n_ions
+  ! ---- Species lookup tables ----
+  real(dp) :: molar_mass_solute      ! molar mass of solute [kg/mol]
+  real(dp) :: c7_solute              ! solution density correction factor
+  real(dp) :: n_ions                 ! van't Hoff factor (effective ions per molecule)
 
-  ! Species-specific c7 coefficients (solute density correction)
+  ! ---- Physical constants ----
+  ! Solute density corrections (c7): ratio of apparent volume occupied by dissolved
+  ! solute to its dry-particle volume.  Species-specific empirical values.
   real(dp), parameter :: c7_ammonium_sulfate = 0.4363021
   real(dp), parameter :: c7_sodium_chloride  = 0.5381062
 
-  ! Surface tension of water
-  real(dp), parameter :: sigma_w = 7.392730e-2
+  real(dp), parameter :: sigma_w = 7.392730e-2  ! surface tension of water [N/m]
 
-  ! Kinetic coefficients
-  real(dp), parameter :: thermal_accom    = 1.0
-  real(dp), parameter :: condensation_eff = 0.04
+  ! Kinetic accommodation coefficients (Fukuta & Walter 1970)
+  real(dp), parameter :: thermal_accom    = 1.0   ! thermal accommodation coefficient
+  real(dp), parameter :: condensation_eff = 0.04  ! condensation (mass) coefficient
 
-  ! Dry radius margin
-  real(dp), parameter :: eps_r = 1.0e-2
+  real(dp), parameter :: eps_r = 1.0e-2  ! dry radius margin: r_floor = r_dry * (1 + eps_r)
 
-  ! ODE tolerances
+  ! ---- Default ODE tolerances ----
   real(dp) :: ode_rtol(nvar) = [1.0e-4, 1.0e-4, 1.0e-4]
   real(dp) :: ode_atol(nvar) = [1.0e-10, 1.0e-10, 1.0e-10]
 
 
 contains
 
+
+! ==========================================================================
+! Set per-droplet aerosol properties before ODE integration.
+!
+! Must be called once per droplet before integrate_ODE.  Populates module
+! state: solute mass, species-dependent constants, and derived coefficients
+! used by growth_rhs and growth_jacobian.
+!
+! Arguments:
+!   species    — aerosol type: 1=NaCl, 2=(NH4)2SO4, 3=fumaric acid
+!   mass       — dry solute mass [kg]
+!   r_solute   — dry solute radius [m]
+!   grid_scale — 1 / (gridcell air mass) [kg^-1]
+!   supersat   — ambient supersaturation [fraction, not %]
+! ==========================================================================
 subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
   integer(i4), intent(in) :: species
   real(dp), intent(in)    :: mass, r_solute, grid_scale, supersat
 
-  aerosol_type  = species
-  solute_mass   = mass
-  r_floor       = r_solute * (1.0 + eps_r)
-  ode_supersat  = supersat
+  aerosol_type = species
+  solute_mass  = mass
+  r_floor      = r_solute * (1.0 + eps_r)
+  ode_supersat = supersat
 
   select case (species)
   case (1) ! NaCl
@@ -72,6 +100,7 @@ subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
     error stop "set_aerosol_properties: unknown aerosol species"
   end select
 
+  ! Precompute derived coefficients used by the RHS
   solute_c7    = solute_mass * c7_solute
   raoult_coeff = n_ions * (Mw / molar_mass_solute) * solute_mass
   flux_coeff   = pi_4 * grid_scale * rho_l
@@ -79,8 +108,23 @@ subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
 end subroutine set_aerosol_properties
 
 
-subroutine integrate_ODE(ystart, t_start, t_end, h_last, stat, rtol, atol)
-  real(dp), intent(inout) :: ystart(nvar)
+! ==========================================================================
+! Integrate the droplet growth ODE from t_start to t_end.
+!
+! Wraps ros3_integrate with default tolerances and error handling.
+! Calls set_aerosol_properties first to configure module state.
+!
+! Arguments:
+!   y        — state vector [radius, qv, T], overwritten with solution
+!   t_start  — integration start time [s]
+!   t_end    — integration end time [s]
+!   h_last   — step size hint on entry, last accepted step on exit [s]
+!   stat     — (optional) error code; if absent, failure causes error stop
+!   rtol     — (optional) relative tolerance override per component
+!   atol     — (optional) absolute tolerance override per component
+! ==========================================================================
+subroutine integrate_ODE(y, t_start, t_end, h_last, stat, rtol, atol)
+  real(dp), intent(inout) :: y(nvar)
   real(dp), intent(in)    :: t_start, t_end
   real(dp), intent(inout) :: h_last
   integer(i4), intent(out), optional :: stat
@@ -100,32 +144,41 @@ subroutine integrate_ODE(ystart, t_start, t_end, h_last, stat, rtol, atol)
     atol_use = ode_atol
   end if
 
-  call ros3_integrate(growth_rhs, growth_jacobian, nvar, ystart, t_start, t_end, &
+  call ros3_integrate(growth_rhs, growth_jacobian, nvar, y, t_start, t_end, &
                       h_last, rtol_use, atol_use, ierr)
 
   if (present(stat)) then
     stat = ierr
   else if (ierr < 0) then
     write(0,*) 'DGM ODE integration failed, ierr = ', ierr
-    write(0,*) '  radius=', ystart(1), ' qv=', ystart(2), ' T=', ystart(3)
+    write(0,*) '  radius=', y(1), ' qv=', y(2), ' T=', y(3)
     error stop
   end if
 
 end subroutine integrate_ODE
 
 
-! RHS of the droplet growth ODE system.
-! y(1) = radius, y(2) = water vapor mixing ratio, y(3) = temperature.
-! Reference: Su et al. (1998), droplet growth with kinetic corrections.
-pure subroutine growth_rhs(ltime, y, dydt, ierr)
-  real(dp),    intent(in)  :: ltime
+! ==========================================================================
+! RHS of the droplet growth ODE: dydt = f(t, y).
+!
+! Computes radius, vapor, and temperature tendencies from the Su et al.
+! (1998) growth equation with Fukuta & Walter (1970) kinetic corrections.
+!
+! State vector:
+!   y(1) = radius [m],  y(2) = mixing ratio [kg/kg],  y(3) = temperature [K]
+!
+! The supersaturation driving growth comes from the module-level ode_supersat,
+! not from y(2).  y(2) evolves via mass conservation with the gridcell.
+! ==========================================================================
+pure subroutine growth_rhs(t, y, dydt, ierr)
+  real(dp),    intent(in)  :: t
   real(dp),    intent(in)  :: y(:)
   real(dp),    intent(out) :: dydt(:)
   integer(i4), intent(out) :: ierr
 
   real(dp) :: radius, qv, temp
   real(dp) :: es
-  real(dp) :: cp_moist, Lv, K_therm, D_vapor
+  real(dp) :: cp_moist, latent_heat, thermal_cond, vapor_diff
   real(dp) :: jump_thermal, jump_vapor
   real(dp) :: vent_thermal, vent_vapor
   real(dp) :: solution_density
@@ -135,6 +188,7 @@ pure subroutine growth_rhs(ltime, y, dydt, ierr)
   qv     = y(2)
   temp   = y(3)
 
+  ! Guard against unphysical state
   if (qv < 0.0 .or. temp > 320.0 .or. temp < 193.0) then
     ierr = 1
     dydt = 0.0
@@ -143,38 +197,39 @@ pure subroutine growth_rhs(ltime, y, dydt, ierr)
 
   ierr = 0
 
-  cp_moist = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
-  Lv    = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
-  K_therm  = 7.7e-5 * (temp - Tice) + 0.02399
-  D_vapor  = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
+  ! Thermodynamic properties
+  cp_moist    = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
+  latent_heat = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6        ! [J/kg]
+  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399                 ! [W/(m·K)]
+  vapor_diff  = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres  ! [m²/s]
 
   es = esat(temp)
 
-  ! Kinetic correction lengths (Fukuta & Walter 1970)
-  jump_thermal = K_therm * sqrt(2.0 * pi * Ma * R_univ * temp) &
+  ! Kinetic correction: mean free path jump lengths (Fukuta & Walter 1970)
+  jump_thermal = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
                / (thermal_accom * pres * (cv + R_univ / 2.0))
-  jump_vapor   = sqrt(2.0 * pi * Mw / (Rv * temp)) * D_vapor / condensation_eff
+  jump_vapor   = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
 
-  ! Ventilation coefficients
+  ! Ventilation coefficients (transition regime correction)
   vent_thermal = radius / (radius + jump_thermal)
   vent_vapor   = radius / (radius + jump_vapor)
 
-  ! Solution density (accounts for dissolved solute)
+  ! Solution density: accounts for dissolved solute volume
   solution_density = (radius**3 * pi_43 * rho_l + solute_c7) / (radius**3 * pi_43)
 
-  ! Köhler terms
+  ! Köhler equilibrium terms
   kelvin = 2.0 * sigma_w / (Rv * temp * solution_density * radius)
   raoult = raoult_coeff / (pi_43 * radius**3 * solution_density - solute_mass)
 
-  ! Thermodynamic diffusion denominator
+  ! Thermodynamic diffusion resistance
   diffusion_denom = solution_density &
-    * (Rv * temp / (vent_vapor * D_vapor * es) &
-     + Lv**2 / (vent_thermal * K_therm * Rv * temp**2))
+    * (Rv * temp / (vent_vapor * vapor_diff * es) &
+     + latent_heat**2 / (vent_thermal * thermal_cond * Rv * temp**2))
 
-  ! Radius tendency
+  ! Radius tendency: dr/dt = (1/r) * (S - Kelvin + Raoult) / D
   dydt(1) = (1.0 / radius) * (ode_supersat - kelvin + raoult) / diffusion_denom
 
-  ! Vapor tendency (mass conservation with gridcell)
+  ! Vapor tendency: mass conservation with gridcell
   dydt(2) = -flux_coeff * radius**2 * dydt(1)
 
   ! Limit evaporation to available vapor
@@ -183,35 +238,63 @@ pure subroutine growth_rhs(ltime, y, dydt, ierr)
     dydt(1) = -dydt(2) / (flux_coeff * radius**2)
   end if
 
-  ! Temperature tendency (latent heating)
-  dydt(3) = -Lv / cp_moist * dydt(2)
+  ! Temperature tendency: latent heating
+  dydt(3) = -latent_heat / cp_moist * dydt(2)
 
 end subroutine growth_rhs
 
 
+! ==========================================================================
 ! Analytical Jacobian of growth_rhs: jac(i,j) = d(dydt_i)/d(y_j).
+!
+! Differentiates the unconstrained growth equations (ignores the vapor
+! limiter branch, which is non-smooth; the Jacobian is correct whenever
+! the limiter is inactive).
+!
+! The core quantity is dr/dt = (1/r) * SS_eff / D, where:
+!   SS_eff = S_ambient - Kelvin(r,T) + Raoult(r)
+!   D      = rho_sol * [Rv*T/(f_v*Dv*es) + Lv²/(f_th*K*Rv*T²)]
+!
+! qv does not appear in dr/dt (supersaturation is module-level), so
+! d(dr/dt)/dqv = 0.  The only nonzero qv derivative is in dT/dt via
+! the moist heat capacity cp_moist(qv).
+!
 ! Uses module-level aerosol state set by set_aerosol_properties.
-! Ignores the vapor-limiter branch (non-smooth; Jacobian approximates
-! the unconstrained system, which is correct whenever the limiter is inactive).
-pure subroutine growth_jacobian(ltime, y, jac)
-  real(dp), intent(in)  :: ltime
+! ==========================================================================
+pure subroutine growth_jacobian(t, y, jac)
+  real(dp), intent(in)  :: t
   real(dp), intent(in)  :: y(:)
   real(dp), intent(out) :: jac(:,:)
 
+  ! State
   real(dp) :: r, qv, temp
-  real(dp) :: es, des_dT
-  real(dp) :: cp_moist, Lv, K_therm, D_vapor
-  real(dp) :: dLv_dT, dK_dT, dD_dT
-  real(dp) :: jump_th, jump_vp, vent_th, vent_vp
-  real(dp) :: djth_dr, djvp_dr, dvth_dr, dvvp_dr
-  real(dp) :: djth_dT, djvp_dT, dvth_dT, dvvp_dT
-  real(dp) :: rho_sol, drho_dr
-  real(dp) :: kelvin, raoult_term, denom_water
-  real(dp) :: dkelvin_dr, dkelvin_dT, draoult_dr
-  real(dp) :: diff_denom, ddiff_dr, ddiff_dT
-  real(dp) :: SS_eff, drdt, ddrdt_dr, ddrdt_dT
-  real(dp) :: r3, r2, r4
+  real(dp) :: r2, r3, r4
 
+  ! Base quantities (shared by forward and derivative calculations)
+  real(dp) :: es, cp_moist, latent_heat, thermal_cond, vapor_diff
+  real(dp) :: jump_th, jump_vp, vent_th, vent_vp
+  real(dp) :: rho_sol, kelvin_term, raoult_term, denom_water
+  real(dp) :: ss_eff, diff_denom, drdt
+
+  ! --- Derivatives w.r.t. radius ---
+  real(dp) :: d_rho_dr                        ! d(rho_sol)/dr
+  real(dp) :: d_vth_dr, d_vvp_dr              ! d(ventilation)/dr
+  real(dp) :: d_kelvin_dr, d_raoult_dr        ! d(Köhler terms)/dr
+  real(dp) :: d_diff_dr                       ! d(diffusion denom)/dr
+  real(dp) :: d_drdt_dr                       ! d(dr/dt)/dr
+
+  ! --- Derivatives w.r.t. temperature ---
+  real(dp) :: des_dt_val                      ! d(es)/dT
+  real(dp) :: d_lv_dt, d_k_dt, d_dv_dt       ! d(Lv,K,Dv)/dT
+  real(dp) :: d_jth_dt, d_jvp_dt              ! d(jump lengths)/dT
+  real(dp) :: d_vth_dt, d_vvp_dt              ! d(ventilation)/dT
+  real(dp) :: d_kelvin_dt                     ! d(Kelvin)/dT
+  real(dp) :: d_diff_dt                       ! d(diffusion denom)/dT
+  real(dp) :: d_drdt_dt                       ! d(dr/dt)/dT
+
+  ! =====================================================================
+  ! Unpack state
+  ! =====================================================================
   r    = max(y(1), r_floor)
   qv   = y(2)
   temp = y(3)
@@ -220,133 +303,165 @@ pure subroutine growth_jacobian(ltime, y, jac)
   r3 = r2 * r
   r4 = r3 * r
 
-  ! Thermodynamic quantities and their T-derivatives
-  cp_moist = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
-  Lv       = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
-  K_therm  = 7.7e-5 * (temp - Tice) + 0.02399
-  D_vapor  = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
+  ! =====================================================================
+  ! Base quantities (needed by both forward evaluation and derivatives)
+  ! =====================================================================
 
-  dLv_dT   = -0.00237e6
-  dK_dT    = 7.7e-5
-  dD_dT    = 1.57e-7 * 1.0e5 / pres
-
+  ! Thermodynamic properties
+  cp_moist     = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
+  latent_heat  = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
+  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399
+  vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
   es = esat(temp)
-  des_dT = desat_dT(temp)
 
-  ! Kinetic jump lengths and ventilation coefficients
-  jump_th = K_therm * sqrt(2.0 * pi * Ma * R_univ * temp) &
+  ! Kinetic jump lengths (Fukuta & Walter 1970)
+  jump_th = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
           / (thermal_accom * pres * (cv + R_univ / 2.0))
-  jump_vp = sqrt(2.0 * pi * Mw / (Rv * temp)) * D_vapor / condensation_eff
+  jump_vp = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
 
+  ! Ventilation coefficients
   vent_th = r / (r + jump_th)
   vent_vp = r / (r + jump_vp)
 
-  ! d(jump_th)/dr = 0, d(jump_vp)/dr = 0
-  dvth_dr = jump_th / (r + jump_th)**2
-  dvvp_dr = jump_vp / (r + jump_vp)**2
-
-  ! d(jump_th)/dT
-  djth_dT = (dK_dT * sqrt(2.0 * pi * Ma * R_univ * temp) &
-           + K_therm * pi * Ma * R_univ / sqrt(2.0 * pi * Ma * R_univ * temp)) &
-           / (thermal_accom * pres * (cv + R_univ / 2.0))
-  ! d(jump_vp)/dT
-  djvp_dT = -0.5 * sqrt(2.0 * pi * Mw / (Rv * temp)) * D_vapor / (condensation_eff * temp) &
-          + sqrt(2.0 * pi * Mw / (Rv * temp)) * dD_dT / condensation_eff
-
-  dvth_dT = -r * djth_dT / (r + jump_th)**2
-  dvvp_dT = -r * djvp_dT / (r + jump_vp)**2
-
   ! Solution density
-  rho_sol  = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
-  drho_dr  = -3.0 * solute_c7 / (pi_43 * r4)
+  rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
 
   ! Köhler terms
-  kelvin      = 2.0 * sigma_w / (Rv * temp * rho_sol * r)
+  kelvin_term = 2.0 * sigma_w / (Rv * temp * rho_sol * r)
   denom_water = pi_43 * r3 * rho_sol - solute_mass
   raoult_term = raoult_coeff / denom_water
 
-  ! d(kelvin)/dr
-  dkelvin_dr = -2.0 * sigma_w * (rho_sol + r * drho_dr) &
-             / (Rv * temp * (rho_sol * r)**2)
-  ! d(kelvin)/dT
-  dkelvin_dT = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
-
-  ! d(raoult)/dr: denom_water = pi_43*r3*rho_sol - m_s
-  ! d(denom_water)/dr = 3*pi_43*r2*rho_sol + pi_43*r3*drho_dr
-  draoult_dr = -raoult_coeff * (3.0 * pi_43 * r2 * rho_sol + pi_43 * r3 * drho_dr) &
-             / denom_water**2
-
-  ! Effective supersaturation driving growth
-  SS_eff = ode_supersat - kelvin + raoult_term
-
-  ! Diffusion denominator: D = rho_sol * (Rv*T/(fv*Dv*es) + Lv^2/(fth*K*Rv*T^2))
+  ! Effective supersaturation and diffusion denominator
+  ss_eff = ode_supersat - kelvin_term + raoult_term
   diff_denom = rho_sol &
-    * (Rv * temp / (vent_vp * D_vapor * es) &
-     + Lv**2 / (vent_th * K_therm * Rv * temp**2))
+    * (Rv * temp / (vent_vp * vapor_diff * es) &
+     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2))
 
-  ! d(diff_denom)/dr
-  ddiff_dr = drho_dr &
-    * (Rv * temp / (vent_vp * D_vapor * es) &
-     + Lv**2 / (vent_th * K_therm * Rv * temp**2)) &
+  ! Forward growth rate
+  drdt = (1.0 / r) * ss_eff / diff_denom
+
+  ! =====================================================================
+  ! Derivatives w.r.t. radius (r)
+  !
+  ! Radius enters: rho_sol(r), ventilation(r), Kelvin(r), Raoult(r),
+  ! diffusion_denom(r), and the 1/r prefactor.
+  ! =====================================================================
+
+  ! d(rho_sol)/dr
+  d_rho_dr = -3.0 * solute_c7 / (pi_43 * r4)
+
+  ! d(ventilation)/dr — jump lengths are independent of r
+  d_vth_dr = jump_th / (r + jump_th)**2
+  d_vvp_dr = jump_vp / (r + jump_vp)**2
+
+  ! d(Kelvin)/dr
+  d_kelvin_dr = -2.0 * sigma_w * (rho_sol + r * d_rho_dr) &
+              / (Rv * temp * (rho_sol * r)**2)
+
+  ! d(Raoult)/dr via chain rule on denom_water(r)
+  d_raoult_dr = -raoult_coeff * (3.0 * pi_43 * r2 * rho_sol + pi_43 * r3 * d_rho_dr) &
+              / denom_water**2
+
+  ! d(diff_denom)/dr: contributions from rho_sol(r) and ventilation(r)
+  d_diff_dr = d_rho_dr &
+    * (Rv * temp / (vent_vp * vapor_diff * es) &
+     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2)) &
     + rho_sol &
-    * (-Rv * temp * dvvp_dr / (vent_vp**2 * D_vapor * es) &
-     - Lv**2 * dvth_dr / (vent_th**2 * K_therm * Rv * temp**2))
+    * (-Rv * temp * d_vvp_dr / (vent_vp**2 * vapor_diff * es) &
+     - latent_heat**2 * d_vth_dr / (vent_th**2 * thermal_cond * Rv * temp**2))
 
-  ! d(diff_denom)/dT
-  ddiff_dT = rho_sol * ( &
-    (Rv * vent_vp * D_vapor * es &
-     - Rv * temp * (dvvp_dT * D_vapor * es + vent_vp * dD_dT * es + vent_vp * D_vapor * des_dT)) &
-    / (vent_vp * D_vapor * es)**2 &
-    + (2.0 * Lv * dLv_dT * vent_th * K_therm * Rv * temp**2 &
-     - Lv**2 * (dvth_dT * K_therm * Rv * temp**2 &
-              + vent_th * dK_dT * Rv * temp**2 &
-              + vent_th * K_therm * Rv * 2.0 * temp)) &
-    / (vent_th * K_therm * Rv * temp**2)**2 )
+  ! d(dr/dt)/dr = d/dr[(1/r) * SS_eff / D]
+  !             = -(1/r²)(SS/D) + (1/r)(dSS/dr)/D - (1/r)(SS)(dD/dr)/D²
+  d_drdt_dr = (-1.0 / r2) * ss_eff / diff_denom &
+            + (1.0 / r) * (-d_kelvin_dr + d_raoult_dr) / diff_denom &
+            - (1.0 / r) * ss_eff * d_diff_dr / diff_denom**2
 
-  ! dr/dt = (1/r) * SS_eff / diff_denom
-  drdt = (1.0 / r) * SS_eff / diff_denom
+  ! =====================================================================
+  ! Derivatives w.r.t. temperature (T)
+  !
+  ! Temperature enters: es(T), Lv(T), K(T), Dv(T), jump lengths(T),
+  ! ventilation(T via jumps), Kelvin(T), and diffusion_denom(T).
+  ! Raoult has no T dependence.
+  ! =====================================================================
 
-  ! d(drdt)/dr = d/dr[(1/r) * SS_eff / D]
-  !            = (-1/r²)(SS_eff/D) + (1/r)(dSS/dr)/D - (1/r)(SS_eff)(dD/dr)/D²
-  ddrdt_dr = (-1.0 / r2) * SS_eff / diff_denom &
-           + (1.0 / r) * (-dkelvin_dr + draoult_dr) / diff_denom &
-           - (1.0 / r) * SS_eff * ddiff_dr / diff_denom**2
+  ! d(es)/dT
+  des_dt_val = desat_dT(temp)
 
-  ! d(drdt)/dT = (1/r) * [(-dkelvin_dT)/D - SS_eff * ddiff_dT / D²]
-  ddrdt_dT = (1.0 / r) * (-dkelvin_dT / diff_denom &
-           - SS_eff * ddiff_dT / diff_denom**2)
+  ! d(thermodynamic properties)/dT — linear approximations
+  d_lv_dt = -0.00237e6
+  d_k_dt  = 7.7e-5
+  d_dv_dt = 1.57e-7 * 1.0e5 / pres
 
-  ! --- Assemble Jacobian ---
+  ! d(jump lengths)/dT
+  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Ma * R_univ * temp) &
+           + thermal_cond * pi * Ma * R_univ / sqrt(2.0 * pi * Ma * R_univ * temp)) &
+           / (thermal_accom * pres * (cv + R_univ / 2.0))
+  d_jvp_dt = -0.5 * sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+           + sqrt(2.0 * pi * Mw / (Rv * temp)) * d_dv_dt / condensation_eff
 
-  ! Row 1: d(drdt)/dy
-  jac(1,1) = ddrdt_dr
-  jac(1,2) = 0.0     ! qv does not enter drdt (SS is module-level constant)
-  jac(1,3) = ddrdt_dT
+  ! d(ventilation)/dT via jump length dependence
+  d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
+  d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
 
-  ! Row 2: d(dqv/dt)/dy where dqv/dt = -flux_coeff * r² * drdt
-  ! d/dr: -flux_coeff * (2*r*drdt + r²*ddrdt_dr)
-  jac(2,1) = -flux_coeff * (2.0 * r * drdt + r2 * ddrdt_dr)
+  ! d(Kelvin)/dT — only the 1/T factor
+  d_kelvin_dt = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
+
+  ! d(diff_denom)/dT: contributions from es(T), Lv(T), K(T), Dv(T), ventilation(T)
+  d_diff_dt = rho_sol * ( &
+    (Rv * vent_vp * vapor_diff * es &
+     - Rv * temp * (d_vvp_dt * vapor_diff * es + vent_vp * d_dv_dt * es &
+                  + vent_vp * vapor_diff * des_dt_val)) &
+    / (vent_vp * vapor_diff * es)**2 &
+    + (2.0 * latent_heat * d_lv_dt * vent_th * thermal_cond * Rv * temp**2 &
+     - latent_heat**2 * (d_vth_dt * thermal_cond * Rv * temp**2 &
+              + vent_th * d_k_dt * Rv * temp**2 &
+              + vent_th * thermal_cond * Rv * 2.0 * temp)) &
+    / (vent_th * thermal_cond * Rv * temp**2)**2 )
+
+  ! d(dr/dt)/dT = (1/r) * [(-dKelvin/dT)/D - SS * (dD/dT)/D²]
+  d_drdt_dt = (1.0 / r) * (-d_kelvin_dt / diff_denom &
+            - ss_eff * d_diff_dt / diff_denom**2)
+
+  ! =====================================================================
+  ! Assemble Jacobian
+  !
+  ! The ODE system is:
+  !   f1 = dr/dt  = (1/r) * SS_eff / D
+  !   f2 = dqv/dt = -flux_coeff * r² * dr/dt
+  !   f3 = dT/dt  = -(Lv/cp_moist) * dqv/dt
+  !
+  ! Column 1: d/dr    — all three equations depend on r
+  ! Column 2: d/dqv   — only dT/dt depends on qv (via cp_moist)
+  ! Column 3: d/dT    — all three equations depend on T
+  ! =====================================================================
+
+  ! Column 1: d(f)/dr
+  jac(1,1) = d_drdt_dr
+  jac(2,1) = -flux_coeff * (2.0 * r * drdt + r2 * d_drdt_dr)
+  jac(3,1) = -(latent_heat / cp_moist) * jac(2,1)
+
+  ! Column 2: d(f)/dqv
+  ! dr/dt and dqv/dt do not depend on qv.
+  ! dT/dt depends on qv through cp_moist:
+  !   d(cp_moist)/dqv = (cp_wv - cp) / (1 + qv)²
+  jac(1,2) = 0.0
   jac(2,2) = 0.0
-  jac(2,3) = -flux_coeff * r2 * ddrdt_dT
-
-  ! Row 3: d(dT/dt)/dy where dT/dt = -(Lv/cp_moist) * dqv/dt
-  ! d/dr: -(Lv/cp_moist) * jac(2,1)
-  jac(3,1) = -(Lv / cp_moist) * jac(2,1)
-  ! d/dqv: -(Lv/cp_moist) * jac(2,2) + correction from d(cp_moist)/dqv
-  ! cp_moist = cp*(1 + (cp_wv/cp)*qv)/(1+qv)
-  ! d(cp_moist)/dqv = cp*(cp_wv/cp - 1)/(1+qv)² = (cp_wv - cp)/(1+qv)²
-  ! dT/dt depends on cp_moist: d/dqv[-(Lv/cp_moist)*dqvdt]
-  !   = (Lv * dqvdt / cp_moist²) * d(cp_moist)/dqv  (since dqvdt doesn't depend on qv)
-  jac(3,2) = -(Lv / cp_moist**2) * flux_coeff * r2 * drdt &
+  jac(3,2) = -(latent_heat / cp_moist**2) * flux_coeff * r2 * drdt &
            * (cp_wv - cp) / (1.0 + qv)**2
-  jac(3,3) = -(Lv / cp_moist) * jac(2,3) &
-           - (dLv_dT / cp_moist) * (-flux_coeff * r2 * drdt)
+
+  ! Column 3: d(f)/dT
+  jac(1,3) = d_drdt_dt
+  jac(2,3) = -flux_coeff * r2 * d_drdt_dt
+  jac(3,3) = -(latent_heat / cp_moist) * jac(2,3) &
+           - (d_lv_dt / cp_moist) * (-flux_coeff * r2 * drdt)
 
 end subroutine growth_jacobian
 
 
-! Derivative of saturation vapor pressure with respect to temperature [Pa/K].
+! ==========================================================================
+! Derivative of saturation vapor pressure w.r.t. temperature [Pa/K].
 ! Flatau et al. (1992) polynomial derivative.
+! ==========================================================================
 pure function desat_dT(temp) result(des)
   real(dp), intent(in) :: temp
   real(dp) :: des
@@ -368,8 +483,10 @@ pure function desat_dT(temp) result(des)
 end function desat_dT
 
 
+! ==========================================================================
 ! Critical radius [m] from Rogers & Yau Eqs. 6.7-6.8.
 ! Uses module-level aerosol state set by set_aerosol_properties.
+! ==========================================================================
 function critical_radius(temp) result(r_crit)
   real(dp), intent(in) :: temp
   real(dp) :: r_crit
@@ -384,15 +501,17 @@ function critical_radius(temp) result(r_crit)
 end function critical_radius
 
 
-! Radius growth rate dr/dt [m s-1] at the given state.
-! Thin wrapper around the ODE RHS for diagnostic use.
-! supersat and temp must match what was passed to set_aerosol_properties.
+! ==========================================================================
+! Radius growth rate dr/dt [m/s] at the given state.
+! Thin wrapper around growth_rhs for diagnostic use.
+! set_aerosol_properties must be called first.
+! ==========================================================================
 function growth_rate(radius, temp) result(drdt)
   real(dp), intent(in) :: radius, temp
   real(dp) :: drdt
 
-  real(dp) :: y(3), dydt(3), es_loc, qv_sat, qv
-  integer(i4) :: ierr_rhs
+  real(dp) :: y(nvar), dydt(nvar), es_loc, qv_sat, qv
+  integer(i4) :: rhs_err
 
   es_loc = esat(temp)
   qv_sat = 0.622 * es_loc / (pres - es_loc)
@@ -401,14 +520,16 @@ function growth_rate(radius, temp) result(drdt)
   y(1) = radius
   y(2) = qv
   y(3) = temp
-  call growth_rhs(0.0_dp, y, dydt, ierr_rhs)
+  call growth_rhs(0.0_dp, y, dydt, rhs_err)
   drdt = dydt(1)
 
 end function growth_rate
 
 
+! ==========================================================================
 ! Saturation vapor pressure over liquid water [Pa].
 ! Flatau et al. (1992) polynomial, valid for Tc in [-80, 50] °C.
+! ==========================================================================
 pure function esat(temp) result(es)
   real(dp), intent(in) :: temp
   real(dp) :: es

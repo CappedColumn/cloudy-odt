@@ -6,8 +6,7 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use DGM, only: integrate_ODE, set_aerosol_properties, &
-                   kohler_equilibrium_radius, equilibrium_timescale, tau_ratio
+    use DGM, only: integrate_ODE, set_aerosol_properties
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -60,8 +59,6 @@ module droplets
     real(dp) :: aerosol_concentration = 0.0
     character(256) :: aerosol_file = ''
 
-    ! DGM-Controlling variables
-    real(dp), parameter :: RK5_min_timestep = 0.01
 
     ! Particle I/O Handling
     logical :: write_trajectories = .false.
@@ -469,7 +466,6 @@ contains
         real(dp), intent(in) :: ltime, ldt
         real(dp) :: y_arr(3), y_before(3), grid_mass, inverse_grid_mass, grid_rho
         real(dp) :: wl_before, T_before
-        real(dp) :: tau, r_eq, delta_qv, Lcond_T, cpm
 
         ! Determine mass of air in gridcell
         grid_rho = pres / (Rd * droplet%virt_temp)
@@ -491,24 +487,7 @@ contains
 
         y_before = y_arr
 
-        if (droplet%supersaturation < 0.0_dp) then
-            tau = equilibrium_timescale(droplet%radius, droplet%supersaturation/100, &
-                                        droplet%temperature)
-            if (tau < ldt * tau_ratio) then
-                r_eq = kohler_equilibrium_radius(droplet%supersaturation/100, droplet%temperature)
-                delta_qv = -pi_43 * rho_l * (r_eq**3 - y_arr(1)**3) * inverse_grid_mass
-                Lcond_T = (2.501_dp - 0.00237_dp * (y_arr(3) - Tice)) * 1.0e6_dp
-                cpm = cp * ((1.0_dp + cp_wv/cp * y_arr(2)) / (1.0_dp + y_arr(2)))
-
-                y_arr(1) = r_eq
-                y_arr(2) = y_arr(2) + delta_qv
-                y_arr(3) = y_arr(3) - Lcond_T / cpm * delta_qv
-            else
-                call integrate_ODE_substep(y_arr, ltime, ldt)
-            end if
-        else
-            call integrate_ODE_substep(y_arr, ltime, ldt)
-        end if
+        call integrate_ODE(y_arr, ltime, ltime + ldt, droplet%h_last)
 
         ! Unpack droplet properties from array
         droplet%radius = y_arr(1)
@@ -524,29 +503,6 @@ contains
 
     end subroutine single_droplet_growth
 
-
-    subroutine integrate_ODE_substep(y_arr, ltime, ldt)
-        real(dp), intent(inout) :: y_arr(3)
-        real(dp), intent(in) :: ltime, ldt
-        real(dp) :: time_start, time_stop, time_iterate
-
-        if (ldt >= RK5_min_timestep) then
-            time_stop = ltime + ldt
-            time_start = ltime
-            time_iterate = ltime + RK5_min_timestep
-            do while (time_iterate < time_stop)
-                call integrate_ODE(y_arr, time_start, time_iterate, RK5_min_timestep)
-                time_start = time_iterate
-                time_iterate = time_iterate + RK5_min_timestep
-            end do
-            if (time_stop > time_start .and. time_stop < time_iterate) then
-                call integrate_ODE(y_arr, time_start, time_stop, time_stop - time_start)
-            end if
-        else
-            call integrate_ODE(y_arr, ltime, ltime + ldt, ldt)
-        end if
-
-    end subroutine integrate_ODE_substep
 
 
     subroutine update_scalar_fields_DGM(droplet, lT, lWV, lTv, lSS)

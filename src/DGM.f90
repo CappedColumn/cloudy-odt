@@ -1,14 +1,13 @@
 module DGM
   use globals
-  use ode_integrators, only: ode_rhs, ode_integrate
+  use ode_integrators, only: ode_rhs
+  use rosenbrock, only: ros3_integrate
 
   implicit none
 
   private
   public :: integrate_ODE, set_aerosol_properties, growth_jacobian, growth_rhs
-  public :: kohler_equilibrium_radius, raoult_only_radius, bisection_equilibrium_radius
   public :: critical_radius
-  public :: equilibrium_timescale, tau_ratio, kelvin_guard_threshold
   public :: growth_rate
 
   integer(i4), parameter :: nvar = 3
@@ -40,12 +39,6 @@ module DGM
 
   ! Dry radius margin
   real(dp), parameter :: eps_r = 1.0e-2
-
-  ! Equilibrium bypass threshold: bypass ODE when tau < dt * tau_ratio
-  real(dp), parameter :: tau_ratio = 1.0
-
-  ! Kelvin guard: skip Newton bypass for mild subsaturations (fraction, not %)
-  real(dp), parameter :: kelvin_guard_threshold = -0.005
 
   ! ODE tolerances
   real(dp) :: ode_rtol(nvar) = [1.0e-4, 1.0e-4, 1.0e-4]
@@ -87,9 +80,10 @@ subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
 end subroutine set_aerosol_properties
 
 
-subroutine integrate_ODE(ystart, t_start, t_end, h_init, stat, rtol, atol)
+subroutine integrate_ODE(ystart, t_start, t_end, h_last, stat, rtol, atol)
   real(dp), intent(inout) :: ystart(nvar)
-  real(dp), intent(in)    :: t_start, t_end, h_init
+  real(dp), intent(in)    :: t_start, t_end
+  real(dp), intent(inout) :: h_last
   integer(i4), intent(out), optional :: stat
   real(dp), intent(in), optional :: rtol(nvar), atol(nvar)
 
@@ -107,8 +101,8 @@ subroutine integrate_ODE(ystart, t_start, t_end, h_init, stat, rtol, atol)
     atol_use = ode_atol
   end if
 
-  call ode_integrate(growth_rhs, nvar, ystart, t_start, t_end, h_init, &
-                     rtol_use, atol_use, ierr)
+  call ros3_integrate(growth_rhs, growth_jacobian, nvar, ystart, t_start, t_end, &
+                      h_last, rtol_use, atol_use, ierr)
 
   if (present(stat)) then
     stat = ierr
@@ -124,10 +118,11 @@ end subroutine integrate_ODE
 ! RHS of the droplet growth ODE system.
 ! y(1) = radius, y(2) = water vapor mixing ratio, y(3) = temperature.
 ! Reference: Su et al. (1998), droplet growth with kinetic corrections.
-subroutine growth_rhs(ltime, y, dydt)
-  real(dp), intent(in)  :: ltime
-  real(dp), intent(in)  :: y(:)
-  real(dp), intent(out) :: dydt(:)
+pure subroutine growth_rhs(ltime, y, dydt, ierr)
+  real(dp),    intent(in)  :: ltime
+  real(dp),    intent(in)  :: y(:)
+  real(dp),    intent(out) :: dydt(:)
+  integer(i4), intent(out) :: ierr
 
   real(dp) :: radius, qv, temp
   real(dp) :: es
@@ -142,9 +137,12 @@ subroutine growth_rhs(ltime, y, dydt)
   temp   = y(3)
 
   if (qv < 0.0 .or. temp > 320.0 .or. temp < 193.0) then
-    write(0, '(3(A,ES16.8))') "growth_rhs: T=", temp, " qv=", qv, " r=", radius
-    error stop "growth_rhs: state out of bounds"
+    ierr = 1
+    dydt = 0.0
+    return
   end if
+
+  ierr = 0
 
   cp_moist = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
   Lv    = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
@@ -196,7 +194,7 @@ end subroutine growth_rhs
 ! Uses module-level aerosol state set by set_aerosol_properties.
 ! Ignores the vapor-limiter branch (non-smooth; Jacobian approximates
 ! the unconstrained system, which is correct whenever the limiter is inactive).
-subroutine growth_jacobian(ltime, y, jac)
+pure subroutine growth_jacobian(ltime, y, jac)
   real(dp), intent(in)  :: ltime
   real(dp), intent(in)  :: y(:)
   real(dp), intent(out) :: jac(:,:)
@@ -371,19 +369,6 @@ pure function desat_dT(temp) result(des)
 end function desat_dT
 
 
-! Raoult-only equilibrium radius [m], ignoring the Kelvin (curvature) term.
-! Cheap initial estimate used as the starting point for the full Newton solver.
-function raoult_only_radius(supersat) result(r_eq)
-  real(dp), intent(in) :: supersat  ! supersaturation [fraction]
-  real(dp) :: r_eq
-
-  r_eq = (solute_mass * (1.0 - c7_solute) + raoult_coeff / abs(supersat)) &
-       / (pi_43 * rho_l)
-  r_eq = r_eq**(1.0 / 3.0)
-
-end function raoult_only_radius
-
-
 ! Critical radius [m] from Rogers & Yau Eqs. 6.7-6.8.
 ! Uses module-level aerosol state set by set_aerosol_properties.
 function critical_radius(temp) result(r_crit)
@@ -400,171 +385,6 @@ function critical_radius(temp) result(r_crit)
 end function critical_radius
 
 
-! Köhler equilibrium radius [m] on the stable (sub-critical) branch.
-! Newton iteration on the full Köhler equation including solution density,
-! Kelvin (curvature), and Raoult (solute) terms.
-function kohler_equilibrium_radius(supersat, temp) result(r_eq)
-  real(dp), intent(in) :: supersat  ! supersaturation [fraction]
-  real(dp), intent(in) :: temp      ! temperature [K]
-  real(dp) :: r_eq
-
-  integer, parameter  :: max_iter = 20
-  real(dp), parameter :: tol = 1.0e-30
-
-  integer  :: iter
-  real(dp) :: rho_sol, denom, kelvin, raoult_term
-  real(dp) :: f, drho_dr, dk_dr, ddenom_dr, dra_dr, fprime
-
-  r_eq = raoult_only_radius(supersat)
-
-  do iter = 1, max_iter
-    rho_sol = (r_eq**3 * pi_43 * rho_l + solute_c7) / (r_eq**3 * pi_43)
-    denom   = pi_43 * r_eq**3 * rho_sol - solute_mass
-    if (denom < tol) exit
-
-    kelvin      = 2.0 * sigma_w / (Rv * temp * rho_sol * r_eq)
-    raoult_term = raoult_coeff / denom
-    f = supersat - kelvin + raoult_term
-
-    ! Jacobian terms including solution density gradient
-    drho_dr   = -3.0 * solute_c7 / (pi_43 * r_eq**4)
-    dk_dr     = -2.0 * sigma_w * (rho_sol + r_eq * drho_dr) &
-              / (Rv * temp * (rho_sol * r_eq)**2)
-    ddenom_dr = 3.0 * pi_43 * r_eq**2 * rho_sol + pi_43 * r_eq**3 * drho_dr
-    dra_dr    = -raoult_coeff * ddenom_dr / denom**2
-    fprime    = -dk_dr + dra_dr
-
-    if (abs(fprime) < tol) exit
-    r_eq = r_eq - f / fprime
-    if (r_eq < r_floor) r_eq = r_floor
-  end do
-
-end function kohler_equilibrium_radius
-
-
-! Köhler equilibrium radius [m] via bisection on the stable branch.
-! Guaranteed to converge where Newton may diverge (small aerosol, mild SS).
-! Brackets: [r_floor, r_critical] where r_critical is the Köhler curve peak.
-function bisection_equilibrium_radius(supersat, temp) result(r_eq)
-  real(dp), intent(in) :: supersat  ! supersaturation [fraction]
-  real(dp), intent(in) :: temp      ! temperature [K]
-  real(dp) :: r_eq
-
-  integer, parameter  :: max_iter = 60
-  real(dp), parameter :: rtol = 1.0e-10
-
-  real(dp) :: r_lo, r_hi, r_mid, f_lo, f_mid
-  integer  :: iter
-
-  ! Lower bound: dry radius (Raoult dominates, f > 0)
-  r_lo = r_floor * (1.0 + eps_r)
-
-  ! Upper bound: depends on sign of supersaturation
-  if (supersat < 0.0) then
-    r_hi = raoult_only_radius(supersat)
-  else
-    r_hi = critical_radius(temp)
-  end if
-
-  f_lo = kohler_residual(r_lo, supersat, temp)
-
-  if (f_lo < 0.0) then
-    r_eq = r_hi
-    return
-  end if
-
-  ! No sign change: SS > SS_crit, droplet is activated
-  if (kohler_residual(r_hi, supersat, temp) > 0.0) then
-    r_eq = r_hi
-    return
-  end if
-
-  do iter = 1, max_iter
-    r_mid = 0.5 * (r_lo + r_hi)
-    f_mid = kohler_residual(r_mid, supersat, temp)
-
-    if (f_mid > 0.0) then
-      r_lo = r_mid
-    else
-      r_hi = r_mid
-    end if
-
-    if ((r_hi - r_lo) < rtol * r_lo) exit
-  end do
-
-  r_eq = 0.5 * (r_lo + r_hi)
-
-end function bisection_equilibrium_radius
-
-
-! Köhler residual: f(r) = SS - kelvin(r) + raoult(r).
-! Zero crossing on the stable branch gives equilibrium radius.
-pure function kohler_residual(radius, supersat, temp) result(f)
-  real(dp), intent(in) :: radius, supersat, temp
-  real(dp) :: f
-
-  real(dp), parameter :: tol = 1.0e-30
-  real(dp) :: rho_sol, denom, kelvin, raoult_term
-
-  rho_sol = (radius**3 * pi_43 * rho_l + solute_c7) / (radius**3 * pi_43)
-  denom   = pi_43 * radius**3 * rho_sol - solute_mass
-  if (denom < tol) then
-    f = huge(1.0)
-    return
-  end if
-
-  kelvin      = 2.0 * sigma_w / (Rv * temp * rho_sol * radius)
-  raoult_term = raoult_coeff / denom
-  f = supersat - kelvin + raoult_term
-
-end function kohler_residual
-
-
-! Linearized relaxation timescale [s] near Köhler equilibrium.
-! Small tau means the droplet equilibrates much faster than the ODE timestep (stiff).
-function equilibrium_timescale(radius, supersat, temp) result(tau)
-  real(dp), intent(in) :: radius    ! droplet radius [m]
-  real(dp), intent(in) :: supersat  ! supersaturation [fraction]
-  real(dp), intent(in) :: temp      ! temperature [K]
-  real(dp) :: tau
-
-  real(dp), parameter :: tol = 1.0e-30
-
-  real(dp) :: rho_sol, denom, kelvin_coeff, df_dr
-  real(dp) :: es, Lv, K_therm, D_vapor, denom_thermo, eigenvalue
-
-  rho_sol = (radius**3 * pi_43 * rho_l + solute_c7) / (radius**3 * pi_43)
-  denom   = pi_43 * radius**3 * rho_sol - solute_mass
-  if (denom < tol) then
-    tau = 0.0
-    return
-  end if
-
-  ! Köhler curve slope df/dr at current radius
-  kelvin_coeff = 2.0 * sigma_w / (Rv * temp * rho_sol)
-  df_dr = kelvin_coeff / radius**2 &
-        - 3.0 * pi_43 * rho_sol * radius**2 * raoult_coeff / denom**2
-
-  ! Thermodynamic diffusion resistance
-  es      = esat(temp)
-  Lv      = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
-  K_therm = 7.7e-5 * (temp - Tice) + 0.02399
-  D_vapor = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
-
-  denom_thermo = rho_sol * (Rv * temp / (D_vapor * es) &
-               + Lv**2 / (K_therm * Rv * temp**2))
-
-  eigenvalue = (1.0 / radius) * df_dr / denom_thermo
-
-  if (abs(eigenvalue) < tol) then
-    tau = huge(1.0)
-  else
-    tau = 1.0 / abs(eigenvalue)
-  end if
-
-end function equilibrium_timescale
-
-
 ! Radius growth rate dr/dt [m s-1] at the given state.
 ! Thin wrapper around the ODE RHS for diagnostic use.
 ! supersat and temp must match what was passed to set_aerosol_properties.
@@ -573,6 +393,7 @@ function growth_rate(radius, temp) result(drdt)
   real(dp) :: drdt
 
   real(dp) :: y(3), dydt(3), es_loc, qv_sat, qv
+  integer(i4) :: ierr_rhs
 
   es_loc = esat(temp)
   qv_sat = 0.622 * es_loc / (pres - es_loc)
@@ -581,7 +402,7 @@ function growth_rate(radius, temp) result(drdt)
   y(1) = radius
   y(2) = qv
   y(3) = temp
-  call growth_rhs(0.0_dp, y, dydt)
+  call growth_rhs(0.0_dp, y, dydt, ierr_rhs)
   drdt = dydt(1)
 
 end function growth_rate

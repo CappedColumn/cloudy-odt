@@ -1,6 +1,6 @@
 program test_ros_simple
   use globals, only: dp, i4
-  use rosenbrock, only: ros3_integrate
+  use ode_integrators, only: ros3_integrate
   implicit none
 
   real(dp) :: y(3), h_last, rtol(3), atol(3)
@@ -29,38 +29,44 @@ program test_ros_simple
 
 contains
 
-  subroutine const_rhs(t, yv, dydt)
+  pure subroutine const_rhs(t, yv, dydt, ierr)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: dydt(:)
+    integer(i4), intent(out) :: ierr
+    ierr = 0
     dydt = [1.0_dp, 0.0_dp, 0.0_dp]
   end subroutine
 
-  subroutine zero_jac(t, yv, jac)
+  pure subroutine zero_jac(t, yv, jac)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: jac(:,:)
     jac = 0.0_dp
   end subroutine
 
-  subroutine exp_rhs(t, yv, dydt)
+  pure subroutine exp_rhs(t, yv, dydt, ierr)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: dydt(:)
+    integer(i4), intent(out) :: ierr
+    ierr = 0
     dydt = [yv(1), 0.0_dp, 0.0_dp]
   end subroutine
 
-  subroutine exp_jac(t, yv, jac)
+  pure subroutine exp_jac(t, yv, jac)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: jac(:,:)
     jac = 0.0_dp
     jac(1,1) = 1.0_dp
   end subroutine
 
-  subroutine stiff_rhs(t, yv, dydt)
+  pure subroutine stiff_rhs(t, yv, dydt, ierr)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: dydt(:)
+    integer(i4), intent(out) :: ierr
+    ierr = 0
     dydt = [-1000.0_dp * yv(1), 0.0_dp, 0.0_dp]
   end subroutine
 
-  subroutine stiff_jac(t, yv, jac)
+  pure subroutine stiff_jac(t, yv, jac)
     real(dp), intent(in) :: t, yv(:)
     real(dp), intent(out) :: jac(:,:)
     jac = 0.0_dp

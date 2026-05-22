@@ -1,7 +1,6 @@
 module DGM
   use globals
-  use ode_integrators, only: ode_rhs
-  use rosenbrock, only: ros3_integrate
+  use ode_integrators, only: ode_rhs, ros3_integrate
 
   implicit none
 

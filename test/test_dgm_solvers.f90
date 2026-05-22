@@ -2,8 +2,7 @@ program test_dgm_solvers
   use globals
   use microphysics, only: saturation_vapor_pressure
   use DGM, only: set_aerosol_properties, integrate_ODE, growth_jacobian, growth_rhs
-  use rosenbrock, only: ros3_integrate
-  use ode_integrators, only: rkck45_integrate
+  use ode_integrators, only: ros3_integrate, rkck45_integrate
   implicit none
 
   integer, parameter :: n_aero = 4
@@ -23,7 +22,7 @@ program test_dgm_solvers
   real(dp) :: y_rk(3), y_ros(3), y0(3)
   real(dp) :: qv_sat, es_val, grid_rho, grid_mass, inv_grid_mass
   real(dp) :: tstart, tend, ss_out, ss_env
-  real(dp) :: h_ros
+  real(dp) :: h_rk, h_ros
   integer(i4) :: istat, ia, ic, k
 
   real(dp), parameter :: perturb_r  = 1.0e-6
@@ -92,6 +91,7 @@ program test_dgm_solvers
       y_rk  = y0
       y_ros = y0
       y_ros(1) = y0(1) * (1.0 + perturb_r)
+      h_rk  = h_init
       h_ros = h_init
 
       ! --- Fine timesteps ---
@@ -114,7 +114,7 @@ program test_dgm_solvers
 
         ! RK45
         call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, ss_env)
-        call integrate_ODE(y_rk, tstart, tend, h_init, stat=istat)
+        call integrate_ODE(y_rk, tstart, tend, h_rk, stat=istat)
         y_rk(1) = max(y_rk(1), r_sol * 1.01)
         ss_out = compute_ss(y_rk(2), y_rk(3))
         call write_row(aero_labels(ia), ic_labels(ic), "RK45", k, tend, y_rk(1), ss_out)
@@ -155,7 +155,8 @@ program test_dgm_solvers
   call cpu_time(t_cpu_start)
   do ib = 1, n_bench
     y_bench = y0
-    call rkck45_integrate(growth_rhs, 3, y_bench, 0.0_dp, dt_fine, h_init, &
+    h_bench = h_init
+    call rkck45_integrate(growth_rhs, 3, y_bench, 0.0_dp, dt_fine, h_bench, &
                           rtol_arr, atol_arr, istat)
   end do
   call cpu_time(t_cpu_end)
@@ -184,7 +185,8 @@ program test_dgm_solvers
   call cpu_time(t_cpu_start)
   do ib = 1, n_bench
     y_bench = y0
-    call rkck45_integrate(growth_rhs, 3, y_bench, 0.0_dp, dt_fine, h_init, &
+    h_bench = h_init
+    call rkck45_integrate(growth_rhs, 3, y_bench, 0.0_dp, dt_fine, h_bench, &
                           rtol_arr, atol_arr, istat)
     if (istat < 0) exit
   end do

@@ -94,9 +94,6 @@ contains
         ! --- Read parcel input file ---
         if (parcel_file /= '') then
             call read_parcel_file(resolve_path(namelist_dir, parcel_file))
-            call copy_file(resolve_path(namelist_dir, parcel_file), &
-                           trim(sim_output_dir)// &
-                           trim(parcel_file(scan(trim(parcel_file), '/', back=.true.)+1:)))
         end if
 
     end subroutine initialize_parcel

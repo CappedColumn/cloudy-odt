@@ -325,37 +325,6 @@ contains
         end if
     end function resolve_path
 
-    subroutine copy_file(source, destination)
-        ! Copies a file byte-for-byte from source to destination using stream I/O
-        character(*), intent(in) :: source, destination
-        integer :: in_unit, out_unit, ierr
-        character :: byte
-
-        open(newunit=in_unit, file=trim(source), status='old', access='stream', &
-             form='unformatted', action='read', iostat=ierr)
-        if (ierr /= 0) then
-            write(0,*) 'Error: could not open source file: ', trim(source)
-            stop 1
-        end if
-
-        open(newunit=out_unit, file=trim(destination), status='replace', access='stream', &
-             form='unformatted', action='write', iostat=ierr)
-        if (ierr /= 0) then
-            write(0,*) 'Error: could not open destination file: ', trim(destination)
-            close(in_unit)
-            stop 1
-        end if
-
-        do
-            read(in_unit, iostat=ierr) byte
-            if (ierr /= 0) exit
-            write(out_unit) byte
-        end do
-
-        close(in_unit)
-        close(out_unit)
-    end subroutine copy_file
-
 
     subroutine triplet_map(eddy_length, eddy_start, field)
         ! Applies the triplet map rearrangement to field.

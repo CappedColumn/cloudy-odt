@@ -634,10 +634,6 @@ contains
         ! Resolve input paths relative to namelist directory
         aerosol_file = resolve_path(namelist_dir, trim(aerosol_file))
 
-        ! Copy aerosol input to output directory
-        i = scan(trim(aerosol_file), '/', back=.true.)
-        call copy_file(trim(aerosol_file), trim(sim_output_dir)//trim(aerosol_file(i+1:)))
-
         ! Set up aerosol type, injection forcings, and DSD bin edges
         call read_aerosol_netcdf(trim(aerosol_file))
 

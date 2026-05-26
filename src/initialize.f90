@@ -60,7 +60,6 @@ contains
                                                kolmogorov_length_scale, dissipation_rate])
             end if
         end if
-        call copy_file(namelist_path, trim(file_prefix)//'.nml')
         call add_to_profile_buffer(time, T, WV, Tv, SS)
 
     end subroutine initialize_simulation

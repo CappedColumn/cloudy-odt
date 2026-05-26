@@ -100,7 +100,7 @@ program main
 
   ! Write DONE marker file to simulation output directory
   call date_and_time(date=date_str, time=time_str)
-  open(newunit=done_unit, file=trim(sim_output_dir)//'DONE', &
+  open(newunit=done_unit, file=trim(file_prefix)//'_DONE', &
        status='replace', action='write')
   write(done_unit,'(a,a,a,a,a,a,a,a,a)') date_str(1:4), '-', date_str(5:6), '-', date_str(7:8), &
        ' ', time_str(1:2), ':', time_str(3:4)

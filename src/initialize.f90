@@ -28,9 +28,9 @@ contains
     subroutine initialize_simulation()
 
         call read_params()
+        call initialize_output()
         call initialize_params()
         call initialize_arrays()
-        call initialize_output()
         if (simulation_mode == 'parcel') call initialize_parcel()
 
         call log_header()
@@ -90,7 +90,6 @@ contains
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
         overwrite, simulation_mode, do_radiation
 
-        write(*,*) 'Reading PARAMETERS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
             write(*,*) io_emsg; stop 1
@@ -103,12 +102,6 @@ contains
             stop 1
         end if
         close(nml_unit)
-
-        if (output_directory(1:1) /= '/') then
-            write(0,*) 'Error: output_directory must be an absolute path.'
-            write(0,*) 'Got: ', trim(output_directory)
-            stop 1
-        end if
 
     end subroutine read_params
 
@@ -177,10 +170,35 @@ contains
 
 
     subroutine initialize_output()
-        integer :: ierr
-        logical :: file_exists
+        integer :: ierr, dirlen, parent_end
+        logical :: file_exists, parent_exists
+        character(256) :: cwd
 
-        sim_output_dir = trim(output_directory)//'/'//trim(simulation_name)//'/'
+        ! Resolve relative output_directory to absolute
+        if (output_directory(1:1) /= '/') then
+            call getcwd(cwd)
+            output_directory = trim(cwd)//'/'//trim(output_directory)
+        end if
+
+        ! Ensure trailing slash
+        dirlen = len_trim(output_directory)
+        if (output_directory(dirlen:dirlen) /= '/') then
+            output_directory = trim(output_directory)//'/'
+        end if
+
+        ! Verify parent directory exists
+        dirlen = len_trim(output_directory)
+        parent_end = scan(output_directory(1:dirlen-1), '/', back=.true.)
+        if (parent_end > 0) then
+            inquire(file=output_directory(1:parent_end), exist=parent_exists)
+            if (.not. parent_exists) then
+                write(0,*) 'Error: parent directory does not exist: ', output_directory(1:parent_end)
+                write(0,*) 'Full output_directory: ', trim(output_directory)
+                stop 1
+            end if
+        end if
+
+        sim_output_dir = trim(output_directory)
         file_prefix = trim(sim_output_dir)//trim(simulation_name)
         call system("mkdir -p "//trim(sim_output_dir))
 
@@ -200,7 +218,6 @@ contains
             write(0,*) 'Error: could not open log file'
             stop 1
         end if
-
 
     end subroutine initialize_output
 

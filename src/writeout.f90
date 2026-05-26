@@ -34,6 +34,10 @@ module writeout
     integer(i4) :: eddy_unit
 
 
+    ! Version info (injected by build script)
+    character(*), parameter :: code_version = 'VERSION_PLACEHOLDER'
+    character(*), parameter :: git_commit   = 'COMMIT_PLACEHOLDER'
+
     ! Namelist metadata for global attributes (set by create_netcdf)
     character(100) :: nc_simulation_name
     integer(i4) :: nc_write_buffer
@@ -53,6 +57,7 @@ module writeout
     real(dp), allocatable :: buffer_rad_F_net(:,:), buffer_rad_heating_rate(:,:)
     real(dp), allocatable :: buffer_rad_budget(:)
 
+    public  :: code_version, git_commit
     public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
                write_profiles, write_eddy, initialize_eddy_file, write_eddy_header_fields
@@ -301,6 +306,10 @@ contains
         call nc_verify( nf90_create(file_name, NF90_NETCDF4, lncid), "nf90_create" )
         call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "conventions", "CODT_output_v1"), &
                         "nf90_put_att: conventions" )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "code_version", code_version), &
+                        "nf90_put_att: code_version" )
+        call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "git_commit", git_commit), &
+                        "nf90_put_att: git_commit" )
 
         ! Establish dimensions
         call nc_verify( nf90_def_dim(lncid, "time", NF90_UNLIMITED, t_dimid), "nf90_def_dim: time"  )

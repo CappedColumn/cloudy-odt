@@ -8,10 +8,22 @@ BE CONSCIOUS OF TOKEN USAGE!
 
 ```bash
 source fpm_env          # sets compiler/NetCDF paths (once per shell)
-fpm build               # compiles to build/
+./build.sh              # injects version+git hash into writeout.f90, then runs fpm build
+fpm build               # plain build (no version injection — use build.sh for releases)
 fpm test                # unit tests (paths, file copy, aerosol reader) — no full simulations
 fpm run -- /path/to/params.nml   # run simulation
 ```
+
+## Versioning
+
+Semantic versioning in `fpm.toml` (MAJOR.MINOR.PATCH):
+- **PATCH** — bug fixes, perf, internal refactors. Same output for same input.
+- **MINOR** — new features, namelist params, output variables. Old inputs/tools still work.
+- **MAJOR** — breaking changes. Conventions string bump, incompatible namelist or output format.
+
+Bump the version in `fpm.toml` when merging to main. During development, the git commit hash (`-dirty` suffix for uncommitted changes) in output files provides traceability.
+
+`build.sh` injects `code_version` and `git_commit` into `writeout.f90` at build time, written as global attributes in both profile and particle NetCDF files. The injected values stay in `writeout.f90` after the build (not restored to placeholders), so `fpm run` uses the same binary without recompiling. The `conventions` string (`CODT_output_v1`, etc.) is the format contract — bump it only when the file schema changes in a way that would break an existing reader.
 
 ## Reference Test (Reftest)
 

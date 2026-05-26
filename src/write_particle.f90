@@ -4,6 +4,7 @@ module write_particle
                         trajectory_start, trajectory_end, trajectory_timer
     use collision_coalescence, only: do_collisions
     use globals
+    use writeout, only: code_version, git_commit
     implicit none
 
     private
@@ -67,6 +68,10 @@ contains
                          "create_particle_netcdf: nf90_create" )
         call nc_verify( nf90_put_att(pnc_id, NF90_GLOBAL, "conventions", "CODT_particle_output_v1"), &
                          "nf90_put_att: conventions" )
+        call nc_verify( nf90_put_att(pnc_id, NF90_GLOBAL, "code_version", code_version), &
+                         "nf90_put_att: code_version" )
+        call nc_verify( nf90_put_att(pnc_id, NF90_GLOBAL, "git_commit", git_commit), &
+                         "nf90_put_att: git_commit" )
 
         ! Dimensions (both unlimited)
         call nc_verify( nf90_def_dim(pnc_id, "record", NF90_UNLIMITED, rec_dimid) )

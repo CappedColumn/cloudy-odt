@@ -11,8 +11,8 @@ module writeout
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
-                      parcel_file, initial_RH, pressure_limit, &
-                      do_entrainment, ent_rate, n_blob, psigma, random_entrainment
+                      parcel_file, initial_RH, pressure_limit
+    use entrainment, only: ent_rate, n_blob, psigma, random_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
@@ -47,10 +47,14 @@ module writeout
     integer :: varid_stats(7)  ! Np, Nact, Nun, Ravg, LWC, N_collisions, N_coalescences
     integer :: varid_field_budgets(n_field_budgets)
     integer :: varid_micro_budgets(n_micro_budgets)
+    integer :: varid_entrain_budgets(n_entrain_budgets)
     integer :: varid_parcel_height, varid_parcel_pressure, varid_parcel_velocity
 
     ! Parcel ascent buffers
     real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:), buffer_parcel_velocity(:)
+
+    ! Entrainment budget varids and buffers (only when do_entrainment = .true.)
+    real(dp), allocatable :: buffer_entrain_budgets(:,:)  ! (n_entrain_budgets, buffer_size)
 
     ! Radiation varids and buffers (only when do_radiation = .true.)
     integer :: varid_rad_F_net, varid_rad_heating_rate, varid_rad_budget
@@ -135,6 +139,11 @@ contains
             buffer_parcel_velocity = 0.
         end if
 
+        if (do_entrainment) then
+            allocate(buffer_entrain_budgets(n_entrain_budgets, buff_len))
+            buffer_entrain_budgets = 0.
+        end if
+
         if (do_radiation) then
             allocate(buffer_rad_F_net(N_grid, buff_len))
             allocate(buffer_rad_heating_rate(N_grid, buff_len))
@@ -158,6 +167,7 @@ contains
         if (allocated(buffer_rad_F_net)) deallocate(buffer_rad_F_net)
         if (allocated(buffer_rad_heating_rate)) deallocate(buffer_rad_heating_rate)
         if (allocated(buffer_rad_budget)) deallocate(buffer_rad_budget)
+        if (allocated(buffer_entrain_budgets)) deallocate(buffer_entrain_budgets)
     end subroutine deallocate_buffers
 
 
@@ -192,6 +202,14 @@ contains
                 buffer_parcel_height(buffer_count) = parcel_height
                 buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
                 buffer_parcel_velocity(buffer_count) = parcel_velocity
+            end if
+            if (do_entrainment) then
+                buffer_entrain_budgets(1, buffer_count) = budget_detrain_liquid_mass
+                buffer_entrain_budgets(2, buffer_count) = budget_detrain_solute_mass
+                buffer_entrain_budgets(3, buffer_count) = budget_entrain_liquid_mass
+                buffer_entrain_budgets(4, buffer_count) = budget_entrain_solute_mass
+                buffer_entrain_budgets(5, buffer_count) = real(budget_n_detrained, dp)
+                buffer_entrain_budgets(6, buffer_count) = real(budget_n_entrained, dp)
             end if
             if (do_radiation) then
                 buffer_rad_F_net(:, buffer_count) = rad_F_net
@@ -427,6 +445,22 @@ contains
                                   "budget_n_coalesced", "Number of particles removed by coalescence", "#")
         end if
 
+        ! Entrainment budget variables
+        if (do_entrainment) then
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 1, &
+                                  "budget_detrain_liquid_mass", "Liquid water removed by detrainment", "kg")
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 2, &
+                                  "budget_detrain_solute_mass", "Solute mass removed by detrainment", "kg")
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 3, &
+                                  "budget_entrain_liquid_mass", "Liquid water added by entrainment", "kg")
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 4, &
+                                  "budget_entrain_solute_mass", "Solute mass added by entrainment", "kg")
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 5, &
+                                  "budget_n_detrained", "Number of particles removed by detrainment", "#")
+            call define_budget_var(lncid, t_dimid, varid_entrain_budgets, 6, &
+                                  "budget_n_entrained", "Number of particles added by entrainment", "#")
+        end if
+
         ! Parcel ascent variables (parcel mode with dynamics only)
         if (do_parcel_ascent) then
             call nc_verify( nf90_def_var(lncid, "parcel_height", NF90_FLOAT, t_dimid, &
@@ -545,6 +579,14 @@ contains
             end do
         end if
 
+        if (do_entrainment) then
+            do i = 1, n_entrain_budgets
+                call nc_verify( nf90_put_var(lncid, varid_entrain_budgets(i), &
+                                buffer_entrain_budgets(i, 1:buffer_count), &
+                                start=(/nc_write_iter/)) )
+            end do
+        end if
+
         if (do_parcel_ascent) then
             call nc_verify( nf90_put_var(lncid, varid_parcel_height, &
                             buffer_parcel_height(1:buffer_count), start=(/nc_write_iter/)) )
@@ -622,7 +664,7 @@ contains
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_RH", initial_RH) )
             if (pressure_limit > 0.0) &
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_limit", pressure_limit) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.do_entrainment", &
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_entrainment", &
                             merge(1, 0, do_entrainment)) )
             if (do_entrainment) then
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.ent_rate", ent_rate) )

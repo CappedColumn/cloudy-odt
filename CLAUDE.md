@@ -37,7 +37,7 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 
 **Simulation modes** (`simulation_mode` namelist):
 - `'chamber'` (default) — ODT turbulence, Dirichlet BCs, nondimensional scalars, adaptive dt.
-- `'parcel'` — LEM turbulence, periodic BCs, dimensional scalars, fixed dt. Adiabatic ascent driven by `parcel_file` (piecewise-constant velocity). Particles pre-loaded from aerosol distribution at init (not injected over time), equilibrated to Köhler. Positions wrap periodically (no fallout). Optional entrainment via blob method (`do_entrainment`). `pressure_limit` stops simulation at a target pressure.
+- `'parcel'` — LEM turbulence, periodic BCs, dimensional scalars, fixed dt. Adiabatic ascent driven by `parcel_file` (piecewise-constant velocity). Particles pre-loaded from aerosol distribution at init (not injected over time), equilibrated to Köhler. Positions wrap periodically (no fallout). Optional entrainment via blob method (`do_entrainment` in `&PARAMETERS`, params in `&ENTRAINMENT`). `pressure_limit` stops simulation at a target pressure.
 
 ### Chamber vs. Parcel Mode
 
@@ -56,6 +56,7 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 | **`aerosol_concentration`** | Ignored | Number concentration (cm⁻³) |
 | **`parcel_file`** | Not used | NetCDF with velocity segments for ascent rate |
 | **`Tdiff`** | Top-bottom ΔT driving convection | Not used |
+| **Entrainment** | Not yet implemented (planned) | Blob method via `entrainment.f90`, env profile from parcel file |
 | **Special effects** | Sidewalls, stochastic fallout (chamber only in output attrs) | Not used |
 
 **Turbulence dispatch:** Abstract interfaces in `globals.f90` (`diffuse_iface`, `turbulence_iface`, `sync_iface`). Procedure pointers set at init, called from `main.f90`.
@@ -83,10 +84,11 @@ Reftest files live outside the repo — ask the user for directory locations. Us
 - `special_effects.f90` — sidewall nudging, stochastic fallout
 - `writeout.f90` — buffered NetCDF output
 - `write_particle.f90` — particle trajectory NetCDF output
-- `parcel.f90` — reads piecewise-constant velocity from NetCDF, applies adiabatic forcing (dT, dp)
+- `entrainment.f90` — mode-agnostic blob entrainment mechanics (timing, placement, scalar replacement). Receives `T_env`, `qv_env`, `vel` from caller. Owns `&ENTRAINMENT` namelist.
+- `parcel.f90` — reads piecewise-constant velocity from NetCDF, applies adiabatic forcing (dT, dp). Owns environmental profile (`interp_env`) and calls `entrainment` via `apply_parcel_entrainment`.
 - `initialize.f90` — namelist I/O, output directory setup, stdout redirect, domain setup, pointer assignment
 
-**Dependency chain:** `globals` → `microphysics` → `particle_types` → `droplets` → `DGM`. `ode_integrators` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
+**Dependency chain:** `globals` → `microphysics` → `particle_types` → `droplets` → `DGM`. `ode_integrators` → `DGM`. `collection_efficiency` → `collision_coalescence` → `droplets`. `globals` → `entrainment` → `parcel`. ODT/LEM use `globals`, `microphysics`, `droplets`, `writeout`.
 
 ## Fortran Conventions
 

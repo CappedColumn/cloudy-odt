@@ -8,12 +8,11 @@ module parcel
     public :: initialize_parcel, apply_adiabatic_forcing, apply_entrainment, &
               do_parcel_ascent, parcel_height, parcel_velocity, &
               parcel_file, initial_RH, pressure_limit, pressure_limit_reached, &
-              do_entrainment, ent_rate, n_blob, psigma, random_entrainment
+              ent_rate, n_blob, psigma, random_entrainment
 
     ! --- PARCEL namelist variables ---
     character(512) :: parcel_file = ''
     real(dp) :: initial_RH = 1.0
-    logical  :: do_entrainment = .false.
     real(dp) :: ent_rate = 2.0
     integer(i4) :: n_blob = 1
     real(dp) :: psigma = 0.1
@@ -45,7 +44,7 @@ contains
         character(256) :: nml_line, io_emsg
 
         namelist /PARCEL/ parcel_file, initial_RH, pressure_limit, &
-            do_entrainment, ent_rate, n_blob, psigma, random_entrainment
+            ent_rate, n_blob, psigma, random_entrainment
 
         ! --- Read PARCEL namelist ---
         write(*,*) 'Reading PARCEL namelist values...'

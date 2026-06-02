@@ -14,7 +14,7 @@ module initialize
     use droplets, only: initialize_microphysics, write_trajectories
     use write_particle, only: initialize_write_particle, close_particle_netcdf
     use collision_coalescence, only: write_collisions, initialize_collision_file, close_collision_file
-    use parcel, only: initialize_parcel, parcel_file, initial_RH, do_entrainment
+    use parcel, only: initialize_parcel, parcel_file, initial_RH
     use radiation, only: initialize_radiation, finalize_radiation
     implicit none
 
@@ -87,7 +87,7 @@ contains
         namelist /PARAMETERS/ N, tmax, Tref, pres, H, volume_scaling, &
         same_random, write_buffer, do_turbulence, do_microphysics, &
         simulation_name, output_directory, write_eddies, do_special_effects, write_timer, &
-        overwrite, simulation_mode, do_radiation
+        overwrite, simulation_mode, do_radiation, do_entrainment
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then

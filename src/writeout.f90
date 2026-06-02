@@ -12,7 +12,7 @@ module writeout
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
                       parcel_file, initial_RH, pressure_limit, &
-                      do_entrainment, ent_rate, n_blob, psigma, random_entrainment
+                      ent_rate, n_blob, psigma, random_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
@@ -622,7 +622,7 @@ contains
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_RH", initial_RH) )
             if (pressure_limit > 0.0) &
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_limit", pressure_limit) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.do_entrainment", &
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_entrainment", &
                             merge(1, 0, do_entrainment)) )
             if (do_entrainment) then
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.ent_rate", ent_rate) )

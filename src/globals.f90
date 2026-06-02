@@ -140,6 +140,7 @@ module globals
 
     logical :: do_special_effects = .false.
     logical :: do_radiation = .false.
+    logical :: do_entrainment = .false.
 
     ! -----------------------------------------------
     ! -----------------------------------------------
@@ -205,6 +206,15 @@ module globals
     integer(i4) :: budget_n_injected = 0
     integer(i4) :: budget_n_fellout = 0
     integer(i4) :: budget_n_coalesced = 0
+
+    ! Entrainment budgets (only when do_entrainment = .true.)
+    integer(i4), parameter :: n_entrain_budgets = 6
+    real(dp) :: budget_detrain_liquid_mass = 0.0
+    real(dp) :: budget_detrain_solute_mass = 0.0
+    real(dp) :: budget_entrain_liquid_mass = 0.0
+    real(dp) :: budget_entrain_solute_mass = 0.0
+    integer(i4) :: budget_n_detrained = 0
+    integer(i4) :: budget_n_entrained = 0
 
     ! Radiation budget (only when do_radiation = .true.)
     real(dp) :: budget_radiation_delta_T = 0.0
@@ -383,6 +393,14 @@ contains
         end if
         if (do_radiation) then
             budget_radiation_delta_T = 0.0
+        end if
+        if (do_entrainment) then
+            budget_detrain_liquid_mass = 0.0
+            budget_detrain_solute_mass = 0.0
+            budget_entrain_liquid_mass = 0.0
+            budget_entrain_solute_mass = 0.0
+            budget_n_detrained = 0
+            budget_n_entrained = 0
         end if
     end subroutine reset_budgets
 

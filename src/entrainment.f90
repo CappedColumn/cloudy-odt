@@ -1,6 +1,7 @@
 module entrainment
     use globals
     use microphysics, only: virtual_temp, update_supersat
+    use droplets, only: detrain_particles, entrain_particles, aerosol_concentration
     implicit none
 
     private
@@ -76,6 +77,8 @@ contains
 
         call place_blobs(blob_start, blob_end, n_final)
 
+        call detrain_particles(blob_start, blob_end, n_final)
+
         do i = 1, n_final
             do k = blob_start(i), blob_end(i)
                 T(k) = T_env
@@ -87,6 +90,8 @@ contains
             Tv(k) = virtual_temp(T(k), WV(k))
         end do
         call update_supersat(T, WV, SS, pres)
+
+        call entrain_particles(blob_start, blob_end, n_final, aerosol_concentration)
 
         t_next_entrain = time + compute_dt_entm(vel)
 

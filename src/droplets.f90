@@ -329,6 +329,11 @@ contains
     end subroutine random_fallout
 
 
+    ! Remove all particles whose gridcell falls within any blob segment.
+    !
+    ! Uses the same shift-down compaction pattern as verify_particle_fallout,
+    ! but tracks detrainment budget counters separately. Does NOT call
+    ! verify_particle_fallout to avoid double-counting as fallout.
     subroutine detrain_particles(blob_starts, blob_ends, n_blobs)
         integer(i4), intent(in) :: blob_starts(:), blob_ends(:), n_blobs
         integer :: i, j, n_removed
@@ -362,6 +367,11 @@ contains
     end subroutine detrain_particles
 
 
+    ! Inject a single particle at a random gridcell within the blob region.
+    !
+    ! Similar to inject_particle, but restricts placement to blob segments.
+    ! A flat random index over total blob cells is mapped to the actual gridcell
+    ! by walking through the blob segments sequentially.
     subroutine inject_particle_in_region(lparticles_array, Temp, Vapor, VirtTemp, Supersat, &
                                          aerosol_type, blob_starts, blob_ends, n_blobs, n_blob_cells)
         type(particle), allocatable, intent(inout) :: lparticles_array(:)
@@ -385,6 +395,7 @@ contains
             deallocate(temp_array)
         end if
 
+        ! Draw a flat random index over total blob cells, then map to gridcell
         call random_number(rval)
         cell_count = int(rval * n_blob_cells) + 1
         if (cell_count > n_blob_cells) cell_count = n_blob_cells
@@ -412,9 +423,19 @@ contains
     end subroutine inject_particle_in_region
 
 
+    ! Inject fresh aerosols into the blob region at the given number concentration.
+    !
+    ! The number of particles to inject is computed from the blob volume fraction:
+    !   n_inject = nint(concentration [cm^-3] * 1e6 * (n_blob_cells / N) * domain_volume)
+    ! Concentration is passed as an argument (not read from the module variable) so
+    ! callers can supply height-dependent values in the future.
+    !
+    ! The particle array is pre-expanded once before the injection loop to avoid
+    ! repeated reallocations. After injection, only the newly added particles are
+    ! equilibrated to Koehler equilibrium via equilibrate_particles.
     subroutine entrain_particles(blob_starts, blob_ends, n_blobs, concentration)
         integer(i4), intent(in) :: blob_starts(:), blob_ends(:), n_blobs
-        real(dp), intent(in) :: concentration
+        real(dp), intent(in) :: concentration  ! environmental aerosol concentration [cm^-3]
         integer(i4) :: n_blob_cells, n_inject, old_count, i, j
         type(particle), allocatable :: temp_array(:)
         integer(i4) :: new_capacity
@@ -427,6 +448,7 @@ contains
         n_inject = nint(concentration * 1.0e6 * (real(n_blob_cells, dp) / N) * domain_volume)
         if (n_inject <= 0) return
 
+        ! Pre-expand particle array to avoid per-particle reallocation
         new_capacity = current_n_particles + n_inject
         if (size(particles) < new_capacity) then
             allocate(temp_array(size(particles)))
@@ -444,6 +466,7 @@ contains
                                            blob_starts, blob_ends, n_blobs, n_blob_cells)
         end do
 
+        ! Equilibrate only the newly entrained particles to Koehler equilibrium
         call equilibrate_particles(particles(old_count+1:), n_inject)
 
     end subroutine entrain_particles

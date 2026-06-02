@@ -1,3 +1,16 @@
+! Mode-agnostic blob entrainment mechanics.
+!
+! Implements the Krueger et al. (1997) blob method: at stochastic intervals,
+! one or more contiguous regions ("blobs") of the 1-D domain are replaced with
+! environmental air. Particles in the blob are detrained and fresh aerosols
+! from the environmental population are entrained at Koehler equilibrium.
+!
+! This module owns the &ENTRAINMENT namelist and entrainment timing. It receives
+! environmental state (T_env, qv_env, vel) from the caller, so the same mechanics
+! can be driven by parcel mode (via parcel.f90) or chamber mode in the future.
+!
+! Reference: Krueger, S. K., Su, C.-W., & McMurtry, P. A. (1997),
+!   J. Atmos. Sci., 54, 2697-2712.
 module entrainment
     use globals
     use microphysics, only: virtual_temp, update_supersat
@@ -8,19 +21,20 @@ module entrainment
     public :: initialize_entrainment, apply_entrainment
     public :: ent_rate, n_blob, psigma, random_entrainment
 
-    ! --- ENTRAINMENT namelist variables ---
-    real(dp) :: ent_rate = 2.0
-    integer(i4) :: n_blob = 1
-    real(dp) :: psigma = 0.1
-    logical  :: random_entrainment = .true.
+    ! --- &ENTRAINMENT namelist variables ---
+    real(dp) :: ent_rate = 2.0       ! fractional entrainment rate [1/m]
+    integer(i4) :: n_blob = 1        ! number of blobs per entrainment event
+    real(dp) :: psigma = 0.1         ! blob fraction of domain per blob [dimensionless]
+    logical  :: random_entrainment = .true. ! Poisson-randomize entrainment timing
 
     ! --- Entrainment timing ---
-    real(dp) :: t_next_entrain = 0.0
+    real(dp) :: t_next_entrain = 0.0 ! time of next entrainment event [s]
 
 contains
 
+    ! Read &ENTRAINMENT namelist, validate parameters, and schedule the first event.
     subroutine initialize_entrainment(vel)
-        real(dp), intent(in) :: vel
+        real(dp), intent(in) :: vel  ! current parcel/eddy velocity [m/s]
         integer :: nml_unit, ierr
         character(256) :: nml_line, io_emsg
 
@@ -66,8 +80,20 @@ contains
     end subroutine initialize_entrainment
 
 
+    ! Execute one entrainment event if the scheduled time has been reached.
+    !
+    ! Sequence: (1) place blobs, (2) detrain particles in blob region,
+    ! (3) replace scalars with environmental values, (4) update Tv and SS,
+    ! (5) entrain fresh aerosols equilibrated to the new (entrained) air,
+    ! (6) schedule the next event.
+    !
+    ! Detrainment precedes scalar replacement so budget counters capture the
+    ! pre-entrainment particle state. Entrainment follows scalar replacement
+    ! so new particles equilibrate to the entrained environmental air.
     subroutine apply_entrainment(T_env, qv_env, vel)
-        real(dp), intent(in) :: T_env, qv_env, vel
+        real(dp), intent(in) :: T_env   ! environmental temperature [K]
+        real(dp), intent(in) :: qv_env  ! environmental water vapor mixing ratio [kg/kg]
+        real(dp), intent(in) :: vel     ! parcel/eddy velocity for timing [m/s]
         integer, parameter :: max_blobs = 10
         integer :: blob_start(max_blobs), blob_end(max_blobs), n_final
         integer :: i, k
@@ -79,6 +105,7 @@ contains
 
         call detrain_particles(blob_start, blob_end, n_final)
 
+        ! Replace scalar fields in blob regions with environmental air
         do i = 1, n_final
             do k = blob_start(i), blob_end(i)
                 T(k) = T_env
@@ -86,6 +113,7 @@ contains
             end do
         end do
 
+        ! Recompute derived fields over the full domain
         do k = 1, N
             Tv(k) = virtual_temp(T(k), WV(k))
         end do
@@ -98,8 +126,14 @@ contains
     end subroutine apply_entrainment
 
 
+    ! Compute the time interval until the next entrainment event [s].
+    !
+    ! Deterministic interval: dt = (n_blob / ent_rate) * (psigma / (1 - psigma)) / |vel|
+    ! With random_entrainment, the interval is drawn from an exponential distribution
+    ! (Poisson process) by multiplying by -ln(1 - U), U ~ Uniform(0,1).
+    ! See Krueger et al. (1997), eq. (3).
     function compute_dt_entm(vel) result(dt_entm)
-        real(dp), intent(in) :: vel
+        real(dp), intent(in) :: vel  ! parcel/eddy velocity [m/s]
         real(dp) :: dt_entm, u
 
         dt_entm = (real(n_blob, dp) / ent_rate) * (psigma / (1.0 - psigma)) &
@@ -112,13 +146,18 @@ contains
     end function compute_dt_entm
 
 
+    ! Randomly place n_blob contiguous blobs on the periodic 1-D domain.
+    !
+    ! Each blob spans blob_size = psigma * N gridcells. Blobs that wrap past
+    ! cell N are split into two contiguous segments (e.g., [s, N] and [1, remainder]),
+    ! so n_final may exceed n_blob. The starts/ends arrays use gridcell indices [1, N].
     subroutine place_blobs(starts, ends, n_final)
         integer, intent(out) :: starts(:), ends(:), n_final
         integer :: xn, blob_size, s, i
         real(dp) :: u
 
         blob_size = int(psigma * N)
-        xn = N - blob_size * n_blob
+        xn = N - blob_size * n_blob  ! free cells available for random offset
 
         call random_number(u)
         s = int(u * xn) + 1
@@ -127,6 +166,7 @@ contains
         do i = 1, n_blob
             if (i > 1) s = ends(n_final) + int(real(xn, dp) / n_blob) + 1
 
+            ! Blob wraps around the periodic boundary — split into two segments
             if (s <= N .and. s + blob_size - 1 > N) then
                 n_final = n_final + 1
                 starts(n_final) = s

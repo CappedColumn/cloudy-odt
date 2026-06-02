@@ -26,6 +26,7 @@ do_microphysics = .true. ! triggers aerosol-droplet processes
 
 do_special_effects = .false. ! Controls special effect namelist below
 do_radiation = .false.
+do_entrainment = .false.
 
 /
 
@@ -34,8 +35,10 @@ do_radiation = .false.
 parcel_file = "parcel_input.nc"
 initial_RH = 1.0
 
-! Entrainment (Krueger et al. 1997 blobs method)
-do_entrainment = .false.
+/
+
+&ENTRAINMENT
+
 ent_rate = 2.0             ! fractional entrainment rate (1/m)
 n_blob = 1                 ! number of blobs per entrainment event
 psigma = 0.1               ! blob fraction of domain per blob

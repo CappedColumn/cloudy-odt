@@ -11,8 +11,8 @@ module writeout
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
-                      parcel_file, initial_RH, pressure_limit, &
-                      ent_rate, n_blob, psigma, random_entrainment
+                      parcel_file, initial_RH, pressure_limit
+    use entrainment, only: ent_rate, n_blob, psigma, random_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell

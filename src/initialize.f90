@@ -91,13 +91,13 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; stop 1
         end if
         read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
         if (ierr .ne. 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
-            write(*,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
+            write(error_unit,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
             stop 1
         end if
         close(nml_unit)

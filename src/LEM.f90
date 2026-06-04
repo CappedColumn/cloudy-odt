@@ -1,4 +1,5 @@
 module LEM
+    use iso_fortran_env, only: error_unit
     use globals
     use microphysics, only: virtual_temp, update_supersat
     use droplets, only: particle, particles, current_n_particles, move_particles_in_eddy
@@ -254,13 +255,13 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr /= 0) then
-            write(*,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; stop 1
         end if
         read(nml=TURBULENCE_LEM, unit=nml_unit, iostat=ierr)
         if (ierr /= 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
-            write(*,'(a)') 'Invalid TURBULENCE_LEM parameter: '//trim(nml_line)
+            write(error_unit,'(a)') 'Invalid TURBULENCE_LEM parameter: '//trim(nml_line)
             stop 1
         end if
         close(nml_unit)

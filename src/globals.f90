@@ -1,4 +1,5 @@
 module globals
+    use iso_fortran_env, only: error_unit
     use netcdf, only: nf90_noerr, nf90_strerror
     implicit none
     public
@@ -263,9 +264,9 @@ contains
         ! its execution, and return useful error messages
 
         if (status /= nf90_noerr) then
-            write(*,'(a)') "Error in netCDF procedure..."
-            write(*,'((a), (a), (i4))') error_msg, ' :: ', status
-            write(*,'(a)') trim(nf90_strerror(status))
+            write(error_unit,'(a)') 'Error in netCDF procedure...'
+            write(error_unit,'((a), (a), (i4))') error_msg, ' :: ', status
+            write(error_unit,'(a)') trim(nf90_strerror(status))
             stop 1
         end if
 

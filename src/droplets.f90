@@ -1,4 +1,5 @@
 module droplets
+    use iso_fortran_env, only: error_unit
     use netcdf
     use globals
     use particle_types
@@ -738,15 +739,13 @@ contains
         write(*,*) 'Reading MICROPHYSICS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(*,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; stop 1
         end if
         read(nml=MICROPHYSICS, unit=nml_unit, iostat=ierr)
-        ! Print value causing namelist read error
         if (ierr .ne. 0) then
-            write(*,*) ierr
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
-            write(*,'(a)') 'Invalid Namelist Parameter: ', trim(nml_line)
+            write(error_unit,'(a)') 'Invalid MICROPHYSICS parameter: '//trim(nml_line)
             stop 1
         end if
         close(nml_unit)
@@ -967,7 +966,7 @@ contains
         call nc_verify(nf90_get_att(aer_ncid, NF90_GLOBAL, 'conventions', conventions), &
                        'reading conventions attribute')
         if (trim(conventions) /= 'CODT_aerosol_input_v1') then
-            write(*,*) 'Error: expected CODT_aerosol_input_v1, got: ', trim(conventions)
+            write(error_unit,*) 'Error: expected CODT_aerosol_input_v1, got: ', trim(conventions)
             stop 1
         end if
 
@@ -982,7 +981,7 @@ contains
         call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_times), 'reading time dim')
 
         if (n_edges /= n_bins + 1) then
-            write(*,*) 'Error: edge dimension must equal bin + 1'
+            write(error_unit,*) 'Error: edge dimension must equal bin + 1'
             stop 1
         end if
 

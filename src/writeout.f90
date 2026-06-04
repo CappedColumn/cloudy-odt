@@ -1,5 +1,6 @@
 module writeout
     use globals
+    use version, only: code_version, git_commit
     use netcdf
     use droplets, only: particles, calculate_droplet_statistics, bin_droplet_radii, particle_bin_edges, &
                         size_distribution, n_aer_category, n_DSD_bins, init_drop_each_gridpoint, &
@@ -34,9 +35,6 @@ module writeout
     integer(i4) :: eddy_unit
 
 
-    ! Version info (injected by build script)
-    character(*), parameter :: code_version = 'VERSION_PLACEHOLDER'
-    character(*), parameter :: git_commit   = 'COMMIT_PLACEHOLDER'
 
     ! Namelist metadata for global attributes (set by create_netcdf)
     character(100) :: nc_simulation_name
@@ -61,7 +59,6 @@ module writeout
     real(dp), allocatable :: buffer_rad_F_net(:,:), buffer_rad_heating_rate(:,:)
     real(dp), allocatable :: buffer_rad_budget(:)
 
-    public  :: code_version, git_commit
     public  :: create_netcdf, initialize_buffers, deallocate_buffers, &
                add_to_profile_buffer, flush_buffer, close_netcdf, &
                write_profiles, write_eddy, initialize_eddy_file, write_eddy_header_fields

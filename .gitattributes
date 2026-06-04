@@ -1,1 +1,1 @@
-src/writeout.f90 filter=version
+src/version.f90 filter=version

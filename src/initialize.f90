@@ -106,6 +106,54 @@ contains
     end subroutine read_params
 
 
+    subroutine validate_params()
+        logical :: has_error
+
+        has_error = .false.
+
+        if (N <= 0) then
+            write(error_unit,*) 'Error: N (grid cells) must be positive, got: ', N
+            has_error = .true.
+        end if
+        if (tmax <= 0.0) then
+            write(error_unit,*) 'Error: tmax (simulation time) must be positive, got: ', tmax
+            has_error = .true.
+        end if
+        if (H <= 0.0) then
+            write(error_unit,*) 'Error: H (domain height) must be positive, got: ', H
+            has_error = .true.
+        end if
+        if (Tref <= -273.15) then
+            write(error_unit,*) 'Error: Tref must be > -273.15 C, got: ', Tref
+            has_error = .true.
+        end if
+        if (pres <= 0.0) then
+            write(error_unit,*) 'Error: pres (pressure) must be positive, got: ', pres
+            has_error = .true.
+        end if
+        if (volume_scaling <= 0.0) then
+            write(error_unit,*) 'Error: volume_scaling must be positive, got: ', volume_scaling
+            has_error = .true.
+        end if
+        if (write_timer <= 0.0) then
+            write(error_unit,*) 'Error: write_timer must be positive, got: ', write_timer
+            has_error = .true.
+        end if
+        if (write_buffer <= 0) then
+            write(error_unit,*) 'Error: write_buffer must be positive, got: ', write_buffer
+            has_error = .true.
+        end if
+        if (simulation_mode /= 'chamber' .and. simulation_mode /= 'parcel') then
+            write(error_unit,*) 'Error: simulation_mode must be "chamber" or "parcel", got: ', &
+                                trim(simulation_mode)
+            has_error = .true.
+        end if
+
+        if (has_error) call exit(1)
+
+    end subroutine validate_params
+
+
     subroutine initialize_params()
         integer, allocatable :: rand_seed(:)
         integer :: rand_size

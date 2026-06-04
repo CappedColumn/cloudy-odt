@@ -13,7 +13,7 @@ same_random = .false. ! Use the same random number generator seed, for testing p
 
 ! Input/Output
 simulation_name = "CODT_SIM"
-output_directory = "/directory/to/write/path/"
+output_directory = "output/"
 overwrite = .false. ! Allow overwriting existing output files
 
 ! Read/write Parameters

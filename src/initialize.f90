@@ -29,6 +29,7 @@ contains
 
         call read_params()
         call validate_params()
+        call validate_consistency()
         call initialize_output()
         call initialize_params()
         call initialize_arrays()
@@ -149,6 +150,23 @@ contains
         if (has_error) call exit(1)
 
     end subroutine validate_params
+
+
+    subroutine validate_consistency()
+
+        if (do_entrainment .and. simulation_mode == 'chamber') then
+            write(error_unit,*) 'Warning: do_entrainment is not yet implemented in chamber mode.'
+        end if
+
+        if (do_radiation .and. .not. do_microphysics) then
+            write(error_unit,*) 'Warning: do_radiation has no effect without do_microphysics.'
+        end if
+
+        if (write_eddies .and. .not. do_turbulence) then
+            write(error_unit,*) 'Warning: write_eddies has no effect without do_turbulence.'
+        end if
+
+    end subroutine validate_consistency
 
 
     subroutine initialize_params()

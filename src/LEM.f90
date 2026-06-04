@@ -257,12 +257,7 @@ contains
             write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=TURBULENCE_LEM, unit=nml_unit, iostat=ierr)
-        if (ierr /= 0) then
-            backspace(nml_unit)
-            read(nml_unit,'(a)') nml_line
-            write(error_unit,'(a)') 'Invalid TURBULENCE_LEM parameter: '//trim(nml_line)
-            call exit(1)
-        end if
+        if (ierr /= 0) call namelist_read_error(nml_unit, 'TURBULENCE_LEM')
         close(nml_unit)
 
     end subroutine read_lem_params

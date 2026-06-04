@@ -52,12 +52,7 @@ contains
             write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=SPECIALEFFECTS, unit=nml_unit, iostat=ierr)
-        if (ierr .ne. 0) then
-            backspace(nml_unit)
-            read(nml_unit,'(a)') nml_line
-            write(error_unit,'(a)') 'Invalid SPECIALEFFECTS parameter: '//trim(nml_line)
-            call exit(1)
-        end if
+        if (ierr .ne. 0) call namelist_read_error(nml_unit, 'SPECIALEFFECTS')
         close(nml_unit)
 
         if ( do_sidewalls ) call initialize_sidewalls(rayleigh)

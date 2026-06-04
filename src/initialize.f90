@@ -92,15 +92,12 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(error_unit,*) io_emsg; call exit(1)
-        end if
-        read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
-        if (ierr .ne. 0) then
-            backspace(nml_unit)
-            read(nml_unit,'(a)') nml_line
-            write(error_unit,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
+            write(error_unit,'(a,a)') 'Error: cannot open namelist file: ', trim(namelist_path)
+            write(error_unit,'(a,a)') '  ', trim(io_emsg)
             call exit(1)
         end if
+        read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
+        if (ierr .ne. 0) call namelist_read_error(nml_unit, 'PARAMETERS')
         close(nml_unit)
 
     end subroutine read_params

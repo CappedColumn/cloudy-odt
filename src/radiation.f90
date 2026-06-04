@@ -6,10 +6,7 @@
 !
 ! Ported from Suryadev Singh's radiation module (Oct 2025).
 module radiation
-    use globals, only: dp, i4, N, H, z, gridcell_volume, dz_length, &
-                       do_radiation, budget_radiation_delta_T, &
-                       resolve_path, namelist_path, namelist_dir, &
-                       pi, pi_43, rho_l, cp, c_l, error_unit
+    use globals
     use droplets, only: particles, current_n_particles
     implicit none
 
@@ -656,6 +653,7 @@ contains
             call exit(1)
         end if
         read(nml=RADIATION, unit=nml_unit, iostat=ierr)
+        if (ierr /= 0) call namelist_read_error(nml_unit, 'RADIATION')
         close(nml_unit)
 
         if (mie_data_file == '') then

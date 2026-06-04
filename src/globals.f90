@@ -272,6 +272,62 @@ contains
 
     end subroutine nc_verify
 
+
+    subroutine namelist_read_error(nml_unit, group_name)
+        integer, intent(in) :: nml_unit
+        character(*), intent(in) :: group_name
+
+        character(256) :: bad_line, scan_line
+        character(64) :: upper_group
+        logical :: group_found
+        integer :: i, ic, io_stat
+
+        ! Grab the offending line before we rewind
+        backspace(nml_unit)
+        read(nml_unit,'(a)', iostat=io_stat) bad_line
+
+        ! Check whether the group exists in the file
+        upper_group = group_name
+        do i = 1, len_trim(upper_group)
+            ic = iachar(upper_group(i:i))
+            if (ic >= iachar('a') .and. ic <= iachar('z')) &
+                upper_group(i:i) = achar(ic - 32)
+        end do
+
+        group_found = .false.
+        rewind(nml_unit)
+        do
+            read(nml_unit, '(a)', end=10) scan_line
+            scan_line = adjustl(scan_line)
+            if (scan_line(1:1) == '&') then
+                do i = 2, len_trim(scan_line)
+                    ic = iachar(scan_line(i:i))
+                    if (ic >= iachar('a') .and. ic <= iachar('z')) &
+                        scan_line(i:i) = achar(ic - 32)
+                end do
+                if (trim(scan_line(2:)) == trim(upper_group)) then
+                    group_found = .true.
+                    exit
+                end if
+            end if
+        end do
+        10 continue
+        close(nml_unit)
+
+        if (.not. group_found) then
+            write(error_unit,'(a,a,a)') &
+                'Error: namelist group &', trim(group_name), ' not found in namelist file.'
+            write(error_unit,'(a)') 'Check that the group exists and is spelled correctly.'
+        else
+            write(error_unit,'(a,a,a)') &
+                'Invalid parameter in &', trim(group_name), ':'
+            write(error_unit,'(a,a)') '  ', trim(adjustl(bad_line))
+        end if
+        call exit(1)
+
+    end subroutine namelist_read_error
+
+
     function bin_data(bin_edges, data) result(histogram)
         ! Given the bin edges and data values, returns and histogram
         ! with the number of data points found in each bin

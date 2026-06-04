@@ -47,12 +47,7 @@ contains
             write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=ENTRAINMENT, unit=nml_unit, iostat=ierr)
-        if (ierr /= 0) then
-            backspace(nml_unit)
-            read(nml_unit,'(a)') nml_line
-            write(error_unit,'(a)') 'Invalid ENTRAINMENT namelist parameter: '//trim(nml_line)
-            call exit(1)
-        end if
+        if (ierr /= 0) call namelist_read_error(nml_unit, 'ENTRAINMENT')
         close(nml_unit)
 
         if (psigma <= 0.0 .or. psigma >= 1.0) then

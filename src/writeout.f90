@@ -1,5 +1,4 @@
 module writeout
-    use iso_fortran_env, only: error_unit
     use globals
     use version, only: code_version, git_commit
     use netcdf
@@ -231,7 +230,7 @@ contains
              form='unformatted', access='stream', status='replace', iostat=ierr)
         if (ierr /= 0) then
             write(error_unit,*) 'Error opening eddy data file.'
-            stop 1
+            call exit(1)
         end if
 
         if (trim(mode) == 'chamber') then

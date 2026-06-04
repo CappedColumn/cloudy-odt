@@ -44,28 +44,28 @@ contains
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, &
              action='read', status='old')
         if (ierr /= 0) then
-            write(0,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=ENTRAINMENT, unit=nml_unit, iostat=ierr)
         if (ierr /= 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
-            write(0,'(a)') 'Invalid ENTRAINMENT namelist parameter: '//trim(nml_line)
-            stop 1
+            write(error_unit,'(a)') 'Invalid ENTRAINMENT namelist parameter: '//trim(nml_line)
+            call exit(1)
         end if
         close(nml_unit)
 
         if (psigma <= 0.0 .or. psigma >= 1.0) then
-            write(0,*) 'Error: psigma must be in (0, 1), got: ', psigma
-            stop 1
+            write(error_unit,*) 'Error: psigma must be in (0, 1), got: ', psigma
+            call exit(1)
         end if
         if (psigma * n_blob >= 1.0) then
-            write(0,*) 'Error: psigma * n_blob must be < 1'
-            stop 1
+            write(error_unit,*) 'Error: psigma * n_blob must be < 1'
+            call exit(1)
         end if
         if (ent_rate <= 0.0) then
-            write(0,*) 'Error: ent_rate must be > 0, got: ', ent_rate
-            stop 1
+            write(error_unit,*) 'Error: ent_rate must be > 0, got: ', ent_rate
+            call exit(1)
         end if
 
         t_next_entrain = compute_dt_entm(vel)

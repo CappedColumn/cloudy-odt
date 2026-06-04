@@ -10,8 +10,7 @@ module collision_coalescence
     !   - Otherwise: swap adjacency order
     !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
-    use iso_fortran_env, only: error_unit
-    use globals, only: dp, i4, i1, pi, N, H, domain_width, volume_scaling, simulation_mode
+    use globals, only: dp, i4, i1, pi, N, H, domain_width, volume_scaling, simulation_mode, error_unit
     use particle_types, only: particle, calculate_terminal_velocity
     use collection_efficiency, only: collection_efficiency_E
     implicit none
@@ -640,7 +639,7 @@ contains
              form='unformatted', access='stream', status='replace', iostat=ierr)
         if (ierr /= 0) then
             write(error_unit,*) 'Error opening collision data file.'
-            stop 1
+            call exit(1)
         end if
 
         ! Header: grid size, domain height, domain width, volume scaling

@@ -9,7 +9,7 @@ module radiation
     use globals, only: dp, i4, N, H, z, gridcell_volume, dz_length, &
                        do_radiation, budget_radiation_delta_T, &
                        resolve_path, namelist_path, namelist_dir, &
-                       pi, pi_43, rho_l, cp, c_l
+                       pi, pi_43, rho_l, cp, c_l, error_unit
     use droplets, only: particles, current_n_particles
     implicit none
 
@@ -652,15 +652,15 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, action='read', status='old', iostat=ierr)
         if (ierr /= 0) then
-            write(0,*) 'Error: cannot open namelist for RADIATION'
-            stop 1
+            write(error_unit,*) 'Error: cannot open namelist for RADIATION'
+            call exit(1)
         end if
         read(nml=RADIATION, unit=nml_unit, iostat=ierr)
         close(nml_unit)
 
         if (mie_data_file == '') then
-            write(0,*) 'Error: mie_data_file must be set when do_radiation = .true.'
-            stop 1
+            write(error_unit,*) 'Error: mie_data_file must be set when do_radiation = .true.'
+            call exit(1)
         end if
 
         resolved_path = resolve_path(namelist_dir, mie_data_file)
@@ -840,8 +840,8 @@ contains
 
         open(newunit=funit, file=trim(filepath), status='old', action='read', iostat=ierr)
         if (ierr /= 0) then
-            write(0,*) 'Error: cannot open mie_data_file: ', trim(filepath)
-            stop 1
+            write(error_unit,*) 'Error: cannot open mie_data_file: ', trim(filepath)
+            call exit(1)
         end if
         ! Skip comment lines starting with #
         do

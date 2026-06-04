@@ -267,7 +267,7 @@ contains
             write(error_unit,'(a)') 'Error in netCDF procedure...'
             write(error_unit,'((a), (a), (i4))') error_msg, ' :: ', status
             write(error_unit,'(a)') trim(nf90_strerror(status))
-            stop 1
+            call exit(1)
         end if
 
     end subroutine nc_verify

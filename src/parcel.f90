@@ -45,21 +45,21 @@ contains
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, &
              action='read', status='old')
         if (ierr /= 0) then
-            write(0,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=PARCEL, unit=nml_unit, iostat=ierr)
         if (ierr /= 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
-            write(0,'(a)') 'Invalid PARCEL namelist parameter: '//trim(nml_line)
-            stop 1
+            write(error_unit,'(a)') 'Invalid PARCEL namelist parameter: '//trim(nml_line)
+            call exit(1)
         end if
         close(nml_unit)
 
         ! --- Validate ---
         if (initial_RH < 0.0 .or. initial_RH > 1.0) then
-            write(0,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
-            stop 1
+            write(error_unit,*) 'Error: initial_RH must be between 0 and 1, got: ', initial_RH
+            call exit(1)
         end if
 
         ! --- Initialize parcel arrays ---
@@ -92,8 +92,8 @@ contains
 
         if (trim(conventions) /= 'CODT_parcel_input_v1' .and. &
             trim(conventions) /= 'CODT_parcel_input_v2') then
-            write(0,*) 'Error: expected CODT_parcel_input_v1 or v2, got: ', trim(conventions)
-            stop 1
+            write(error_unit,*) 'Error: expected CODT_parcel_input_v1 or v2, got: ', trim(conventions)
+            call exit(1)
         end if
 
         ! --- Velocity segments ---
@@ -109,13 +109,13 @@ contains
         call nc_verify(nf90_get_var(dyn_ncid, varid, segment_velocity), 'reading velocity')
 
         if (abs(segment_times(1)) > 1.0e-10) then
-            write(0,*) 'Error: first segment time must be 0, got: ', segment_times(1)
-            stop 1
+            write(error_unit,*) 'Error: first segment time must be 0, got: ', segment_times(1)
+            call exit(1)
         end if
         do i = 2, n_segments
             if (segment_times(i) <= segment_times(i-1)) then
-                write(0,*) 'Error: segment times must be monotonically increasing'
-                stop 1
+                write(error_unit,*) 'Error: segment times must be monotonically increasing'
+                call exit(1)
             end if
         end do
 
@@ -125,8 +125,8 @@ contains
         ! --- Environmental profile (entrainment) ---
         if (do_entrainment) then
             if (trim(conventions) /= 'CODT_parcel_input_v2') then
-                write(0,*) 'Error: do_entrainment requires CODT_parcel_input_v2'
-                stop 1
+                write(error_unit,*) 'Error: do_entrainment requires CODT_parcel_input_v2'
+                call exit(1)
             end if
             call load_env_profile(dyn_ncid)
             call initialize_entrainment(parcel_velocity)
@@ -170,8 +170,8 @@ contains
 
         do i = 2, n_env_levels
             if (env_pressure(i) >= env_pressure(i-1)) then
-                write(0,*) 'Error: env_pressure must be monotonically decreasing'
-                stop 1
+                write(error_unit,*) 'Error: env_pressure must be monotonically decreasing'
+                call exit(1)
             end if
         end do
 
@@ -207,7 +207,7 @@ contains
         if (pressure_limit > 0.0 .and. pres <= pressure_limit) then
             pres = pressure_limit
             write(*,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
-            write(0,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
+            write(error_unit,'(a,f8.1,a)') ' Pressure limit reached: ', pres / Pa_per_mb, ' mb. Stopping.'
             pressure_limit_reached = .true.
             return
         end if

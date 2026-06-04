@@ -28,6 +28,7 @@ contains
     subroutine initialize_simulation()
 
         call read_params()
+        call validate_params()
         call initialize_output()
         call initialize_params()
         call initialize_arrays()
@@ -91,14 +92,14 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(error_unit,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=PARAMETERS, unit=nml_unit, iostat=ierr)
         if (ierr .ne. 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(error_unit,'(a)') 'Invalid Namelist Parameter: '//trim(nml_line)
-            stop 1
+            call exit(1)
         end if
         close(nml_unit)
 
@@ -129,8 +130,8 @@ contains
             turbulence_step    => lem_turbulence_step
             sync_after_physics => lem_sync_after_physics
         else
-            write(0,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
-            stop 1
+            write(error_unit,*) 'Error: unknown simulation_mode: ', trim(simulation_mode)
+            call exit(1)
         end if
 
         if (same_random) then
@@ -191,9 +192,9 @@ contains
         if (parent_end > 0) then
             inquire(file=output_directory(1:parent_end), exist=parent_exists)
             if (.not. parent_exists) then
-                write(0,*) 'Error: parent directory does not exist: ', output_directory(1:parent_end)
-                write(0,*) 'Full output_directory: ', trim(output_directory)
-                stop 1
+                write(error_unit,*) 'Error: parent directory does not exist: ', output_directory(1:parent_end)
+                write(error_unit,*) 'Full output_directory: ', trim(output_directory)
+                call exit(1)
             end if
         end if
 
@@ -203,9 +204,9 @@ contains
 
         inquire(file=trim(file_prefix)//'.nc', exist=file_exists)
         if (file_exists .and. .not. overwrite) then
-            write(0,*) 'Error: output file already exists: ', trim(file_prefix)//'.nc'
-            write(0,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
-            stop 1
+            write(error_unit,*) 'Error: output file already exists: ', trim(file_prefix)//'.nc'
+            write(error_unit,*) 'Set overwrite = .true. in the namelist to allow overwriting.'
+            call exit(1)
         end if
 
         write(error_unit,*) 'Output: ', trim(sim_output_dir)
@@ -214,8 +215,8 @@ contains
         open(output_unit, file=trim(file_prefix)//'.log', &
              status='replace', action='write', iostat=ierr)
         if (ierr /= 0) then
-            write(0,*) 'Error: could not open log file'
-            stop 1
+            write(error_unit,*) 'Error: could not open log file'
+            call exit(1)
         end if
 
     end subroutine initialize_output

@@ -150,8 +150,8 @@ subroutine integrate_ODE(y, t_start, t_end, h_last, stat, rtol, atol)
   if (present(stat)) then
     stat = ierr
   else if (ierr < 0) then
-    write(0,*) 'DGM ODE integration failed, ierr = ', ierr
-    write(0,*) '  radius=', y(1), ' qv=', y(2), ' T=', y(3)
+    write(error_unit,*) 'DGM ODE integration failed, ierr = ', ierr
+    write(error_unit,*) '  radius=', y(1), ' qv=', y(2), ' T=', y(3)
     error stop
   end if
 

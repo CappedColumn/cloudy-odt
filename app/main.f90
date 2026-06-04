@@ -1,4 +1,5 @@
 program main
+    use iso_fortran_env, only: error_unit
     use version, only: code_version, git_commit, print_usage
     implicit none
 
@@ -18,8 +19,8 @@ program main
         write(*,'(a,a,a,a,a)') 'CODT ', trim(code_version), ' (', trim(git_commit), ')'
         call exit(0)
     else if (arg(1:2) == '--') then
-        write(0,'(a,a)') 'Error: unknown option: ', trim(arg)
-        write(0,'(a)') 'Run "codt --help" for usage information.'
+        write(error_unit,'(a,a)') 'Error: unknown option: ', trim(arg)
+        write(error_unit,'(a)') 'Run "codt --help" for usage information.'
         call exit(1)
     end if
 
@@ -33,8 +34,8 @@ contains
         character(*), intent(in) :: namelist_path_arg
 
         if (scan(namelist_path_arg, '/') == 0) then
-            write(0,*) 'Error: namelist path must include a directory.'
-            write(0,*) 'Use ./params.nml for the current directory.'
+            write(error_unit,*) 'Error: namelist path must include a directory.'
+            write(error_unit,*) 'Use ./params.nml for the current directory.'
             call exit(1)
         end if
 

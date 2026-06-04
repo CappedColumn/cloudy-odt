@@ -1,5 +1,4 @@
 module droplets
-    use iso_fortran_env, only: error_unit
     use netcdf
     use globals
     use particle_types
@@ -739,14 +738,14 @@ contains
         write(*,*) 'Reading MICROPHYSICS namelist values...'
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr .ne. 0) then
-            write(error_unit,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=MICROPHYSICS, unit=nml_unit, iostat=ierr)
         if (ierr .ne. 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(error_unit,'(a)') 'Invalid MICROPHYSICS parameter: '//trim(nml_line)
-            stop 1
+            call exit(1)
         end if
         close(nml_unit)
 
@@ -754,12 +753,12 @@ contains
 
         ! Collision-coalescence consistency checks
         if (do_coalescence .and. .not. do_collisions) then
-            write(0,*) 'ERROR: do_coalescence requires do_collisions.'
-            stop 1
+            write(error_unit,*) 'ERROR: do_coalescence requires do_collisions.'
+            call exit(1)
         end if
         if (write_collisions .and. .not. do_collisions) then
-            write(0,*) 'ERROR: write_collisions requires do_collisions.'
-            stop 1
+            write(error_unit,*) 'ERROR: write_collisions requires do_collisions.'
+            call exit(1)
         end if
         if (do_collisions .and. .not. do_coalescence) then
             write(*,*) 'NOTE: Collisions enabled without coalescence (collisions-only mode).'
@@ -967,7 +966,7 @@ contains
                        'reading conventions attribute')
         if (trim(conventions) /= 'CODT_aerosol_input_v1') then
             write(error_unit,*) 'Error: expected CODT_aerosol_input_v1, got: ', trim(conventions)
-            stop 1
+            call exit(1)
         end if
 
         ! Read dimensions
@@ -982,7 +981,7 @@ contains
 
         if (n_edges /= n_bins + 1) then
             write(error_unit,*) 'Error: edge dimension must equal bin + 1'
-            stop 1
+            call exit(1)
         end if
 
         ! Allocate and read size distribution arrays

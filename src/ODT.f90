@@ -1,5 +1,4 @@
 module ODT
-    use iso_fortran_env, only: error_unit
     use globals
     use microphysics, only: update_supersat, saturation_mixing_ratio, virtual_temp
     use droplets, only: particles, move_particles_in_eddy
@@ -104,14 +103,14 @@ contains
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr /= 0) then
-            write(error_unit,*) io_emsg; stop 1
+            write(error_unit,*) io_emsg; call exit(1)
         end if
         read(nml=TURBULENCE_ODT, unit=nml_unit, iostat=ierr)
         if (ierr /= 0) then
             backspace(nml_unit)
             read(nml_unit,'(a)') nml_line
             write(error_unit,'(a)') 'Invalid TURBULENCE_ODT parameter: '//trim(nml_line)
-            stop 1
+            call exit(1)
         end if
         close(nml_unit)
 

@@ -27,6 +27,10 @@ module LEM
 contains
 
     subroutine initialize_LEM(domain_height)
+        ! Sets up LEM for a parcel run: reads &TURBULENCE_LEM, derives the turbulent
+        ! diffusivity and Reynolds number from the integral/Kolmogorov scales, then
+        ! reconciles the molecular-diffusion stability step against the eddy-event
+        ! rate (Krueger 1993) to fix dt, maps_per_event, and steps_between_events.
         real(dp), intent(in) :: domain_height
         real(dp) :: diffusion_timestep, convection_timestep
         real(dp) :: large_eddy_turnover_time, eddy_rate_per_length
@@ -101,6 +105,11 @@ contains
 
     subroutine lem_turbulence_step(ldt, ltime, ldelta_time, &
                                    leddy_accepted, eddy_loc, eddy_len)
+        ! Applies LEM eddy events on the schedule fixed at init. Every
+        ! steps_between_events iterations, performs maps_per_event triplet maps:
+        ! each samples an eddy size from the -5/3 inertial-subrange spectrum, snaps
+        ! it to a multiple of 3 gridpoints, picks a random (periodic) location, and
+        ! stirs T, WV, and particles. Unlike ODT there is no accept/reject test.
         real(dp), intent(inout) :: ldt
         real(dp), intent(in) :: ltime, ldelta_time
         logical, intent(out) :: leddy_accepted
@@ -161,32 +170,44 @@ contains
     ! -----------------------------------------------
 
     subroutine diffuse_scalar_periodic(field, molecular_diffusivity, elapsed_time)
-        ! Crank-Nicolson diffusion with periodic BCs via Sherman-Morrison.
+        ! One Crank-Nicolson diffusion step on a periodic field (parcel mode).
+        ! Periodicity makes the implicit matrix *cyclic* tridiagonal (nonzero
+        ! corners at (1,N) and (N,1)), which the plain Thomas algorithm cannot
+        ! solve. The Sherman-Morrison formula writes the cyclic matrix as a base
+        ! tridiagonal A' plus a rank-1 update u*v^T, solves two ordinary
+        ! tridiagonal systems against A', and combines them, recovering O(N).
+        ! Reference: Press et al., Numerical Recipes, "Cyclic Tridiagonal Systems".
+        !
+        !   field                - scalar to diffuse in place (e.g. T or WV)
+        !   molecular_diffusivity - diffusivity for this field (m^2/s)
+        !   elapsed_time          - time step (s)
         real(dp), intent(inout) :: field(:)
         real(dp), intent(in) :: molecular_diffusivity, elapsed_time
         real(dp) :: De, gamma, correction
         real(dp) :: diag_val, off_diag
-        real(dp) :: y_soln(N), q_soln(N)
+        real(dp) :: y_soln(N), q_soln(N)   ! solutions of the two A' systems
         real(dp) :: rhs(N)
         real(dp) :: lower(N), diag(N), upper(N)
         real(dp) :: q_rhs(N)
         integer(i4) :: k
 
+        ! CN diffusion number; diag_val/off_diag are the implicit-matrix entries
         De = (elapsed_time * molecular_diffusivity) / (2.0 * dz_length**2)
         diag_val = 1.0 + 2.0 * De
         off_diag = -De
 
-        ! Build RHS (explicit side) with periodic wrapping
+        ! Explicit (known) half of Crank-Nicolson, with neighbours wrapped periodically
         rhs(1) = (1.0 - 2.0*De)*field(1) + De*(field(2) + field(N))
         do k = 2, N-1
             rhs(k) = (1.0 - 2.0*De)*field(k) + De*(field(k+1) + field(k-1))
         end do
         rhs(N) = (1.0 - 2.0*De)*field(N) + De*(field(1) + field(N-1))
 
-        ! Sherman-Morrison decomposition of cyclic tridiagonal
+        ! gamma is the free Sherman-Morrison parameter; -diag_val is a stable choice.
         gamma = -diag_val
 
-        ! Modified diagonal for standard tridiagonal system
+        ! A' = cyclic matrix with the two corner couplings removed via the rank-1
+        ! update: subtract gamma from the (1,1) entry and off_diag^2/gamma from (N,N).
         diag(1) = diag_val - gamma
         do k = 2, N-1
             diag(k) = diag_val
@@ -196,19 +217,22 @@ contains
         lower(:) = off_diag
         upper(:) = off_diag
 
-        ! Solve A' * y_soln = rhs
+        ! First solve: A' * y_soln = rhs (the physical RHS)
         call tridiagonal_periodic(lower, diag, upper, rhs, y_soln)
 
-        ! Solve A' * q_soln = [gamma, 0, ..., 0, off_diag]
+        ! Second solve: A' * q_soln = u, the rank-1 update vector
+        ! u = [gamma, 0, ..., 0, off_diag] encodes the removed corner couplings.
         q_rhs(:) = 0.0
         q_rhs(1) = gamma
         q_rhs(N) = off_diag
         call tridiagonal_periodic(lower, diag, upper, q_rhs, q_soln)
 
-        ! Apply Sherman-Morrison correction
+        ! Sherman-Morrison correction factor = (v^T y) / (1 + v^T q), with
+        ! v = [1, 0, ..., 0, off_diag/gamma] selecting the corner contributions.
         correction = (y_soln(1) + off_diag * y_soln(N) / gamma) &
                    / (1.0 + q_soln(1) + off_diag * q_soln(N) / gamma)
 
+        ! Recombine the two solves into the cyclic-system solution
         do k = 1, N
             field(k) = y_soln(k) - correction * q_soln(k)
         end do
@@ -217,10 +241,13 @@ contains
 
 
     subroutine tridiagonal_periodic(l, d, u, rhs, x)
-        ! Standard tridiagonal solve (Thomas algorithm) for size N system.
-        real(dp), intent(in) :: l(:), d(:), u(:), rhs(:)
-        real(dp), intent(out) :: x(:)
-        real(dp) :: w(N), b
+        ! Thomas algorithm for the base (non-cyclic) tridiagonal system A' x = rhs
+        ! used by the Sherman-Morrison solve above. Forward elimination then back
+        ! substitution; assumes A' is non-singular (diagonally dominant here).
+        real(dp), intent(in) :: l(:), d(:), u(:)  ! sub-, main-, super-diagonals
+        real(dp), intent(in) :: rhs(:)            ! right-hand side
+        real(dp), intent(out) :: x(:)             ! solution
+        real(dp) :: w(N), b                       ! super-diag/pivot ratios; running pivot
         integer(i4) :: k
 
         b = d(1)

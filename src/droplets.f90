@@ -1,3 +1,10 @@
+! Lagrangian droplet management: the bridge between the Eulerian scalar fields
+! and the individual particles. Owns the particle array and handles injection
+! (chamber) / pre-loading (parcel), gravitational settling and fallout,
+! eddy displacement, droplet growth (dispatching to DGM per particle), aerosol
+! initialization from NetCDF, entrainment/detrainment, and the droplet-size-
+! distribution diagnostics written to output. The growth ODE itself lives in DGM;
+! the collision-coalescence events live in collision_coalescence.
 module droplets
     use netcdf
     use globals
@@ -1072,7 +1079,13 @@ contains
     end function calculate_injection_rate
 
     subroutine calculate_droplet_statistics(droplets, stats)
-        ! Calculate a few droplet statistics to be included in the netcdf file
+        ! Summary droplet statistics for the output time series. Fills stats(:) by
+        ! index (the order must match the writeout reader):
+        !   1 = total particle count
+        !   2 = activated count        3 = unactivated count
+        !   4 = mean radius (um)       5 = liquid water content (g/m3)
+        !   6 = collisions since last write   7 = coalescences since last write
+        ! Resets the collision/coalescence accumulators after reading them.
         type(particle), intent(in) :: droplets(:)
         real(dp), intent(out) :: stats(:)
         integer(i4) :: i, Nact

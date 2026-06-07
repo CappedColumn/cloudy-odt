@@ -118,6 +118,8 @@ Executable invocation: `codt <NAMELIST_PATH>`, `codt --help`, `codt --version`. 
 
 **Sidewall Ra in parcel mode:** `initialize_special_effects` receives a Rayleigh number from the caller. In chamber mode this is the true Ra = gΔTH³/(T_ref·ν·κ). In parcel mode the LEM Reynolds number is substituted as a placeholder — this needs a proper formulation.
 
+**Fall events in parcel mode:** Parcel mode uses periodic boundaries (`modulo(position, H)`), so droplets wrap rather than fall out — no gravitational fallout (`EV_FALL`) should ever occur. In `collision_coalescence.f90` the *initial* fall-event seeding (~line 113) is correctly guarded by `if (.not. is_periodic)`, **but the post-coalescence reschedule in `handle_pair_event` (~line 272) is NOT guarded** — after any coalescence the survivor gets a fall event pushed regardless of mode. So fall events can leak into parcel runs through that path. **Needs validation/fix:** either guard the line-272 `push_fall_event` with `is_periodic`, or confirm these events are harmless (e.g. always stale and skipped). Verify `total_n_fellout` stays 0 and no `EV_FALL` fires for a parcel run.
+
 ## Planned Modifications
 
 - **Predetermined eddies mode:** Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_predetermined_eddies` + `eddy_file`. Mutually exclusive with `write_eddies`.

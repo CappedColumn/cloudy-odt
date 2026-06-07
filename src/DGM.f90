@@ -97,7 +97,8 @@ subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
     c7_solute         = c7_ammonium_sulfate
     n_ions            = 2.0
   case default
-    error stop "set_aerosol_properties: unknown aerosol species"
+    write(error_unit,*) 'set_aerosol_properties: unknown aerosol species: ', species
+    call exit(1)
   end select
 
   ! Precompute derived coefficients used by the RHS
@@ -152,7 +153,7 @@ subroutine integrate_ODE(y, t_start, t_end, h_last, stat, rtol, atol)
   else if (ierr < 0) then
     write(error_unit,*) 'DGM ODE integration failed, ierr = ', ierr
     write(error_unit,*) '  radius=', y(1), ' qv=', y(2), ' T=', y(3)
-    error stop
+    call exit(1)
   end if
 
 end subroutine integrate_ODE
@@ -696,7 +697,7 @@ function growth_rate(radius, temp) result(drdt)
   integer(i4) :: rhs_err
 
   es_loc = esat(temp)
-  qv_sat = 0.622 * es_loc / (pres - es_loc)
+  qv_sat = eps * es_loc / (pres - es_loc)   ! eps = Mw/Ma ~ 0.622
   qv     = qv_sat * (1.0 + ode_supersat)
 
   y(1) = radius

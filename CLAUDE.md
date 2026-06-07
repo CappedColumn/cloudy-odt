@@ -120,6 +120,25 @@ Executable invocation: `codt <NAMELIST_PATH>`, `codt --help`, `codt --version`. 
 
 **Fall events in parcel mode:** Parcel mode uses periodic boundaries (`modulo(position, H)`), so droplets wrap rather than fall out — no gravitational fallout (`EV_FALL`) should ever occur. In `collision_coalescence.f90` the *initial* fall-event seeding (~line 113) is correctly guarded by `if (.not. is_periodic)`, **but the post-coalescence reschedule in `handle_pair_event` (~line 272) is NOT guarded** — after any coalescence the survivor gets a fall event pushed regardless of mode. So fall events can leak into parcel runs through that path. **Needs validation/fix:** either guard the line-272 `push_fall_event` with `is_periodic`, or confirm these events are harmless (e.g. always stale and skipped). Verify `total_n_fellout` stays 0 and no `EV_FALL` fires for a parcel run.
 
+**Variable shadowing (LSP-flagged, not yet fixed):** Several local variables shadow module/global names. The simulation still runs (the local binding is used consistently), but the names are misleading and risky:
+- `radiation.f90` — local `dv` (cell air volume) shadows global `Dv` (vapor diffusivity). Fortran is case-insensitive, so the names collide at ~5 sites (`compute_kappa_prof`, etc.). Rename the local (e.g. `cell_vol`).
+- `parcel.f90` — `load_env_profile`'s dummy arg `ncid` shadows the global output NetCDF id `ncid`. Rename the dummy (e.g. `dyn_ncid`, matching `read_parcel_file`).
+- `DGM.f90` — the time argument `t` in `growth_rhs`/`growth_jacobian`/`growth_rhs_jac` is flagged as masking a parent-scope name. Harmless but worth confirming there is no unintended global `t`.
+
+## Dead Code (cleanup candidates)
+
+Commented-out code left in place (flagged during the 2026-06 documentation pass; safe to delete, kept here so the decision is explicit). Not exhaustive — `collision_coalescence`, `radiation`, `writeout`, `write_particle`, `initialize`, `parcel`, `special_effects`, `entrainment` were not fully scanned.
+- `ODT.f90:139–154` — old `length_pdf`/CDF computation, superseded by the live loop below it
+- `ODT.f90:171–179` — debug dump of `prob_L` to `prob.txt` (unit 999)
+- `ODT.f90:214,218,221` — commented `max_loc` alternative in `sample_eddy_location`
+- `ODT.f90:263` — debug `write(9999,...)` in `eddy_acceptance_prob`
+- `ODT.f90:342` — commented `accept_prob` debug write in `eddy_acceptance_method`
+- `ODT.f90:374–380` — old `integrate_eddy` "total" version, replaced by live code
+- `droplets.f90:604` — `!call lparticles(i)%verify_radius()`
+- `globals.f90:360–369` — old `bin_data` implementation, superseded
+
+(Keep `microphysics.f90:61` — the commented exact virtual-temperature form is a deliberate reference, not dead code.)
+
 ## Planned Modifications
 
 - **Predetermined eddies mode:** Read eddies from `_eddies.bin` instead of Monte Carlo. New namelist flags `use_predetermined_eddies` + `eddy_file`. Mutually exclusive with `write_eddies`.

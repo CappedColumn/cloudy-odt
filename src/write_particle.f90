@@ -1,3 +1,7 @@
+! NetCDF output of per-particle trajectory data ({name}_particles.nc), written
+! when write_trajectories is set. Records selected droplets' properties over a
+! time window (trajectory_start/end) at trajectory_timer intervals. Separate from
+! writeout.f90 because the particle dimension is ragged/optional.
 module write_particle
     use netcdf
     use droplets, only: particle, particles, current_n_particles, &

@@ -171,14 +171,11 @@ contains
         ! Allocate space for the new particle, if needed
         ! Uses 'particle_array_expansion' to add x more elements in array
         if (size(lparticles_array) < current_n_particles) then
-            ! Set up temporary array to hold current particles
-            allocate(temp_array(size(lparticles_array)))
-            temp_array = lparticles_array
-            deallocate(lparticles_array)
-            ! Array Expansion and reassignment
-            allocate(lparticles_array(current_n_particles + particle_array_expansion))
-            lparticles_array(:size(temp_array)) = temp_array
-            deallocate(temp_array)
+            ! Grow the array in place, preserving existing particles.
+            ! move_alloc transfers the allocation (single copy, no leftover temp).
+            allocate(temp_array(current_n_particles + particle_array_expansion))
+            temp_array(:size(lparticles_array)) = lparticles_array
+            call move_alloc(temp_array, lparticles_array)
             write(*,*) "WARNING: Allocated new particle array"
         end if
 

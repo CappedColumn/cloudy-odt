@@ -175,7 +175,7 @@ contains
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
         real(dp) :: vrel, p_coll, random_draw, coal_efficiency, r_keep, r_kill
@@ -291,7 +291,7 @@ contains
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
         real(dp) :: zi, tfall
@@ -339,7 +339,7 @@ contains
 
 
     subroutine push_all_pair_events(heap, heap_size, zcur, tstamp, w_fall, alive, next, head, n_active, dt, current_time)
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         real(dp), intent(inout) :: zcur(:), tstamp(:)
         real(dp), intent(in) :: w_fall(:), dt, current_time
@@ -360,7 +360,7 @@ contains
 
     subroutine push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
         integer, intent(in) :: i
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         real(dp), intent(inout) :: zcur(:), tstamp(:)
         real(dp), intent(in) :: w_fall(:), dt, current_time
@@ -401,7 +401,7 @@ contains
 
 
     subroutine push_fall_event(heap, heap_size, i, zcur, tstamp, w_fall, alive, dt, current_time)
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         integer, intent(in) :: i
         real(dp), intent(in) :: zcur(:), tstamp(:), w_fall(:), dt, current_time
@@ -563,19 +563,34 @@ contains
     ! Min-heap (priority queue by event time)
     ! =========================================================================
 
+    ! Double the heap capacity in place (preserves existing events).
+    ! Lazy deletion lets stale events accumulate, so the initial 2*n_active
+    ! allocation can be exceeded; growth keeps events from being dropped.
+    subroutine grow_heap(heap)
+        type(Event), allocatable, intent(inout) :: heap(:)
+        type(Event), allocatable :: tmp(:)
+        integer :: old_capacity, new_capacity
+
+        old_capacity = size(heap)
+        new_capacity = 2 * old_capacity
+        allocate(tmp(new_capacity))
+        tmp(1:old_capacity) = heap(1:old_capacity)
+        call move_alloc(tmp, heap)
+
+        write(*,*) "WARNING: collision-coalescence event heap grew from ", &
+                   old_capacity, " to ", new_capacity, " events"
+    end subroutine grow_heap
+
+
     subroutine heap_push(heap, heap_size, new_event)
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         type(Event), intent(in) :: new_event
         integer :: k, parent_idx
         type(Event) :: tmp
 
         heap_size = heap_size + 1
-        if (heap_size > size(heap)) then
-            print *, "WARNING: collision-coalescence event heap overflow, events may be dropped"
-            heap_size = heap_size - 1
-            return
-        end if
+        if (heap_size > size(heap)) call grow_heap(heap)
         heap(heap_size) = new_event
 
         ! Sift up
@@ -592,7 +607,7 @@ contains
 
 
     subroutine heap_pop(heap, heap_size, popped_event)
-        type(Event), intent(inout) :: heap(:)
+        type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         type(Event), intent(out) :: popped_event
         integer :: k, left, right, smallest

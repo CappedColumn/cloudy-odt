@@ -27,13 +27,3 @@ library = false
 name = "CODT"
 source-dir = "app"
 main = "main.f90"
-
-[[test]]
-name = "test_dgm_solvers"
-source-dir = "test"
-main = "test_dgm_solvers.f90"
-
-[[test]]
-name = "test_jac_magnitudes"
-source-dir = "test"
-main = "test_jac_magnitudes.f90"

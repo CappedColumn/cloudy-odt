@@ -1,3 +1,9 @@
+! Parcel-mode forcing: drives an adiabatically ascending air parcel (LEM mode).
+! Reads a piecewise-constant vertical-velocity profile from a NetCDF parcel file,
+! and each step lifts the parcel, drops its pressure hydrostatically, and cools it
+! at the (moist-weighted) dry adiabatic rate. Optionally stops at pressure_limit.
+! When do_entrainment is set, also owns the environmental sounding (env_*) and
+! feeds interpolated environmental air to the entrainment module.
 module parcel
     use globals
     use netcdf
@@ -35,6 +41,9 @@ module parcel
 contains
 
     subroutine initialize_parcel()
+        ! Reads &PARCEL, sets the uniform initial parcel state (T = Tref, WV from
+        ! initial_RH at saturation), then loads the velocity profile (and, if
+        ! entraining, the environmental sounding) from the parcel NetCDF file.
         integer :: nml_unit, ierr, i
         character(256) :: nml_line, io_emsg
 
@@ -174,8 +183,10 @@ contains
 
 
     pure function get_velocity(query_time) result(vel)
-        real(dp), intent(in) :: query_time
-        real(dp) :: vel
+        ! Piecewise-constant ascent velocity: returns the velocity of the segment
+        ! whose start time most recently preceded query_time (segments are sorted).
+        real(dp), intent(in) :: query_time   ! simulation time (s)
+        real(dp) :: vel                      ! ascent velocity (m/s)
         integer :: i
 
         vel = segment_velocity(1)
@@ -187,8 +198,13 @@ contains
 
 
     subroutine apply_adiabatic_forcing(ldt)
-        real(dp), intent(in) :: ldt
-        real(dp) :: rho_air, qv_mean, cp_m, dT_adi
+        ! Advances the parcel one step: raise height, drop pressure hydrostatically
+        ! (dp = -rho*g*w*dt), and cool dry-adiabatically (dT = -(g/cp_moist)*w*dt).
+        ! WV is unchanged here (condensation is handled by droplet growth); only T,
+        ! Tv, SS and pres update. Sets pressure_limit_reached and returns early if
+        ! the parcel reaches the target pressure.
+        real(dp), intent(in) :: ldt   ! time step (s)
+        real(dp) :: rho_air, qv_mean, cp_m, dT_adi   ! air density; mean qv; moist cp; adiabatic dT
         integer :: k
 
         parcel_velocity = get_velocity(time)
@@ -196,6 +212,7 @@ contains
 
         parcel_height = parcel_height + parcel_velocity * ldt
 
+        ! Hydrostatic pressure change over the height ascended this step
         rho_air = pres / (Rd * sum(Tv) / N)
         pres = pres - rho_air * g * parcel_velocity * ldt
 
@@ -207,6 +224,7 @@ contains
             return
         end if
 
+        ! Dry adiabatic cooling at the moist-weighted heat capacity cp_m
         qv_mean = sum(WV) / N
         cp_m = cp * (1.0 + cp_wv / cp * qv_mean) / (1.0 + qv_mean)
         dT_adi = -(g / cp_m) * parcel_velocity * ldt
@@ -230,8 +248,12 @@ contains
 
 
     subroutine interp_env(p_current, T_env, qv_env)
-        real(dp), intent(in) :: p_current
-        real(dp), intent(out) :: T_env, qv_env
+        ! Linearly interpolates the environmental sounding (T, RH vs pressure) to
+        ! the parcel's current pressure, clamping at the profile ends, then converts
+        ! RH to a vapor mixing ratio. Supplies the "environment" for entrainment.
+        real(dp), intent(in) :: p_current    ! current parcel pressure (Pa)
+        real(dp), intent(out) :: T_env       ! interpolated environmental temperature (K)
+        real(dp), intent(out) :: qv_env      ! environmental vapor mixing ratio (kg/kg)
         real(dp) :: RH_env, frac
         integer :: k
 

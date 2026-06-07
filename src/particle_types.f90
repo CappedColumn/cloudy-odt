@@ -1,3 +1,8 @@
+! Particle data model and single-particle physics. Defines the aerosol base type
+! and the particle type that extends it (a deliquesced aerosol = a droplet), plus
+! the type-bound procedures for Kohler activation, Stokes settling, gridcell
+! lookup, and liquid-water content. The droplet *growth* over time lives in DGM;
+! this module holds the per-particle state and the instantaneous relations.
 module particle_types
     use globals
     use microphysics
@@ -87,19 +92,25 @@ contains
     end subroutine aerosol_initialize
 
     pure subroutine particle_critical_kohler(this)
-        ! Calculate the critical radius and supersaturation for the particle
-        ! based on Equations 6.7-6.8 in Rogers & Yau
+        ! Critical radius and critical supersaturation from Kohler theory: the peak
+        ! of the Kohler curve S(r), which balances the Kelvin (curvature) term that
+        ! raises equilibrium S against the Raoult (solute) term that lowers it.
+        ! A droplet larger than the critical radius is "activated" and grows freely.
+        ! Equations 6.7-6.8 in Rogers & Yau (1989), A Short Course in Cloud Physics.
         class(particle), intent(inout) :: this
         real(dp) :: radius, supersaturation
-        real(dp) :: a, b ! m
+        ! a: curvature (Kelvin) coefficient, ~ surface tension / T  (cm)
+        ! b: solute (Raoult) coefficient, ~ moles of dissolved ions  (cm^3)
+        real(dp) :: a, b
 
-        ! Determine numerical approximations
+        ! a from Rogers & Yau constant a_RY scaled by temperature; b from the
+        ! dissolved solute: mass * n_ions / molar_mass (the 4.3 folds in constants).
         a = a_RY / (this%temperature)
         b = 4.3 * this%solute_gross_mass * this%solute_type%n_ions / this%solute_type%solute_molar_mass
 
-        ! Calculate the critical radius and supersaturation
-        radius = sqrt(3 * b / a) * m_per_cm ! meters
-        supersaturation = sqrt(4 * a**3 / (27 * b)) * 100 ! %
+        ! Curve peak: r_crit = sqrt(3b/a), S_crit = sqrt(4 a^3 / 27 b)
+        radius = sqrt(3 * b / a) * m_per_cm ! cm -> m
+        supersaturation = sqrt(4 * a**3 / (27 * b)) * 100 ! fraction -> %
 
         ! Assign to particle properties
         this%critical_radius = radius
@@ -136,11 +147,14 @@ contains
     end subroutine particle_settling
 
     pure function calculate_terminal_velocity(this) result(terminal_velocity)
-        ! Calculate the stokes terminal fall velocity of a particle using
-        ! virtual effects
+        ! Stokes-regime terminal fall velocity v = -(2 g rho_l r^2)/(9 mu), valid
+        ! for small (low-Reynolds) droplets. Air density uses the particle's virtual
+        ! temperature (moisture-corrected) via the ideal gas law. nu here is the
+        ! dynamic viscosity mu. Sign is negative: positive z is up, so droplets fall.
+        ! Rogers & Yau (1989), eq. (8.6).
         class(particle), intent(in) :: this
-        real(dp) :: terminal_velocity
-        real(dp) :: coeff, rho_air
+        real(dp) :: terminal_velocity   ! fall speed (m/s), negative = downward
+        real(dp) :: coeff, rho_air      ! Stokes prefactor; moist air density (kg/m3)
 
         rho_air = pres / (this%virt_temp * Rd)
         coeff = 2. * g * rho_l / (9.0 * nu * rho_air)
@@ -181,7 +195,8 @@ contains
     end subroutine particle_update_scalars
 
     pure subroutine particle_calculate_water_content(this)
-        ! Determine particle liquid water content
+        ! Liquid water mass = volume of the water shell (full droplet minus the dry
+        ! solute core) times water density. pi_43 = 4/3*pi.
         class(particle), intent(inout) :: this
 
         this%water_liquid = pi_43 * (this%radius**3 - this%solute_radius**3) * rho_l

@@ -1,3 +1,8 @@
+! Central definitions shared across the whole model: precision kinds, physical
+! constants, the global field arrays and scalar state, the gridcell triplet map,
+! the abstract interfaces for the turbulence/diffusion/sync procedure pointers,
+! and small utilities (nc_verify, resolve_path, namelist_read_error). Almost
+! every other module uses this one; keep it dependency-light.
 module globals
     use iso_fortran_env, only: error_unit
     use netcdf, only: nf90_noerr, nf90_strerror

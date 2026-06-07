@@ -60,7 +60,11 @@ module ODT
 contains
 
     subroutine initialize_ODT(H_domain)
-        real(dp), intent(in) :: H_domain
+        ! Sets up ODT for a chamber run: reads the &TURBULENCE_ODT namelist, derives
+        ! the Dirichlet boundary scaling (top/bottom T, WV, Tv from Tref and Tdiff),
+        ! the diffusive time step, the buoyancy coefficient, and tabulates the eddy
+        ! length CDF used for sampling. Must run before any diffusion/turbulence step.
+        real(dp), intent(in) :: H_domain   ! domain height (m)
 
         call read_odt_params()
 
@@ -219,32 +223,41 @@ contains
     end function sample_eddy_location
 
     subroutine eddy_acceptance_prob(M, L, laccept_prob)
-        integer(i4), intent(in) :: L, M
-        real(dp), intent(out) :: laccept_prob
+        ! Acceptance probability for a candidate eddy of length L at cell M.
+        ! Integrates kinetic (w) and buoyant (Tv) energy over the eddy in a single
+        ! pass, forms the eddy turnover rate, and converts it to a probability for
+        ! this nondim time step. Returns 0 when the energy term p <= 0 (no eddy).
+        ! Side effects: sets module-level pot_energy, wK, TvK for implement_eddy.
+        ! After Kerstein (1999); see Wunsch & Kerstein (2005).
+        integer(i4), intent(in) :: L, M       ! eddy length (gridpoints) and start cell
+        real(dp), intent(out) :: laccept_prob ! acceptance probability for this dt
         real(dp) :: prob, Lnd, kin_energy
+        real(dp) :: p   ! net energy available to the eddy (positive => eddy possible)
 
-        real(dp) :: p
-
-        ! Non-dimensional Eddy Size
+        ! Eddy size as a fraction of the domain; the probability scales strongly with it
         Lnd = (1.*L)/(1.*N)
 
-        ! Integrate values across the eddy (fused single pass)
+        ! Triplet-map energy measures for w (kinetic) and Tv (buoyant) in one pass.
+        ! TvK is negated so that an unstable (top-heavy) profile gives positive
+        ! available potential energy, i.e. drives the eddy.
         call integrate_eddy_pair(L, M, W_nd, Tv_nd, wK, TvK)
         TvK = -TvK
 
-        ! Calculate energies
+        ! Available potential energy (buoyancy) and kinetic energy of the candidate eddy
         pot_energy = buoy_nd * TvK * Lnd
         kin_energy = wK*wK
+        ! Net energy after the viscous/length penalty ZC2; only p > 0 admits an eddy.
         p = ((pot_energy + kin_energy)*Lnd*Lnd) - ZC2 ! REVIEW ! Different from Bodt
-        !write(*,*) 'p: ', p
-        ! Note: Bodt uses "disfac" and "ratefac" as parameters
-        ! Bodt is VERY different
+        ! Note: Bodt's formulation uses "disfac"/"ratefac" parameters and differs here.
         if (p .gt. 0.) then
+            ! Eddy rate ~ sqrt(available energy) weighted by the assumed length pdf,
+            ! divided by Lnd^2 (turnover time scaling). prob_coeff/LpD set at init.
             prob = prob_coeff * (1.-Lnd) * sqrt(p) * exp(3.*LpD/(Lnd*N)) / (Lnd*Lnd)
         else
             prob = 0.
         end if
 
+        ! Convert the rate to a probability over the current nondim time step
         laccept_prob = prob * dt_nd
 
         !write(9999, *) prob_coeff, Lnd, p, LpD, exp(3.*LpD/(Lnd*N))
@@ -280,6 +293,9 @@ contains
     end subroutine lower_dt
 
     subroutine raise_dt()
+        ! Counterpart to lower_dt: when the running mean acceptance rate has fallen
+        ! well below the target (pmin), the time step is being oversampled, so grow
+        ! dt_nd to restore an efficient acceptance rate. Resets the rate accumulators.
         real(dp) :: pmin
         
         pmin = 1.e-3
@@ -375,6 +391,9 @@ contains
 
 
     pure subroutine integrate_eddy_pair(L, M, array1, array2, integral1, integral2)
+        ! Fused two-field version of integrate_eddy: integrates the triplet-map
+        ! energy measure over the eddy span [M, M+L] for two fields in one pass
+        ! (used for w and Tv together to avoid walking the eddy twice).
         integer(i4), intent(in) :: L, M
         real(dp), intent(in) :: array1(:), array2(:)
         real(dp), intent(out) :: integral1, integral2
@@ -403,6 +422,9 @@ contains
 
 
     subroutine implement_eddy(L, M)
+        ! Applies an accepted eddy: triplet-maps the scalar and velocity fields over
+        ! [M, M+L] (the ODT stirring operation), then adds the energy-conserving
+        ! kernel to w so the eddy redistributes — not creates — kinetic energy.
         integer(i4), intent(in) :: L, M
 
         ! uK, vK, wK and PE are assigned in prob/eddy_acceptance_prob
@@ -429,18 +451,30 @@ contains
 
 
     subroutine addK(L, M, ui, cui)
-        ! Kernel adjustment for energy conservation
+        ! Adds the ODT "kernel" K to a field after a triplet map so that the eddy
+        ! redistributes energy rather than creating it (energy conservation).
+        ! The triplet map alone changes the kinetic energy of the velocity field;
+        ! the kernel is a zero-mean, triangular-wave perturbation over the eddy that
+        ! is scaled (by cui, set in implement_eddy) to restore the energy balance.
+        !
+        !   L    - eddy length in gridpoints (a multiple of 3)
+        !   M    - eddy start cell; the eddy spans (M, M+L]
+        !   ui   - field to perturb in place (the w velocity field)
+        !   cui  - kernel amplitude, chosen so total energy is conserved
         integer(i4), intent(in) :: L, M
         real(dp), intent(in) :: cui
         real(dp), intent(inout) :: ui(:)
         integer(i4) :: Lseg, j, j1, j2, j3
-        real(dp) :: y1, y2, y3
+        real(dp) :: y1, y2, y3   ! kernel weights on the three eddy thirds
 
+        ! The eddy is split into three equal segments; the kernel is a piecewise
+        ! linear "hat" (+/-) whose weights sum to zero across the eddy, so it moves
+        ! energy between segments without adding net momentum.
         Lseg = L/3
         do j = 1, Lseg
-            y1 = -2.*j
-            y2 = 4.*(j+Lseg) - 2.*L
-            y3 = 2.*L - 2.*(j+Lseg+Lseg)
+            y1 = -2.*j                          ! first third: rising negative ramp
+            y2 = 4.*(j+Lseg) - 2.*L             ! middle third: positive peak
+            y3 = 2.*L - 2.*(j+Lseg+Lseg)        ! last third: falling ramp
             j1 = M + j
             j2 = M + j + Lseg
             j3 = M + j + Lseg + Lseg
@@ -452,12 +486,17 @@ contains
     end subroutine addK
 
     subroutine diffuse_scalar(sclr, dim_num, ldelta_time_nd)
-        real(dp), intent(in) :: dim_num
-        real(dp), intent(in) :: ldelta_time_nd
-        real(dp), intent(inout) :: sclr(:)
-        real(dp) :: De, l(N+1), d(N+1), r(N+1), xsc(N+1)
+        ! One Crank-Nicolson diffusion step on a single nondim field (Dirichlet BCs).
+        ! Builds the tridiagonal system (sub/diag/super = l/d/r) and explicit RHS xsc,
+        ! then solves in place. dim_num is the relevant nondim diffusivity ratio
+        ! (Pr for T, Sc for WV, Ndnu for w); ldelta_time_nd is the nondim time step.
+        real(dp), intent(in) :: dim_num         ! nondim diffusivity ratio (Pr, Sc, or Ndnu)
+        real(dp), intent(in) :: ldelta_time_nd  ! nondim time step
+        real(dp), intent(inout) :: sclr(:)      ! field, diffused in place
+        real(dp) :: De, l(N+1), d(N+1), r(N+1), xsc(N+1)   ! diff. number; sub/diag/super; RHS
         integer(i4) :: k
 
+        ! Diffusion number: ties grid spacing and time step to the CN coefficients
         De = (ldelta_time_nd*(N+1)*(N+1))/(2.*dim_num)
 
         l(1) = 0.
@@ -484,9 +523,13 @@ contains
 
 
     subroutine tridiagonal(l, d, r, xui, ui)
-        real(dp), intent(in) :: l(:), d(:), r(:), xui(:)
-        real(dp), intent(inout) :: ui(:)
-        real(dp) :: b, rdx(N)
+        ! Thomas algorithm: solves the tridiagonal system (l, d, r) * ui = xui by
+        ! forward elimination then back substitution. l/d/r are the sub/main/super
+        ! diagonals. A zero pivot (b == 0) means the system is singular.
+        real(dp), intent(in) :: l(:), d(:), r(:)  ! sub-, main-, super-diagonals
+        real(dp), intent(in) :: xui(:)            ! right-hand side
+        real(dp), intent(inout) :: ui(:)          ! solution, written in place
+        real(dp) :: b, rdx(N)                     ! running pivot; super-diag/pivot ratios
         integer(i4) :: k
 
         b = d(1)
@@ -550,6 +593,9 @@ contains
 
 
     subroutine odt_init_arrays()
+        ! Allocates and seeds the nondim ODT fields: linear profiles (0->1) for the
+        ! scalars, and a tiny random velocity perturbation to break symmetry and
+        ! seed convection. Then syncs the dimensional scalars from the nondim ones.
         real(dp) :: rand_num
         integer(i4) :: k
 
@@ -572,6 +618,9 @@ contains
 
 
     pure subroutine update_dim_scalars(lT_nd, lWV_nd, lTv_nd, lT, lWV, lTv)
+        ! Maps the nondim fields (used by the ODT numerics) back to dimensional T, WV
+        ! and virtual temperature (used by the physics), using the Dirichlet scaling.
+        ! Half of the chamber's dual scalar representation; inverse of update_nondim_scalars.
         real(dp), intent(in) :: lT_nd(:), lWV_nd(:)
         real(dp), intent(out) :: lT(:), lWV(:), lTv_nd(:), lTv(:)
         integer(i4) :: k
@@ -590,6 +639,9 @@ contains
 
 
     pure subroutine update_nondim_scalars(lT, lWV, lTv, lT_nd, lWV_nd, lTv_nd)
+        ! Maps dimensional fields back to nondim form after the physics updates them,
+        ! so the next ODT diffusion/eddy step sees consistent fields. Inverse of
+        ! update_dim_scalars; called from odt_sync_after_physics.
         real(dp), intent(in) :: lT(:), lWV(:), lTv(:)
         real(dp), intent(out) :: lT_nd(:), lWV_nd(:), lTv_nd(:)
         integer(i4) :: k

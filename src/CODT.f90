@@ -1,3 +1,8 @@
+! Top-level driver: owns the simulation time loop. All physics lives in the
+! modules pulled in below; this module just sequences them each time step. The
+! turbulence/diffusion/sync routines are reached through procedure pointers
+! (set at init by initialize_simulation) so the same loop serves both chamber
+! (ODT) and parcel (LEM) modes.
 module CODT
     use write_particle, only: write_trajectory_data
     use globals
@@ -17,6 +22,15 @@ module CODT
 contains
 
     subroutine run_simulation()
+        ! Initialize, then march from time=0 to tmax. Each step:
+        !   1. (parcel) apply adiabatic forcing and optional entrainment
+        !   2. write output (before physics, so t=0 state is captured)
+        !   3. diffusion backstop: if enough time has elapsed, diffuse then update
+        !      droplets -> special effects -> radiation -> sync fields
+        !   4. turbulence: if an eddy is accepted, run the same physics chain again
+        ! The diffuse -> droplets -> ... -> sync ordering is an invariant: droplets
+        ! must see updated fields, and dim/nondim fields must be synced afterward
+        ! (see CLAUDE.md). On exit, finalize output and write the _DONE marker.
         real(dp) :: t_start, t_end
         integer :: done_unit
         integer(i4) :: eddy_location, eddy_length
@@ -41,7 +55,9 @@ contains
             call write_profiles(dt)
             if (do_microphysics .and. write_trajectories) call write_trajectory_data(particles, time, dt)
 
-            ! Diffusion (backstop)
+            ! Diffusion backstop: guarantees scalars diffuse at least every
+            ! diffusion_step even when few/no eddies are accepted (delta_time is
+            ! time accumulated since the last physics update).
             if (delta_time >= diffusion_step) then
                 call diffuse_step(delta_time)
                 if (do_microphysics) call update_droplets(time, delta_time)

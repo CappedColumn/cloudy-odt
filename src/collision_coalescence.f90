@@ -39,10 +39,11 @@ module collision_coalescence
     integer, parameter :: EV_PAIR = 1
     integer, parameter :: EV_FALL = 2
 
+    ! A scheduled future event in the priority queue.
     type :: Event
-        real(dp) :: t
-        integer  :: event_type
-        integer  :: i, j
+        real(dp) :: t            ! event time within the window (s); heap key
+        integer  :: event_type   ! EV_PAIR (two droplets meet) or EV_FALL (exits domain)
+        integer  :: i, j         ! particle indices (j unused for EV_FALL)
     end type Event
 
 contains
@@ -169,6 +170,13 @@ contains
 
     subroutine handle_pair_event(i, j, current_time, lparticles, zcur, tstamp, w_fall, &
                                  alive, prev, next, head, n_active, dt, heap, heap_size)
+        ! Resolve a scheduled meeting of adjacent droplets i and j. Advances both to
+        ! the event time, computes the collision probability from their swept area and
+        ! collection efficiency, and draws a random number: on acceptance the pair is
+        ! merged (water/solute conserved, one particle killed); on rejection their
+        ! adjacency order is swapped. Either way, affected neighbor pairs are
+        ! rescheduled onto the heap. Stale events (state changed since scheduling)
+        ! are detected and ignored.
         integer, intent(in) :: i, j, n_active
         real(dp), intent(in) :: current_time, dt
         type(particle), intent(inout) :: lparticles(:)
@@ -286,6 +294,10 @@ contains
 
     subroutine handle_fall_event(i, current_time, zcur, tstamp, w_fall, alive, prev, next, &
                                  head, n_active, dt, heap, heap_size)
+        ! Resolve a scheduled fallout of droplet i (it reaches the bottom of the
+        ! domain). After a stale-event check, unlinks i from the adjacency list,
+        ! marks it dead, and reschedules its former previous neighbor against its new
+        ! next neighbor. (Periodic/parcel mode generates no fall events.)
         integer, intent(in) :: i, n_active
         real(dp), intent(in) :: current_time, dt
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
@@ -326,6 +338,9 @@ contains
     ! =========================================================================
 
     logical function is_pair_valid(i, j, alive, next, n_active)
+        ! A queued pair event is still valid only if both droplets are alive and
+        ! j is still i's immediate next neighbor (guards against stale events whose
+        ! adjacency changed after they were scheduled).
         integer, intent(in) :: i, j, n_active
         logical, intent(in) :: alive(:)
         integer, intent(in) :: next(:)
@@ -435,6 +450,9 @@ contains
     ! =========================================================================
 
     subroutine update_working_pos(i, current_time, zcur, tstamp, w_fall)
+        ! Lazily advance droplet i's working position to current_time using its
+        ! (constant) fall speed, then restamp it. Positions are only updated when a
+        ! droplet is actually involved in an event, not every step.
         integer, intent(in) :: i
         real(dp), intent(in) :: current_time
         real(dp), intent(inout) :: zcur(:), tstamp(:)
@@ -454,6 +472,9 @@ contains
     ! =========================================================================
 
     subroutine build_links(sort_order, n_active, prev, next, head)
+        ! Build a doubly linked list of droplets in position order from sort_order,
+        ! so adjacency (who is next to whom) can be queried and updated in O(1) as
+        ! collisions and fallout change the ordering. head points to the lowest droplet.
         integer, intent(in) :: sort_order(:), n_active
         integer, intent(out) :: prev(:), next(:), head
         integer :: k
@@ -471,6 +492,8 @@ contains
 
 
     subroutine unlink_particle(kill, alive, prev, next, head)
+        ! Splice droplet `kill` out of the adjacency list, joining its neighbors
+        ! directly (used when a droplet coalesces away or falls out).
         integer, intent(in) :: kill
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
@@ -492,6 +515,8 @@ contains
 
 
     subroutine swap_adjacent(i, j, prev, next, head)
+        ! Exchange the order of adjacent droplets i and j in the list (i was before
+        ! j, now j is before i). Used when a pair passes without colliding.
         integer, intent(in) :: i, j
         integer, intent(inout) :: prev(:), next(:), head
         integer :: before, after
@@ -530,6 +555,8 @@ contains
 
 
     recursive subroutine sort_by_position(ord, key, lo, hi)
+        ! In-place quicksort of the index array ord by key (droplet z position),
+        ! over the range [lo, hi]. Establishes the initial bottom-to-top ordering.
         integer, intent(inout) :: ord(:)
         real(dp), intent(in) :: key(:)
         integer, intent(in) :: lo, hi

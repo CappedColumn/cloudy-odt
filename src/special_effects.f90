@@ -1,3 +1,8 @@
+! Optional chamber-only effects layered on top of the core physics:
+!   - Sidewalls: nudge interior T and WV toward wall values at a rate set by a
+!     Nusselt-Rayleigh heat-transfer scaling (mimics the finite chamber's walls).
+!   - Stochastic fallout: random removal of droplets (see droplets.f90 usage).
+! Both are off by default and enabled via the &SPECIALEFFECTS namelist.
 module special_effects
     use globals
     use microphysics, only: saturation_mixing_ratio
@@ -62,31 +67,40 @@ contains
 
 
     subroutine initialize_sidewalls(rayleigh)
-        real(dp), intent(in) :: rayleigh
+        ! Derives the sidewall nudging rate tau_sw from a Nusselt-Rayleigh scaling.
+        ! The Nusselt number (dimensionless heat transfer) follows an empirical
+        ! power law Nu = 0.124 * Ra^0.309; combined with the chamber geometry
+        ! (wall/bottom areas) it sets how fast the interior relaxes to wall values.
+        ! NOTE: in parcel mode the caller passes the LEM Reynolds number as a
+        ! stand-in for Ra (see "Sidewall Ra in parcel mode" fragility in CLAUDE.md).
+        real(dp), intent(in) :: rayleigh   ! Rayleigh number (or Re placeholder in parcel mode)
 
-        real(dp) :: velocity_bot
+        real(dp) :: velocity_bot           ! effective wall-driven velocity scale (m/s)
 
         sw_iter = 0.
 
-        T_sw = T_sw + Tice
+        T_sw = T_sw + Tice   ! sidewall temperature: C -> K
 
         Ra = rayleigh
-
         Nuss = 0.124 * Ra**0.309
 
-        ! Calculate the sidewall forcing timescale
+        ! Forcing timescale: heat-transfer velocity scaled by chamber geometry.
+        ! tau_sw is an inverse timescale (1/s) used directly in the nudging rate.
         velocity_bot = P_sw * Nuss * kT / H
-        tau_sw = (C_sw * velocity_bot) / ((H * area_bot) / area_sw)  ! inverse timescale for sidewall forcing
+        tau_sw = (C_sw * velocity_bot) / ((H * area_bot) / area_sw)
 
-        ! Determine Water Vapor of sidewalls
+        ! Sidewall vapor mixing ratio from the wall RH at the wall temperature
         WV_sw = RH_sw * saturation_mixing_ratio(T_sw, pres)
 
     end subroutine initialize_sidewalls
 
     subroutine sidewall_fluxes(Tarr, WVarr, delta_t)
-        ! Nudges scalar fields by the sidewall values
-        real(dp), intent(inout) :: Tarr(:), WVarr(:)
-        real(dp), intent(in) :: delta_t
+        ! Relaxes interior T and WV toward the sidewall values by a fraction
+        ! time_ratio = delta_t * tau_sw each call (explicit nudging; boundary
+        ! cells 1 and N are left to the BCs). Accumulates the change into the
+        ! T/WV budgets for conservation diagnostics.
+        real(dp), intent(inout) :: Tarr(:), WVarr(:)   ! temperature, vapor profiles (nudged in place)
+        real(dp), intent(in) :: delta_t                ! time accumulated since last nudge (s)
         real(dp) :: time_ratio, T_sum_before, WV_sum_before
         integer :: k
 

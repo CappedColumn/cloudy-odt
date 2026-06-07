@@ -83,8 +83,11 @@ contains
     ! Uses module-level Mie table arrays (loaded once at init).
     subroutine compute_kappa_prof(nrows, ncols_max, rad_box, nums, dv, T_profile, kappa_prof)
         integer(i4), intent(in) :: nrows, ncols_max
-        real(dp), intent(in) :: rad_box(nrows, ncols_max)
-        integer(i4), intent(in) :: nums(nrows)
+        real(dp), intent(in) :: rad_box(nrows, ncols_max)  ! per-cell droplet radii (m)
+        integer(i4), intent(in) :: nums(nrows)             ! droplet count per cell
+        ! NOTE: `dv` here is the cell air VOLUME (m^3). It is unrelated to the
+        ! module-level `Dv` (vapor diffusivity) in globals — Fortran is case-
+        ! insensitive, so the names collide; see code-review note on shadowing.
         real(dp), intent(in) :: dv(nrows), T_profile(nrows)
         real(dp), intent(out) :: kappa_prof(nrows)
 
@@ -327,6 +330,9 @@ contains
 
     ! Wall photon emission probabilities for the 3D MC domain.
     ! Uses precomputed boundary areas (mc_A_bottom, mc_A_top, mc_A_sides).
+    ! Emission probability of each wall set (bottom/top/sides) for the Monte Carlo
+    ! sampler, proportional to its radiant exitance sigma*T^4 * area. Also returns
+    ! the total emitted power Q_total used to weight each photon's energy.
     subroutine wall_photon_probabilities(T_bottom, T_top_mc, lT_side, &
                                          P_bottom, P_top_mc, P_sides, Q_total)
         real(dp), intent(in) :: T_bottom, T_top_mc, lT_side

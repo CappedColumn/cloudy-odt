@@ -1,3 +1,8 @@
+! Simulation setup: reads and validates all namelists, runs cross-namelist
+! consistency checks, creates the output directory and redirects stdout to the
+! .log file, builds the domain, allocates field arrays, and wires the
+! mode-specific turbulence/diffusion/sync procedure pointers (ODT vs LEM).
+! Validation runs before the stdout redirect so input errors reach the terminal.
 module initialize
     use iso_fortran_env, only: output_unit, error_unit
     use globals

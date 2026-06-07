@@ -1,3 +1,8 @@
+! Buffered NetCDF output of the main results file ({name}.nc): vertical profiles
+! and time series (and parcel diagnostics in parcel mode). Accumulates writes in
+! a buffer and flushes periodically to limit I/O overhead. Embeds code_version
+! and git_commit as global attributes; the conventions string is the format
+! contract with the CODT_tools readers.
 module writeout
     use globals
     use version, only: code_version, git_commit

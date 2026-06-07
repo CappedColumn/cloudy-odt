@@ -1,3 +1,10 @@
+! Collection (coalescence) efficiency E(R, r): the probability that a larger
+! "collector" droplet of radius R sweeping out a smaller "collectee" of radius r
+! actually captures it, as a function of their sizes. Feeds the collision-
+! coalescence kernel. Three selectable formulations (set via &PARAMETERS):
+!   'long'  - Long (1974) analytic polynomial fit
+!   'hall'  - Hall (1980) tabulated values, bilinearly interpolated
+!   'unity' - E = 1 everywhere (geometric sweep-out, for testing)
 module collection_efficiency
     use globals, only: dp, pi
     implicit none
@@ -95,6 +102,9 @@ module collection_efficiency
 contains
 
     subroutine set_kernel_selector()
+        ! Resolve the namelist string coalescence_kernel to an integer code once,
+        ! so the per-pair efficiency lookup avoids string comparisons. Unknown
+        ! names fall back to the Long kernel.
         select case (trim(coalescence_kernel))
             case ('long');  ikernel = KERN_LONG
             case ('hall');  ikernel = KERN_HALL
@@ -105,7 +115,9 @@ contains
 
 
     pure function collection_efficiency_E(r_large, r_small) result(E)
-        real(dp), intent(in) :: r_large, r_small
+        ! Public entry point: dispatches to the selected kernel and returns the
+        ! collection efficiency (dimensionless, ~0 to 1) for a collector/collectee pair.
+        real(dp), intent(in) :: r_large, r_small   ! collector, collectee radii (m)
         real(dp) :: E
 
         select case (ikernel)
@@ -118,9 +130,14 @@ contains
 
 
     pure function long_kernel(r_collector, r_collectee) result(E)
-        real(dp), intent(in) :: r_collector, r_collectee
-        real(dp) :: E, R_large_um, r_small_um, p
+        ! Long (1974) analytic collection-efficiency fit. Two branches split at a
+        ! 50 um collector radius (small-collector quadratic vs large-collector
+        ! exponential saturation toward 1). p is the size ratio r_small/R_large.
+        ! Result clamped to [0, 1]. Long (1974), J. Atmos. Sci., 31, 1040.
+        real(dp), intent(in) :: r_collector, r_collectee   ! radii (m)
+        real(dp) :: E, R_large_um, r_small_um, p           ! radii in um; size ratio
 
+        ! Table/fit are in micrometres; convert from m
         R_large_um = r_collector * 1.0e6
         r_small_um = r_collectee * 1.0e6
         p = r_small_um / max(R_large_um, 1.0e-3)
@@ -136,8 +153,11 @@ contains
 
 
     pure function hall_kernel(r_collector, r_collectee) result(E)
-        real(dp), intent(in) :: r_collector, r_collectee
-        real(dp) :: E, R_um, p
+        ! Hall (1980) tabulated collection efficiency, looked up by collector
+        ! radius (um) and size ratio p = r_small/R_large via bilinear interpolation
+        ! of the E_hall table. Hall (1980), J. Atmos. Sci., 37, 2486.
+        real(dp), intent(in) :: r_collector, r_collectee   ! radii (m)
+        real(dp) :: E, R_um, p                             ! collector radius (um); size ratio
 
         R_um = r_collector * 1.0e6
         p = r_collectee / max(r_collector, 1.0e-30)
@@ -149,8 +169,11 @@ contains
 
 
     pure function bilinear_interp(x, y) result(z)
-        real(dp), intent(in) :: x, y
-        real(dp) :: z, xc, yc, t, u
+        ! Bilinear interpolation of E_hall on the (r_hall, p_hall) grid. Inputs are
+        ! clamped to the table bounds; the bracketing cell is found by linear scan
+        ! (small fixed table). t, u are the fractional positions within the cell.
+        real(dp), intent(in) :: x, y    ! collector radius (um), size ratio
+        real(dp) :: z, xc, yc, t, u     ! result; clamped inputs; cell fractions
         integer :: ix, iy
 
         xc = max(r_hall(1), min(x, r_hall(NR)))

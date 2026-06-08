@@ -1,8 +1,8 @@
 module version
     implicit none
 
-    character(*), parameter :: code_version = '0.6.0'
-    character(*), parameter :: git_commit   = '894cafc'
+    character(*), parameter :: code_version = 'VERSION_PLACEHOLDER'
+    character(*), parameter :: git_commit   = 'COMMIT_PLACEHOLDER'
 
 contains
 

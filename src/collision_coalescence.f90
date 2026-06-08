@@ -268,7 +268,8 @@ contains
                     call push_pair_for_i(keep, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
                     if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
 
-                    ! Reschedule fallout for survivor
+                    ! Reschedule fallout for survivor (no-op in parcel mode;
+                    ! push_fall_event self-guards against periodic boundaries)
                     call push_fall_event(heap, heap_size, keep, zcur, tstamp, w_fall, alive, dt, current_time)
                     return
                 else
@@ -423,6 +424,11 @@ contains
         logical, intent(in) :: alive(:)
         type(Event) :: new_event
         real(dp) :: zi, te
+
+        ! Periodic (parcel) mode wraps via modulo(z, H) and never falls out:
+        ! no fall events may exist. Enforced here so no call site can leak one
+        ! (e.g. the post-coalescence reschedule in handle_pair_event).
+        if (trim(simulation_mode) == 'parcel') return
 
         if (i < 1 .or. i > size(alive)) return
         if (.not. alive(i)) return

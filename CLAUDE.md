@@ -120,6 +120,10 @@ Executable invocation: `codt <NAMELIST_PATH>`, `codt --help`, `codt --version`. 
 
 **Fall events in parcel mode (FIXED):** Parcel mode uses periodic boundaries (`modulo(position, H)`), so droplets wrap rather than fall out — no gravitational fallout (`EV_FALL`) may occur. `push_fall_event` now self-guards with `if (trim(simulation_mode) == 'parcel') return` at its top, so no call site can leak a fall event into a periodic run (previously the post-coalescence reschedule in `handle_pair_event` was unguarded and could kill a coalescence survivor near `z=0`, removing parcel mass and incrementing `total_n_fellout`). The init-time seeding guard (`if (.not. is_periodic)`) remains but is now redundant. Confirm in a parcel run that `total_n_fellout` stays 0.
 
+**Output unit inconsistencies (noted, decision deferred):** Two unit mismatches exist in the particle output and between output files. Documented as-is in `docs/data_formats.md`; the user will decide whether to change them.
+- `write_particle.f90` converts `radius` and `radius_before_coalescence` to µm but writes `solute_radius` unconverted (m). Possibly a missing conversion at `write_particle.f90:231`.
+- The two NetCDF outputs disagree on units for the same quantities: `{sim_name}_particles.nc` uses °C / g/kg / µm (converted on write), while the main `{sim_name}.nc` uses K / kg/kg / m.
+
 **Variable shadowing (LSP-flagged, not yet fixed):** Several local variables shadow module/global names. The simulation still runs (the local binding is used consistently), but the names are misleading and risky:
 - `radiation.f90` — local `dv` (cell air volume) shadows global `Dv` (vapor diffusivity). Fortran is case-insensitive, so the names collide at ~5 sites (`compute_kappa_prof`, etc.). Rename the local (e.g. `cell_vol`).
 - `parcel.f90` — `load_env_profile`'s dummy arg `ncid` shadows the global output NetCDF id `ncid`. Rename the dummy (e.g. `dyn_ncid`, matching `read_parcel_file`).

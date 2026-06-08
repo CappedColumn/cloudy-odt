@@ -1,0 +1,184 @@
+# CODT Input Parameters
+
+CODT is configured entirely through a single Fortran **namelist file**, whose path is passed as the only command-line argument:
+
+```bash
+codt path/to/params.nml
+```
+
+The namelist is divided into groups (`&PARAMETERS`, `&MICROPHYSICS`, etc.). Each group is opened with `&NAME` and closed with `/`. Only the groups relevant to your run need to be present — see [Which groups do I need?](#which-groups-do-i-need) below. A complete example lives at [`input/params.nml`](../input/params.nml).
+
+> **Defaults vs. the template.** The tables below list the *code* default — the value used if the parameter is omitted from the namelist. The shipped `input/params.nml` sets example values that may differ. Parameters marked **— (required)** have no default and must be supplied.
+
+> **Units note.** A `—` in the Units column means the parameter is dimensionless or non-numeric (a flag, name, count, fraction, or probability). Temperatures `Tref` and `T_sw` are given in **°C** (converted to K internally); the radiation temperatures `sky_temp` and `T_side` are given in **K**. Pressures are **Pa**.
+
+---
+
+## Which groups do I need?
+
+| Group | Required when | Mode |
+|-------|---------------|------|
+| `&PARAMETERS` | always | both |
+| `&MICROPHYSICS` | `do_microphysics = .true.` (default) | both |
+| `&TURBULENCE_ODT` | `simulation_mode = 'chamber'` and `do_turbulence = .true.` | chamber |
+| `&TURBULENCE_LEM` | `simulation_mode = 'parcel'` and `do_turbulence = .true.` | parcel |
+| `&PARCEL` | `simulation_mode = 'parcel'` | parcel |
+| `&ENTRAINMENT` | `simulation_mode = 'parcel'` and `do_entrainment = .true.` | parcel |
+| `&RADIATION` | `do_radiation = .true.` | both |
+| `&SPECIALEFFECTS` | `simulation_mode = 'chamber'` and `do_special_effects = .true.` | chamber |
+
+---
+
+## `&PARAMETERS` — core run control
+
+Always required. Sets the domain, mode, timing, output, and the master on/off switches for optional physics.
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `N` | integer | — | `2000` | Number of grid cells (domain resolution along the 1-D column). |
+| `tmax` | real | s | `100` | Maximum simulation time. |
+| `H` | real | m | `1.` | Domain height. |
+| `volume_scaling` | real | — | `10` | Cross-sectional area scaling that sets the effective 3-D domain volume (used for number concentrations and collision rates). |
+| `Tref` | real | °C | `20.` | Reference temperature. **Chamber:** bottom-boundary temperature. **Parcel:** uniform initial temperature. |
+| `pres` | real | Pa | `1.00e5` | Pressure. **Chamber:** constant reference pressure. **Parcel:** initial pressure (evolves hydrostatically). |
+| `simulation_mode` | string | — | `'chamber'` | `'chamber'` (ODT, Dirichlet BCs) or `'parcel'` (LEM, periodic BCs, adiabatic ascent). |
+| `same_random` | logical | — | `.false.` | Seed the RNG from a fixed state for reproducible/deterministic runs (used by the reftest). |
+| `simulation_name` | string | — | **— (required)** | Output file prefix (e.g. `{sim_name}.nc`, `{sim_name}.log`). |
+| `output_directory` | string | — | **— (required)** | Directory for all output (absolute, or relative to cwd; parent must exist). |
+| `overwrite` | logical | — | `.false.` | Allow overwriting existing output files. |
+| `write_timer` | real | s | **— (required)** | Write profile/time-series output every X seconds. |
+| `write_buffer` | integer | — | **— (required)** | Number of write-steps buffered in memory before flushing to NetCDF. |
+| `write_eddies` | logical | — | `.false.` | Write the eddy event stream to `{sim_name}_eddies.bin`. |
+| `do_turbulence` | logical | — | `.true.` | Enable turbulence (ODT in chamber, LEM in parcel). |
+| `do_microphysics` | logical | — | `.true.` | Enable aerosol/droplet processes (requires `&MICROPHYSICS`). |
+| `do_special_effects` | logical | — | `.false.` | Enable sidewalls / stochastic fallout (requires `&SPECIALEFFECTS`; chamber only). |
+| `do_radiation` | logical | — | `.false.` | Enable radiative transfer (requires `&RADIATION`). |
+| `do_entrainment` | logical | — | `.false.` | Enable blob entrainment (requires `&ENTRAINMENT`; parcel only). |
+
+---
+
+## `&MICROPHYSICS` — aerosols, droplets, collisions, trajectory output
+
+Required when `do_microphysics = .true.` (the default).
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `aerosol_file` | string | — | **— (required)** | Path to the NetCDF aerosol distribution input (relative paths resolve from the namelist's directory). |
+| `init_drop_each_gridpoint` | logical | — | `.false.` | Initialize a droplet at every grid point to reduce spin-up time. |
+| `expected_Ndrops_per_gridpoint` | real | — | `1` | Expected droplets per grid point; sizes the initial particle array to avoid reallocation. |
+| `initial_wet_radius` | real | × dry radius | **— (required)** | Injected wet radius as a multiple of the dry radius (must be > 1). |
+| `aerosol_concentration` | real | cm⁻³ | `0.0` | Initial aerosol number concentration. **Parcel mode only** (chamber injects from `aerosol_file`). |
+| `do_collisions` | logical | — | `.false.` | Enable collision detection (event-driven 1-D collision-coalescence). |
+| `do_coalescence` | logical | — | `.false.` | Merge droplets on collision (requires `do_collisions`). |
+| `coalescence_kernel` | string | — | `'hall'` | Collection-efficiency kernel: `'hall'` (Hall 1980), `'long'` (Long 1974), or `'unity'`. |
+| `wmax_collision` | real | m/s | `10.0` | Cap on terminal velocity used in collision calculations. |
+| `write_collisions` | logical | — | `.false.` | Write the collision/coalescence event stream to `{sim_name}_collisions.bin`. |
+| `write_trajectories` | logical | — | `.false.` | Write per-particle trajectories to `{sim_name}_particles.nc`. |
+| `trajectory_start` | real | s | `0.` | Start time for trajectory output. |
+| `trajectory_end` | real | s | `0.` | End time for trajectory output. |
+| `trajectory_timer` | real | s | `1.` | Trajectory write interval. |
+
+---
+
+## `&TURBULENCE_ODT` — chamber turbulence
+
+Required when `simulation_mode = 'chamber'` and `do_turbulence = .true.` Controls the ODT eddy sampling and the convective forcing.
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `Tdiff` | real | °C | `10.` | Top-to-bottom temperature difference driving convection (ΔT). |
+| `Lmin` | integer | grid cells | `6` | Minimum eddy size. |
+| `Lprob` | integer | grid cells | `18` | Eddy-length PDF shape parameter; the length distribution decays as `exp(−2·Lprob/L)`, so larger values favor larger eddies. |
+| `max_accept_prob` | real | — | `0.1` | Maximum eddy acceptance probability (caps the eddy event rate). |
+| `C2` | real | — | `1.5e3` | Eddy-rate coefficient scaling the buoyant energy available to eddies. |
+| `ZC2` | real | — | `1.0e5` | Viscous/length energy penalty; an eddy is accepted only if its available energy exceeds this threshold. |
+
+---
+
+## `&TURBULENCE_LEM` — parcel turbulence
+
+Required when `simulation_mode = 'parcel'` and `do_turbulence = .true.` Sets the Linear Eddy Model eddy sampling from a −5/3 inertial range.
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `integral_length_scale` | real | m | `0.01` | Integral (largest eddy) length scale. |
+| `kolmogorov_length_scale` | real | m | `0.001` | Kolmogorov (smallest eddy) length scale. |
+| `dissipation_rate` | real | m²/s³ | `0.01` | Turbulent kinetic energy dissipation rate. |
+
+---
+
+## `&PARCEL` — adiabatic ascent
+
+Required in **parcel** mode (`simulation_mode = 'parcel'`).
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `parcel_file` | string | — | **— (required)** | NetCDF file of piecewise-constant vertical velocity segments that drive the ascent (and the environmental profile when entraining). |
+| `initial_RH` | real | fraction (0–1) | `1.0` | Initial relative humidity; sets the initial water-vapor field. |
+| `pressure_limit` | real | Pa | `0.0` | Stop the simulation when pressure reaches this target. `0.0` disables the limit. |
+
+---
+
+## `&ENTRAINMENT` — blob entrainment
+
+Required when `simulation_mode = 'parcel'` and `do_entrainment = .true.` Mixes environmental air into the column via the blob method (environmental profile read from `parcel_file`).
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `ent_rate` | real | m⁻¹ | `2.0` | Fractional entrainment rate. |
+| `n_blob` | integer | — | `1` | Number of blobs per entrainment event. |
+| `psigma` | real | fraction | `0.1` | Blob size as a fraction of the domain (per blob). |
+| `random_entrainment` | logical | — | `.true.` | Poisson-randomize entrainment event timing (vs. regular intervals). |
+
+---
+
+## `&RADIATION` — radiative transfer
+
+> ⚠️ **Experimental.** The radiation code is still under active development and has not been fully validated. Treat results as preliminary and expect parameters and behavior to change.
+
+Required when `do_radiation = .true.`
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `radiation_method` | string | — | `'1d'` | `'1d'` (two-stream) or `'3d'` (Monte Carlo). |
+| `mie_data_file` | string | — | **— (required)** | Path to the Mie absorption data table. |
+| `eps_top` | real | — | `1.0` | Top-boundary emissivity. |
+| `eps_bot` | real | — | `1.0` | Bottom-boundary emissivity. |
+| `sky_cooling_flag` | logical | — | `.false.` | Override the top boundary with a radiating sky at `sky_temp`. |
+| `sky_temp` | real | K | `263.15` | Sky temperature for cooling. |
+| `rad_call_interval` | real | s | `0.0` | Interval between radiation updates; `0.0` calls every physics step. |
+| `max_droplets_per_cell` | integer | — | `20` | Cap on droplets per cell included in the radiation calculation. |
+| `nPhotons` | integer | — | `700000` | Number of Monte Carlo photons. **`'3d'` only.** |
+| `nBins` | integer | — | `30` | Number of spectral bins. **`'3d'` only.** |
+| `Lx_rad` | real | m | `2.0` | Horizontal domain extent in x for the 3-D solver. **`'3d'` only.** |
+| `Ly_rad` | real | m | `2.0` | Horizontal domain extent in y for the 3-D solver. **`'3d'` only.** |
+| `T_side` | real | K | `293.15` | Side-wall temperature for the 3-D solver. **`'3d'` only.** |
+
+---
+
+## `&SPECIALEFFECTS` — sidewalls & stochastic fallout
+
+Required when `simulation_mode = 'chamber'` and `do_special_effects = .true.`
+
+| Parameter | Type | Units | Default | Description |
+|-----------|------|-------|---------|-------------|
+| `do_sidewalls` | logical | — | `.false.` | Enable sidewall nudging of the scalar fields. |
+| `area_sw` | real | m² | **— (required\*)** | Sidewall area. |
+| `area_bot` | real | m² | **— (required\*)** | Bottom area. |
+| `C_sw` | real | — | **— (required\*)** | Sidewall eddy-velocity coefficient (`velocity_sw = C_sw · velocity_bot`). |
+| `sw_nudging_time` | real | s | **— (required\*)** | Sidewall nudging interval. |
+| `T_sw` | real | °C | **— (required\*)** | Sidewall temperature. |
+| `RH_sw` | real | fraction | **— (required\*)** | Sidewall relative humidity. |
+| `P_sw` | real | — | **— (required\*)** | Sidewall tuning parameter. |
+| `do_random_fallout` | logical | — | `.false.` | Enable stochastic fallout (droplet "perceived" height at the bottom boundary). |
+| `random_fallout_rate` | real | — | `1.` | Rate parameter for stochastic fallout. |
+
+\* The sidewall parameters have no code default; supply them whenever `do_sidewalls = .true.`
+
+---
+
+## See also
+
+- [`input/params.nml`](../input/params.nml) — complete example namelist
+- Output file formats — see the `codt-io` reference
+- `codt --help` — prints the namelist groups and usage at runtime

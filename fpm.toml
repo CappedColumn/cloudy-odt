@@ -1,10 +1,10 @@
 name = "Cloudy-ODT"
-version = "0.6.0"
+version = "1.0.0"
 license = "GPL-3.0-or-later"
 author = "Corey Bois"
 maintainer = "corey.bois@utah.edu"
 copyright = "Copyright 2025 Corey Bois"
-description = "Cloudy-ODT simulates turbulent convective cloud chambers, specifically the PI-cloud-chamber at Michigan Tech University. 'ODT' stands for 'One Dimensional Turbulence', a modeling framework created by Alan Kerstein which replicates the statistical nature of 3D turbulence using only one spatial dimension. Cloudy-ODT explicitely calculates the growth of individual cloud droplets, allowing for a comprehensive understanding of the interaction between microphysics and turbulence."
+description = "Cloudy-ODT (CODT) is a one-dimensional model of warm-cloud microphysics in turbulent flows. It explicitly tracks the growth, settling, and collision-coalescence of individual Lagrangian cloud droplets while turbulence is represented along a single spatial dimension using the One-Dimensional Turbulence (ODT), replicating the statistics of turbulent flow at lower computational cost. CODT supports two modes: a 'chamber' mode targeting the Pi convection-cloud chamber at Michigan Technological University (Rayleigh-Bénard convection via ODT), and a 'parcel' mode for adiabatic ascent (Linear Eddy Model turbulence with optional entrainment). Together these enable detailed study of the coupling between turbulence, supersaturation fluctuations, and the evolution of cloud droplet size distributions."
 
 [build]
 auto-executables = true

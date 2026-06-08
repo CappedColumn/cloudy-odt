@@ -62,7 +62,7 @@ module droplets
     integer(i4) :: n_injected, inj_time_idx
     logical :: update_inj_rate
     real(dp) :: initial_wet_radius
-    logical :: init_drop_each_gridpoint = .true.
+    logical :: init_drop_each_gridpoint = .false.
     real(dp) :: expected_Ndrops_per_gridpoint = 1
     real(dp) :: aerosol_concentration = 0.0
     character(256) :: aerosol_file = ''

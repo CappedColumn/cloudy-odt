@@ -10,7 +10,7 @@ module collection_efficiency
     implicit none
     private
 
-    character(32), public :: coalescence_kernel = 'long'
+    character(32), public :: coalescence_kernel = 'hall'
 
     integer, parameter :: KERN_LONG = 1, KERN_HALL = 2, KERN_UNITY = 3
     integer :: ikernel = KERN_LONG

@@ -104,16 +104,16 @@ module globals
     ! params.nml namelist in the initialization module
     ! -----------------------------------------------
 
-    integer(i4) :: N = 6000         ! Number of Grid Cells
+    integer(i4) :: N = 2000         ! Number of Grid Cells
     logical :: write_eddies = .false.
 
     ! Note default values will yeild a domain of 1 cm^3, area_frac=2 gives 2 cm^3...
     real(dp), parameter :: domain_width = 0.001    ! Implied Domain Width (m)
-    real(dp) :: volume_scaling = 1      ! Cross-Sectional Area scaling - controls volume
+    real(dp) :: volume_scaling = 10      ! Cross-Sectional Area scaling - controls volume
     real(dp) :: domain_volume           ! Volume of domain (m^3)
     real(dp) :: gridcell_volume         ! Volume of each grid cell (m^3)
 
-    real(dp) :: Tref = 15.          ! Bottom temperature used for reference
+    real(dp) :: Tref = 20.          ! Bottom temperature used for reference
     real(dp) :: pres = 1.00e5       ! Pressure (Pa)
     real(dp) :: H = 1.            ! Domain Height (meters)
     real(dp) :: dz_length    ! Length of each grid cell (meters)
@@ -156,7 +156,7 @@ module globals
     ! and test for conditions
     ! -----------------------------------------------
 
-    real(dp) :: tmax = 30            ! Maximum simulation time (seconds)
+    real(dp) :: tmax = 100            ! Maximum simulation time (seconds)
     real(dp) :: time    ! Dimensional time
     real(dp) :: last_time_updated  ! Time of last physics update (diffusion/eddy event)
     real(dp) :: dt                 ! Dimensional time step

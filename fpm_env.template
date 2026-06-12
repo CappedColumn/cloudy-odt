@@ -1,0 +1,106 @@
+
+#!/bin/bash
+
+# This bash script is used to set up an environment
+# for the Fortran Package Manager (FPM). By specifying
+# COMPIILER, linking libraries and flags, the "fpm build"
+# command will automatically make use of the evironmental
+# variables specified below.
+
+# NOTE: Depending on your software build structure, the LIB/INC
+# and netcdf/netcdf-fortran paths have to be restructured below,
+# here they follow a ${BASE_PATH}/compilerstack/netcdf/{lib,include}
+# structure. Modules are used to load the appropriate builds and
+# may need to be altered as well.
+
+# ------------------------------------------------------------
+# ------------ USER SETTINGS ---------------------------------
+# ------------------------------------------------------------
+
+# unload all modules: 0-false, 1-true
+PURGE_MODULES=0
+
+# to perform profiling: 0-false, 1-true
+PROFILING=0
+
+# Specify compiler of choice
+# gfortran, nvfortran or ifort
+COMPIILER="nvfortran"
+
+# Specify netcdf build path and compiler versions
+BASE_PATH="/path/to/software/builds"
+NVHPC_VER="XX.X"
+GCC_VER="X.X.X"
+INTEL_VER="XXXX.X.X"
+
+# ------------------------------------------------------------
+# ------------------------------------------------------------
+# ------------------------------------------------------------
+
+# Unload all prior loaded modules
+if [ $PURGE_MODULES = 1 ]; then 
+    module purge
+fi
+
+# Set ENV Variables to be added
+FPM_FFLAGS=""
+FPM_LDFLAGS=""
+
+# COMPIILER SELECTION
+if [[ $COMPIILER == "nvfortran" ]]; then
+    echo -e "Using nvfortran"
+    module load nvhpc/${NVHPC_VER}
+    LIB_NETCDF="${BASE_PATH}/nvhpc-${NVHPC_VER}/netcdf/lib"
+    INC_NETCDF="${BASE_PATH}/nvhpc-${NVHPC_VER}/netcdf/include"
+    FPM_FFLAGS+=" -O2"
+    if [ $PROFILING == 1 ]; then
+        FPM_FFLAGS+=" -Mprof=ccff"
+    fi
+
+elif [[ $COMPIILER == "gfortran" ]]; then
+    echo -e "Using gfortran"
+    module load gcc/${GCC_VER}
+    LIB_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/lib"
+    INC_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/include"
+    FPM_FFLAGS+=" -O2 -finline-functions -ffree-line-length-none"
+    if [ $PROFILING == 1 ]; then
+        FPM_FFLAGS+=" -pg"
+    fi
+
+elif [[ $COMPIILER == "ifort" ]]; then
+    echo -e "Using ifort"
+    module load intel/${INTEL_VER}
+    LIB_NETCDF="${BASE_PATH}/intel-${INTEL_VER}/netcdf/lib"
+    INC_NETCDF="${BASE_PATH}/intel-${INTEL_VER}/netcdf/include"
+    FPM_FFLAGS=""
+    if [ $PROFILING == 1 ]; then
+        FPM_FFLAGS+=" -pg"
+    fi
+    
+else
+    echo -e "Unkown COMPIILER specification.\nDefaulting to gfortran."
+    COMPIILER = "gfortran"
+    module load gcc/${GCC_VER}
+    LIB_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/lib"
+    INC_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/include"
+    FPM_FFLAGS=" -O2  -finline-functions -ffree-line-length-none"
+fi
+
+COMPIILER_PATH=$(which $COMPIILER)
+export FPM_FC="${COMPIILER_PATH}"
+
+
+# LINKING FLAG SELECTION
+FPM_LDFLAGS="-L${LIB_NETCDF} -Wl,-rpath=${LIB_NETCDF}"
+if [ $PROFILING == 1 ]; then
+    if [[ $COMPIILER == "gfortran" || $COMPIILER == "ifort" ]]; then
+        FPM_LDFLAGS+=" -pg"
+    elif [[ $COMPIILER == "nvfortran" ]]; then
+        FPM_LDFLAGS+=" -Mprof=ccff"
+    fi
+fi
+export FPM_LDFLAGS
+
+# FLAG SELECTION
+FPM_FFLAGS+=" -I${INC_NETCDF}"
+export FPM_FFLAGS

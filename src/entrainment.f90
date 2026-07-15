@@ -18,8 +18,10 @@ module entrainment
     implicit none
 
     private
-    public :: initialize_entrainment, apply_entrainment, get_entrainment_params
-    public :: ent_rate, n_blob, psigma, random_entrainment, time_varying_entrainment
+    public :: initialize_entrainment, apply_entrainment, get_entrainment_params, &
+              refresh_entrainment_schedule
+    public :: ent_rate, n_blob, psigma, random_entrainment, time_varying_entrainment, &
+              t_next_entrain
 
     ! --- &ENTRAINMENT namelist variables ---
     real(dp) :: ent_rate = 2.0       ! fractional entrainment rate [1/m]
@@ -36,6 +38,7 @@ module entrainment
     ! get_entrainment_params. The schedule shares the parcel velocity time axis.
     logical :: time_varying_entrainment = .false.
     integer(i4) :: n_ent_segments = 0
+    integer(i4) :: active_segment = 1
     real(dp), allocatable :: sched_times(:)
     real(dp), allocatable :: sched_ent_rate(:)
     integer(i4), allocatable :: sched_n_blob(:)
@@ -94,6 +97,7 @@ contains
                                                  sched_psigma(i))
             end do
             ! Seed current values from the first (t=0) segment before scheduling.
+            active_segment = 1
             ent_rate = sched_ent_rate(1)
             n_blob   = sched_n_blob(1)
             psigma   = sched_psigma(1)
@@ -143,26 +147,60 @@ contains
     end subroutine validate_entrainment_params
 
 
-    ! Refresh ent_rate/n_blob/psigma to the segment active at query_time
-    ! (piecewise-constant; structural twin of parcel's get_velocity). No-op when
-    ! the schedule is not time-varying, leaving the namelist scalars in place.
+    ! Index of the schedule segment active at query_time (piecewise-constant;
+    ! structural twin of parcel's get_velocity).
+    pure function schedule_segment(query_time) result(idx)
+        real(dp), intent(in) :: query_time   ! simulation time (s)
+        integer :: idx, i
+
+        idx = 1
+        do i = 2, n_ent_segments
+            if (query_time < sched_times(i)) exit
+            idx = i
+        end do
+    end function schedule_segment
+
+
+    ! Refresh ent_rate/n_blob/psigma to the segment active at query_time. No-op
+    ! when the schedule is not time-varying, leaving the namelist scalars in place.
     subroutine get_entrainment_params(query_time)
         real(dp), intent(in) :: query_time   ! simulation time (s)
         integer :: i
 
         if (.not. time_varying_entrainment) return
 
-        ent_rate = sched_ent_rate(1)
-        n_blob   = sched_n_blob(1)
-        psigma   = sched_psigma(1)
-        do i = 2, n_ent_segments
-            if (query_time < sched_times(i)) exit
-            ent_rate = sched_ent_rate(i)
-            n_blob   = sched_n_blob(i)
-            psigma   = sched_psigma(i)
-        end do
+        i = schedule_segment(query_time)
+        ent_rate = sched_ent_rate(i)
+        n_blob   = sched_n_blob(i)
+        psigma   = sched_psigma(i)
 
     end subroutine get_entrainment_params
+
+
+    ! Track the active schedule segment; on a segment change, adopt the new
+    ! parameters and redraw the next-event time with them, so a rate increase
+    ! takes effect immediately instead of waiting out an interval drawn under
+    ! the old rate. Exact for the Poisson case (exponential waiting times are
+    ! memoryless); the deterministic cadence simply restarts at the boundary.
+    ! With a near-zero velocity the redraw is skipped (no meaningful interval
+    ! exists); the next segment change redraws again.
+    subroutine refresh_entrainment_schedule(query_time, vel)
+        real(dp), intent(in) :: query_time   ! simulation time (s)
+        real(dp), intent(in) :: vel          ! parcel/eddy velocity [m/s]
+        integer :: seg
+
+        if (.not. time_varying_entrainment) return
+
+        seg = schedule_segment(query_time)
+        if (seg == active_segment) return
+
+        active_segment = seg
+        call get_entrainment_params(query_time)
+        if (abs(vel) >= 1.0e-30) then
+            t_next_entrain = query_time + compute_dt_entm(vel)
+        end if
+
+    end subroutine refresh_entrainment_schedule
 
 
     ! Execute one entrainment event if the scheduled time has been reached.
@@ -179,15 +217,17 @@ contains
         real(dp), intent(in) :: T_env   ! environmental temperature [K]
         real(dp), intent(in) :: qv_env  ! environmental water vapor mixing ratio [kg/kg]
         real(dp), intent(in) :: vel     ! parcel/eddy velocity for timing [m/s]
-        integer :: blob_start(max_blobs), blob_end(max_blobs), n_final
+        ! Blobs that wrap the periodic boundary split in two, so up to 2*max_blobs
+        ! contiguous segments can come back from place_blobs.
+        integer :: blob_start(2*max_blobs), blob_end(2*max_blobs), n_final
         integer :: i, k
+
+        ! Before the timing checks, so a segment change redraws t_next_entrain
+        ! and the new rate takes effect immediately.
+        call refresh_entrainment_schedule(time, vel)
 
         if (abs(vel) < 1.0e-30) return
         if (time < t_next_entrain) return
-
-        ! Refresh ent_rate/n_blob/psigma for the current time so both this event
-        ! and the next-event interval (compute_dt_entm below) use active values.
-        call get_entrainment_params(time)
 
         call place_blobs(blob_start, blob_end, n_final)
 

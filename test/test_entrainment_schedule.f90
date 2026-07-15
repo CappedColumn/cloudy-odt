@@ -6,13 +6,14 @@
 program test_entrainment_schedule
     use globals, only: dp, i4, namelist_path, time
     use entrainment, only: initialize_entrainment, get_entrainment_params, &
+                           refresh_entrainment_schedule, t_next_entrain, &
                            ent_rate, n_blob, psigma
     implicit none
 
     integer :: n_passed, n_failed, nml_unit
     real(dp) :: seg_times(3), seg_ent_rate(3), seg_psigma(3)
     integer(i4) :: seg_n_blob(3)
-    real(dp) :: vel, q
+    real(dp) :: vel, q, tn_before
 
     n_passed = 0
     n_failed = 0
@@ -52,6 +53,36 @@ program test_entrainment_schedule
     q = 160.0;   call get_entrainment_params(q); call check("t=160 -> segment 3", 3)
     q = 1.0e6;   call get_entrainment_params(q); call check("t=1e6 -> segment 3", 3)
 
+    ! --- Redraw on segment change -------------------------------------------
+    ! Crossing a segment boundary must redraw t_next_entrain with the new
+    ! parameters immediately, not wait out the interval drawn under the old
+    ! ones. With random_entrainment off the redrawn value is deterministic:
+    ! t_next = query_time + (n_blob/ent_rate)*(psigma/(1-psigma))/|vel|.
+    ! (The lookup calls above left the module params on segment 3, but the
+    ! tracked active segment is still 1 from initialization, so refreshing
+    ! inside segment 2 is a genuine segment change.)
+    q = 100.0
+    call refresh_entrainment_schedule(q, vel)
+    call check("refresh at t=100 -> segment 2", 2)
+    call check_t_next("redraw at t=100 uses segment 2 params", q, 2)
+
+    ! No boundary crossed: a second refresh in the same segment must not redraw.
+    tn_before = t_next_entrain
+    q = 120.0
+    call refresh_entrainment_schedule(q, vel)
+    if (t_next_entrain == tn_before) then
+        n_passed = n_passed + 1
+    else
+        n_failed = n_failed + 1
+        write(*,'(a)') 'FAIL: no redraw within a segment'
+    end if
+
+    ! Crossing into segment 3 redraws again with its parameters.
+    q = 250.0
+    call refresh_entrainment_schedule(q, vel)
+    call check("refresh at t=250 -> segment 3", 3)
+    call check_t_next("redraw at t=250 uses segment 3 params", q, 3)
+
     ! --- Cleanup ---
     open(newunit=nml_unit, file=namelist_path, status='old')
     close(nml_unit, status='delete')
@@ -83,5 +114,26 @@ contains
                 ' n_blob=', seg_n_blob(seg), ' psigma=', seg_psigma(seg)
         end if
     end subroutine check
+
+
+    ! Verify t_next_entrain equals the deterministic interval for segment seg's
+    ! parameters, anchored at query time q0 (random_entrainment is off).
+    subroutine check_t_next(label, q0, seg)
+        character(*), intent(in) :: label
+        real(dp), intent(in) :: q0
+        integer, intent(in) :: seg
+        real(dp) :: expected
+
+        expected = q0 + (real(seg_n_blob(seg), dp) / seg_ent_rate(seg)) &
+                   * (seg_psigma(seg) / (1.0 - seg_psigma(seg))) / abs(vel)
+        if (abs(t_next_entrain - expected) < 1.0e-12) then
+            n_passed = n_passed + 1
+        else
+            n_failed = n_failed + 1
+            write(*,'(a)') 'FAIL: '//label
+            write(*,'(a,es15.7,a,es15.7)') '  got t_next=', t_next_entrain, &
+                ' want ', expected
+        end if
+    end subroutine check_t_next
 
 end program test_entrainment_schedule

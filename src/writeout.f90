@@ -18,7 +18,8 @@ module writeout
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
                       parcel_file, initial_RH, pressure_limit
-    use entrainment, only: ent_rate, n_blob, psigma, random_entrainment
+    use entrainment, only: ent_rate, n_blob, psigma, random_entrainment, &
+                           time_varying_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
@@ -58,6 +59,11 @@ module writeout
 
     ! Entrainment budget varids and buffers (only when do_entrainment = .true.)
     real(dp), allocatable :: buffer_entrain_budgets(:,:)  ! (n_entrain_budgets, buffer_size)
+
+    ! Time-varying entrainment parameter series (only when the schedule is active)
+    integer :: varid_ent_rate, varid_n_blob, varid_psigma
+    real(dp), allocatable :: buffer_ent_rate(:), buffer_psigma(:)
+    integer(i4), allocatable :: buffer_n_blob(:)
 
     ! Radiation varids and buffers (only when do_radiation = .true.)
     integer :: varid_rad_F_net, varid_rad_heating_rate, varid_rad_budget
@@ -146,6 +152,15 @@ contains
             buffer_entrain_budgets = 0.
         end if
 
+        if (do_entrainment .and. time_varying_entrainment) then
+            allocate(buffer_ent_rate(buff_len))
+            allocate(buffer_n_blob(buff_len))
+            allocate(buffer_psigma(buff_len))
+            buffer_ent_rate = 0.
+            buffer_n_blob = 0
+            buffer_psigma = 0.
+        end if
+
         if (do_radiation) then
             allocate(buffer_rad_F_net(N_grid, buff_len))
             allocate(buffer_rad_heating_rate(N_grid, buff_len))
@@ -170,6 +185,9 @@ contains
         if (allocated(buffer_rad_heating_rate)) deallocate(buffer_rad_heating_rate)
         if (allocated(buffer_rad_budget)) deallocate(buffer_rad_budget)
         if (allocated(buffer_entrain_budgets)) deallocate(buffer_entrain_budgets)
+        if (allocated(buffer_ent_rate)) deallocate(buffer_ent_rate)
+        if (allocated(buffer_n_blob)) deallocate(buffer_n_blob)
+        if (allocated(buffer_psigma)) deallocate(buffer_psigma)
     end subroutine deallocate_buffers
 
 
@@ -212,6 +230,11 @@ contains
                 buffer_entrain_budgets(4, buffer_count) = budget_entrain_solute_mass
                 buffer_entrain_budgets(5, buffer_count) = real(budget_n_detrained, dp)
                 buffer_entrain_budgets(6, buffer_count) = real(budget_n_entrained, dp)
+            end if
+            if (do_entrainment .and. time_varying_entrainment) then
+                buffer_ent_rate(buffer_count) = ent_rate
+                buffer_n_blob(buffer_count) = n_blob
+                buffer_psigma(buffer_count) = psigma
             end if
             if (do_radiation) then
                 buffer_rad_F_net(:, buffer_count) = rad_F_net
@@ -490,6 +513,33 @@ contains
                             "nf90_put_att: parcel_velocity, units" )
         end if
 
+        ! Time-varying entrainment parameter series (active value each output step)
+        if (do_entrainment .and. time_varying_entrainment) then
+            call nc_verify( nf90_def_var(lncid, "ent_rate", NF90_FLOAT, t_dimid, &
+                            varid_ent_rate, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: ent_rate" )
+            call nc_verify( nf90_put_att(lncid, varid_ent_rate, "long_name", &
+                            "Entrainment Rate"), "nf90_put_att: ent_rate, name" )
+            call nc_verify( nf90_put_att(lncid, varid_ent_rate, "units", "1/m"), &
+                            "nf90_put_att: ent_rate, units" )
+
+            call nc_verify( nf90_def_var(lncid, "n_blob", NF90_INT, t_dimid, &
+                            varid_n_blob, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: n_blob" )
+            call nc_verify( nf90_put_att(lncid, varid_n_blob, "long_name", &
+                            "Number of Blobs per Entrainment Event"), "nf90_put_att: n_blob, name" )
+            call nc_verify( nf90_put_att(lncid, varid_n_blob, "units", "1"), &
+                            "nf90_put_att: n_blob, units" )
+
+            call nc_verify( nf90_def_var(lncid, "psigma", NF90_FLOAT, t_dimid, &
+                            varid_psigma, deflate_level=1, shuffle=.true.), &
+                            "nf90_def_var: psigma" )
+            call nc_verify( nf90_put_att(lncid, varid_psigma, "long_name", &
+                            "Blob Fraction of Domain"), "nf90_put_att: psigma, name" )
+            call nc_verify( nf90_put_att(lncid, varid_psigma, "units", "1"), &
+                            "nf90_put_att: psigma, units" )
+        end if
+
         ! Radiation variables (chamber mode with do_radiation only)
         if (do_radiation) then
             call nc_verify( nf90_def_var(lncid, "rad_F_net", NF90_FLOAT, dimids, varid_rad_F_net, &
@@ -596,6 +646,15 @@ contains
                             buffer_parcel_pressure(1:buffer_count), start=(/nc_write_iter/)) )
             call nc_verify( nf90_put_var(lncid, varid_parcel_velocity, &
                             buffer_parcel_velocity(1:buffer_count), start=(/nc_write_iter/)) )
+        end if
+
+        if (do_entrainment .and. time_varying_entrainment) then
+            call nc_verify( nf90_put_var(lncid, varid_ent_rate, &
+                            buffer_ent_rate(1:buffer_count), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, varid_n_blob, &
+                            buffer_n_blob(1:buffer_count), start=(/nc_write_iter/)) )
+            call nc_verify( nf90_put_var(lncid, varid_psigma, &
+                            buffer_psigma(1:buffer_count), start=(/nc_write_iter/)) )
         end if
 
         if (do_radiation) then

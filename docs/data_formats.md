@@ -55,7 +55,7 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 
 > In **parcel** mode, particles are pre-loaded at initialization from this distribution (using `aerosol_concentration`), not injected over time; `injection_time`/`injection_rate` apply to chamber mode.
 
-## Parcel input — `CODT_parcel_input_v1` / `v2`
+## Parcel input — `CODT_parcel_input_v1` / `v2` / `v3`
 
 Drives adiabatic ascent when `simulation_mode = 'parcel'` (set by `parcel_file`). The velocity profile is piecewise-constant in time.
 
@@ -97,6 +97,24 @@ Adds to v1:
 | `env_RH` | (level) | — | Environmental relative humidity (0–1) |
 
 **Global attributes:** `conventions = "CODT_parcel_input_v2"`
+
+### v3 (with time-varying entrainment schedule)
+
+A superset of v2: keeps the environmental sounding and adds a per-segment entrainment schedule on the **same `segment` time axis as `velocity`**, so the entrainment parameters step in time alongside the ascent velocity. When these variables are present, they **override** the constant `ent_rate`/`n_blob`/`psigma` from the `&ENTRAINMENT` namelist (`random_entrainment` is still taken from the namelist). Lookup is piecewise-constant, like `velocity`.
+
+Adds to v2:
+
+**Variables**
+
+| Variable | Dims | Units | Description |
+|----------|------|-------|-------------|
+| `ent_rate` | (segment) | 1/m | Fractional entrainment rate per segment (> 0) |
+| `n_blob` | (segment) | — | Blobs per entrainment event per segment (integer ≥ 1; stored as `int`) |
+| `psigma` | (segment) | — | Blob fraction of the domain per segment (0–1, with `psigma * n_blob < 1`) |
+
+**Global attributes:** `conventions = "CODT_parcel_input_v3"`
+
+> Readers accept v1/v2/v3. With `do_entrainment = .true.`, the file must be v2 or v3. In a v3 run, the active `ent_rate`/`n_blob`/`psigma` are also written to the main output file as time series (see below).
 
 ## Mie absorption table (radiation)
 
@@ -154,6 +172,16 @@ Profiles and time series. Always written.
 **Entrainment budget variables** (only when `do_entrainment`)
 
 `budget_detrain_liquid_mass`, `budget_detrain_solute_mass` (kg); `budget_entrain_liquid_mass`, `budget_entrain_solute_mass` (kg); `budget_n_detrained`, `budget_n_entrained` (counts as double).
+
+**Time-varying entrainment series** (only with a v3 parcel input, i.e. a time-varying schedule)
+
+| Variable | Dims | Units | Description |
+|----------|------|-------|-------------|
+| `ent_rate` | (time) | 1/m | Active entrainment rate at each output step |
+| `n_blob` | (time) | — | Active blob count (`int`) |
+| `psigma` | (time) | — | Active blob fraction |
+
+With a constant (v2) schedule these are not written; the constant values remain available as the `PARCEL.ent_rate`/`PARCEL.n_blob`/`PARCEL.psigma` global attributes.
 
 **Additions when `simulation_mode = 'parcel'`**
 

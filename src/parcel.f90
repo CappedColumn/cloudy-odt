@@ -95,8 +95,9 @@ contains
                        'reading conventions attribute')
 
         if (trim(conventions) /= 'CODT_parcel_input_v1' .and. &
-            trim(conventions) /= 'CODT_parcel_input_v2') then
-            write(error_unit,*) 'Error: expected CODT_parcel_input_v1 or v2, got: ', trim(conventions)
+            trim(conventions) /= 'CODT_parcel_input_v2' .and. &
+            trim(conventions) /= 'CODT_parcel_input_v3') then
+            write(error_unit,*) 'Error: expected CODT_parcel_input_v1, v2 or v3, got: ', trim(conventions)
             call exit(1)
         end if
 
@@ -128,12 +129,19 @@ contains
 
         ! --- Environmental profile (entrainment) ---
         if (do_entrainment) then
-            if (trim(conventions) /= 'CODT_parcel_input_v2') then
-                write(error_unit,*) 'Error: do_entrainment requires CODT_parcel_input_v2'
+            if (trim(conventions) /= 'CODT_parcel_input_v2' .and. &
+                trim(conventions) /= 'CODT_parcel_input_v3') then
+                write(error_unit,*) 'Error: do_entrainment requires CODT_parcel_input_v2 or v3'
                 call exit(1)
             end if
             call load_env_profile(dyn_ncid)
-            call initialize_entrainment(parcel_velocity)
+            ! v3 adds per-segment entrainment parameters (time-varying schedule);
+            ! v2 uses the constant &ENTRAINMENT namelist values.
+            if (trim(conventions) == 'CODT_parcel_input_v3') then
+                call load_entrainment_schedule(dyn_ncid)
+            else
+                call initialize_entrainment(parcel_velocity)
+            end if
         end if
 
         call nc_verify(nf90_close(dyn_ncid), 'closing parcel file')
@@ -180,6 +188,33 @@ contains
         end do
 
     end subroutine load_env_profile
+
+
+    subroutine load_entrainment_schedule(ncid)
+        ! Reads the per-segment entrainment parameters (parcel input v3) on the
+        ! shared velocity-segment axis and hands them to the entrainment module,
+        ! which validates them and drives a time-varying schedule.
+        integer, intent(in) :: ncid
+        integer :: varid
+        real(dp), allocatable :: sched_ent_rate(:), sched_psigma(:)
+        integer(i4), allocatable :: sched_n_blob(:)
+
+        allocate(sched_ent_rate(n_segments), sched_n_blob(n_segments), &
+                 sched_psigma(n_segments))
+
+        call nc_verify(nf90_inq_varid(ncid, 'ent_rate', varid), 'finding ent_rate')
+        call nc_verify(nf90_get_var(ncid, varid, sched_ent_rate), 'reading ent_rate')
+
+        call nc_verify(nf90_inq_varid(ncid, 'n_blob', varid), 'finding n_blob')
+        call nc_verify(nf90_get_var(ncid, varid, sched_n_blob), 'reading n_blob')
+
+        call nc_verify(nf90_inq_varid(ncid, 'psigma', varid), 'finding psigma')
+        call nc_verify(nf90_get_var(ncid, varid, sched_psigma), 'reading psigma')
+
+        call initialize_entrainment(parcel_velocity, segment_times, sched_ent_rate, &
+                                    sched_n_blob, sched_psigma)
+
+    end subroutine load_entrainment_schedule
 
 
     pure function get_velocity(query_time) result(vel)

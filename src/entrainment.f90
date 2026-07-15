@@ -18,8 +18,8 @@ module entrainment
     implicit none
 
     private
-    public :: initialize_entrainment, apply_entrainment
-    public :: ent_rate, n_blob, psigma, random_entrainment
+    public :: initialize_entrainment, apply_entrainment, get_entrainment_params
+    public :: ent_rate, n_blob, psigma, random_entrainment, time_varying_entrainment
 
     ! --- &ENTRAINMENT namelist variables ---
     real(dp) :: ent_rate = 2.0       ! fractional entrainment rate [1/m]
@@ -30,12 +30,37 @@ module entrainment
     ! --- Entrainment timing ---
     real(dp) :: t_next_entrain = 0.0 ! time of next entrainment event [s]
 
+    ! --- Optional time-varying schedule (parcel input v3) ---
+    ! When time_varying_entrainment is set, ent_rate/n_blob/psigma above hold the
+    ! value active at the current time, refreshed from these per-segment arrays by
+    ! get_entrainment_params. The schedule shares the parcel velocity time axis.
+    logical :: time_varying_entrainment = .false.
+    integer(i4) :: n_ent_segments = 0
+    real(dp), allocatable :: sched_times(:)
+    real(dp), allocatable :: sched_ent_rate(:)
+    integer(i4), allocatable :: sched_n_blob(:)
+    real(dp), allocatable :: sched_psigma(:)
+
+    ! Maximum blobs per event; sizes the blob arrays in apply_entrainment and
+    ! bounds n_blob during validation.
+    integer(i4), parameter :: max_blobs = 10
+
 contains
 
     ! Read &ENTRAINMENT namelist, validate parameters, and schedule the first event.
-    subroutine initialize_entrainment(vel)
+    !
+    ! The schedule arguments are optional: when supplied (parcel input v3), the
+    ! per-segment arrays make ent_rate/n_blob/psigma time-varying and override the
+    ! namelist scalars (random_entrainment is always taken from the namelist). When
+    ! absent, the namelist scalars are used unchanged for the whole run.
+    subroutine initialize_entrainment(vel, sched_times_in, sched_ent_rate_in, &
+                                      sched_n_blob_in, sched_psigma_in)
         real(dp), intent(in) :: vel  ! current parcel/eddy velocity [m/s]
-        integer :: nml_unit, ierr
+        real(dp), intent(in), optional :: sched_times_in(:)     ! segment start times [s]
+        real(dp), intent(in), optional :: sched_ent_rate_in(:)  ! ent_rate per segment [1/m]
+        integer(i4), intent(in), optional :: sched_n_blob_in(:) ! n_blob per segment
+        real(dp), intent(in), optional :: sched_psigma_in(:)    ! psigma per segment
+        integer :: nml_unit, ierr, i
         character(256) :: nml_line, io_emsg
 
         namelist /ENTRAINMENT/ ent_rate, n_blob, psigma, random_entrainment
@@ -50,22 +75,38 @@ contains
         if (ierr /= 0) call namelist_read_error(nml_unit, 'ENTRAINMENT')
         close(nml_unit)
 
-        if (psigma <= 0.0 .or. psigma >= 1.0) then
-            write(error_unit,*) 'Error: psigma must be in (0, 1), got: ', psigma
-            call exit(1)
+        ! --- Optional time-varying schedule (parcel input v3) ---
+        if (present(sched_times_in)) then
+            time_varying_entrainment = .true.
+            n_ent_segments = size(sched_times_in)
+            allocate(sched_times(n_ent_segments), sched_ent_rate(n_ent_segments), &
+                     sched_n_blob(n_ent_segments), sched_psigma(n_ent_segments))
+            sched_times    = sched_times_in
+            sched_ent_rate = sched_ent_rate_in
+            sched_n_blob   = sched_n_blob_in
+            sched_psigma   = sched_psigma_in
         end if
-        if (psigma * n_blob >= 1.0) then
-            write(error_unit,*) 'Error: psigma * n_blob must be < 1'
-            call exit(1)
-        end if
-        if (ent_rate <= 0.0) then
-            write(error_unit,*) 'Error: ent_rate must be > 0, got: ', ent_rate
-            call exit(1)
+
+        ! --- Validate (every segment when time-varying, else the scalars) ---
+        if (time_varying_entrainment) then
+            do i = 1, n_ent_segments
+                call validate_entrainment_params(sched_ent_rate(i), sched_n_blob(i), &
+                                                 sched_psigma(i))
+            end do
+            ! Seed current values from the first (t=0) segment before scheduling.
+            ent_rate = sched_ent_rate(1)
+            n_blob   = sched_n_blob(1)
+            psigma   = sched_psigma(1)
+        else
+            call validate_entrainment_params(ent_rate, n_blob, psigma)
         end if
 
         t_next_entrain = compute_dt_entm(vel)
 
         write(*,*) 'entrainment:       ON'
+        if (time_varying_entrainment) then
+            write(*,*) '  schedule:        time-varying (', n_ent_segments, ' segments)'
+        end if
         write(*,*) '  ent_rate:        ', ent_rate
         write(*,*) '  n_blob:          ', n_blob
         write(*,*) '  psigma:          ', psigma
@@ -73,6 +114,55 @@ contains
         write(*,*) '  first dt_entm:   ', t_next_entrain, ' s'
 
     end subroutine initialize_entrainment
+
+
+    ! Abort with a message if any entrainment parameter is out of range. Shared by
+    ! the scalar (namelist) and per-segment (v3 schedule) validation paths.
+    subroutine validate_entrainment_params(er, nb, ps)
+        real(dp), intent(in) :: er    ! entrainment rate [1/m]
+        integer(i4), intent(in) :: nb ! number of blobs
+        real(dp), intent(in) :: ps    ! blob fraction
+
+        if (ps <= 0.0 .or. ps >= 1.0) then
+            write(error_unit,*) 'Error: psigma must be in (0, 1), got: ', ps
+            call exit(1)
+        end if
+        if (ps * nb >= 1.0) then
+            write(error_unit,*) 'Error: psigma * n_blob must be < 1, got psigma, n_blob: ', ps, nb
+            call exit(1)
+        end if
+        if (er <= 0.0) then
+            write(error_unit,*) 'Error: ent_rate must be > 0, got: ', er
+            call exit(1)
+        end if
+        if (nb < 1 .or. nb > max_blobs) then
+            write(error_unit,*) 'Error: n_blob must be between 1 and ', max_blobs, ', got: ', nb
+            call exit(1)
+        end if
+
+    end subroutine validate_entrainment_params
+
+
+    ! Refresh ent_rate/n_blob/psigma to the segment active at query_time
+    ! (piecewise-constant; structural twin of parcel's get_velocity). No-op when
+    ! the schedule is not time-varying, leaving the namelist scalars in place.
+    subroutine get_entrainment_params(query_time)
+        real(dp), intent(in) :: query_time   ! simulation time (s)
+        integer :: i
+
+        if (.not. time_varying_entrainment) return
+
+        ent_rate = sched_ent_rate(1)
+        n_blob   = sched_n_blob(1)
+        psigma   = sched_psigma(1)
+        do i = 2, n_ent_segments
+            if (query_time < sched_times(i)) exit
+            ent_rate = sched_ent_rate(i)
+            n_blob   = sched_n_blob(i)
+            psigma   = sched_psigma(i)
+        end do
+
+    end subroutine get_entrainment_params
 
 
     ! Execute one entrainment event if the scheduled time has been reached.
@@ -89,12 +179,15 @@ contains
         real(dp), intent(in) :: T_env   ! environmental temperature [K]
         real(dp), intent(in) :: qv_env  ! environmental water vapor mixing ratio [kg/kg]
         real(dp), intent(in) :: vel     ! parcel/eddy velocity for timing [m/s]
-        integer, parameter :: max_blobs = 10
         integer :: blob_start(max_blobs), blob_end(max_blobs), n_final
         integer :: i, k
 
         if (abs(vel) < 1.0e-30) return
         if (time < t_next_entrain) return
+
+        ! Refresh ent_rate/n_blob/psigma for the current time so both this event
+        ! and the next-event interval (compute_dt_entm below) use active values.
+        call get_entrainment_params(time)
 
         call place_blobs(blob_start, blob_end, n_final)
 

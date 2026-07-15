@@ -130,6 +130,8 @@ Required when `simulation_mode = 'parcel'` and `do_entrainment = .true.` Mixes e
 | `psigma` | real | fraction | `0.1` | Blob size as a fraction of the domain (per blob). |
 | `random_entrainment` | logical | — | `.true.` | Poisson-randomize entrainment event timing (vs. regular intervals). |
 
+`ent_rate`, `n_blob`, and `psigma` can instead be made **time-varying** by providing per-segment arrays in a v3 `parcel_file` (`CODT_parcel_input_v3`). When present, those arrays override the constant values here (on the velocity time axis, piecewise-constant); `random_entrainment` always comes from this namelist. See [Data Formats](data_formats.md#parcel-input--codt_parcel_input_v1--v2--v3).
+
 ---
 
 ## `&RADIATION` — radiative transfer

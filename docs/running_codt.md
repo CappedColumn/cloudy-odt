@@ -249,9 +249,9 @@ A checklist of the things that most often bite when running by hand:
    mode (ignored) or forgetting `parcel_file` in parcel mode (fatal) are classic
    mistakes — confirm `simulation_mode` matches the groups you filled in.
 9. **A parameter in the wrong namelist group is rejected** ("Invalid parameter in
-   `&GROUP`"). Notably: `do_entrainment` lives in `&PARAMETERS`, `pressure_limit` in
-   `&PARCEL`, and `ent_rate`/`n_blob`/`psigma`/`random_entrainment` in the standalone
-   `&ENTRAINMENT`.
+   `&GROUP`"). Notably: `do_entrainment` lives in `&PARAMETERS`, `pressure_limit`/
+   `pressure_mode`/`vertical_axis` in `&PARCEL`, and `ent_rate`/`n_blob`/`psigma`/
+   `random_entrainment` in the standalone `&ENTRAINMENT` (`ent_rate` in **1/km**).
 10. **`radiation_method` is `'1d'` or `'3d'`** (two-stream vs. Monte Carlo) — not
     `'two_stream'`.
 11. **Cross-setting warnings won't stop the run but signal a likely mistake:**

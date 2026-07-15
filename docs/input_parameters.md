@@ -113,9 +113,11 @@ Required in **parcel** mode (`simulation_mode = 'parcel'`).
 
 | Parameter | Type | Units | Default | Description |
 |-----------|------|-------|---------|-------------|
-| `parcel_file` | string | — | **— (required)** | NetCDF file of piecewise-constant vertical velocity segments that drive the ascent (and the environmental profile when entraining). |
+| `parcel_file` | string | — | **— (required)** | NetCDF file of piecewise-constant vertical velocity segments that drive the ascent (and the environmental profile: entrainment for v2, always for v3). |
 | `initial_RH` | real | fraction (0–1) | `1.0` | Initial relative humidity; sets the initial water-vapor field. |
 | `pressure_limit` | real | Pa | `0.0` | Stop the simulation when pressure reaches this target. `0.0` disables the limit. |
+| `vertical_axis` | string | — | `'height'` | v3 only: whether the file's `segment_coord` values are heights (`'height'`, m) or pressures (`'pressure'`, Pa). Ignored for v1/v2 (segments are in time). |
+| `pressure_mode` | string | — | `'hydrostatic'` | Parcel pressure evolution. `'hydrostatic'`: self-integrate dp = −ρ·g·w·dt (v1/v2 behavior). `'environment'` (v3 only): follow the sounding's p(z) at the parcel's height, with adiabatic dT from the actual dp. |
 
 ---
 
@@ -125,12 +127,14 @@ Required when `simulation_mode = 'parcel'` and `do_entrainment = .true.` Mixes e
 
 | Parameter | Type | Units | Default | Description |
 |-----------|------|-------|---------|-------------|
-| `ent_rate` | real | m⁻¹ | `2.0` | Fractional entrainment rate. |
+| `ent_rate` | real | **km⁻¹** | `2.0` | Fractional entrainment rate (converted to 1/m internally). |
 | `n_blob` | integer | — | `1` | Number of blobs per entrainment event. |
 | `psigma` | real | fraction | `0.1` | Blob size as a fraction of the domain (per blob). |
 | `random_entrainment` | logical | — | `.true.` | Poisson-randomize entrainment event timing (vs. regular intervals). |
 
-`ent_rate`, `n_blob`, and `psigma` can instead be made **time-varying** by providing per-segment arrays in a v3 `parcel_file` (`CODT_parcel_input_v3`). When present, those arrays override the constant values here (on the velocity time axis, piecewise-constant); `random_entrainment` always comes from this namelist. See [Data Formats](data_formats.md#parcel-input--codt_parcel_input_v1--v2--v3).
+> **Unit change:** `ent_rate` was in 1/m before v3; it is now specified in **1/km** everywhere at the interface (namelist, v3 parcel file, output).
+
+`ent_rate`, `n_blob`, and `psigma` can instead be made **vertically varying** by providing per-segment arrays in a v3 `parcel_file` (`CODT_parcel_input_v3`, on the height/pressure segment coordinate). When present, those arrays override the constant values here; `random_entrainment` always comes from this namelist. See [Data Formats](data_formats.md#parcel-input--codt_parcel_input_v1--v2--v3).
 
 ---
 

@@ -39,7 +39,7 @@ initial_RH = 1.0
 
 &ENTRAINMENT
 
-ent_rate = 2.0             ! fractional entrainment rate (1/m)
+ent_rate = 2.0             ! fractional entrainment rate (1/km)
 n_blob = 1                 ! number of blobs per entrainment event
 psigma = 0.1               ! blob fraction of domain per blob
 random_entrainment = .true. ! Poisson-randomize entrainment timing

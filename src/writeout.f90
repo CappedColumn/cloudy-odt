@@ -17,7 +17,8 @@ module writeout
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
-                      parcel_file, initial_RH, pressure_limit
+                      parcel_file, initial_RH, pressure_limit, &
+                      pressure_mode, parcel_height_env, write_height_env
     use entrainment, only: ent_rate, n_blob, psigma, random_entrainment, &
                            time_varying_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
@@ -53,6 +54,8 @@ module writeout
     integer :: varid_micro_budgets(n_micro_budgets)
     integer :: varid_entrain_budgets(n_entrain_budgets)
     integer :: varid_parcel_height, varid_parcel_pressure, varid_parcel_velocity
+    integer :: varid_parcel_height_env
+    real(dp), allocatable :: buffer_parcel_height_env(:)
 
     ! Parcel ascent buffers
     real(dp), allocatable :: buffer_parcel_height(:), buffer_parcel_pressure(:), buffer_parcel_velocity(:)
@@ -145,6 +148,10 @@ contains
             buffer_parcel_height = 0.
             buffer_parcel_pressure = 0.
             buffer_parcel_velocity = 0.
+            if (write_height_env) then
+                allocate(buffer_parcel_height_env(buff_len))
+                buffer_parcel_height_env = 0.
+            end if
         end if
 
         if (do_entrainment) then
@@ -185,6 +192,7 @@ contains
         if (allocated(buffer_rad_heating_rate)) deallocate(buffer_rad_heating_rate)
         if (allocated(buffer_rad_budget)) deallocate(buffer_rad_budget)
         if (allocated(buffer_entrain_budgets)) deallocate(buffer_entrain_budgets)
+        if (allocated(buffer_parcel_height_env)) deallocate(buffer_parcel_height_env)
         if (allocated(buffer_ent_rate)) deallocate(buffer_ent_rate)
         if (allocated(buffer_n_blob)) deallocate(buffer_n_blob)
         if (allocated(buffer_psigma)) deallocate(buffer_psigma)
@@ -222,6 +230,9 @@ contains
                 buffer_parcel_height(buffer_count) = parcel_height
                 buffer_parcel_pressure(buffer_count) = pres / Pa_per_mb
                 buffer_parcel_velocity(buffer_count) = parcel_velocity
+                if (write_height_env) then
+                    buffer_parcel_height_env(buffer_count) = parcel_height_env
+                end if
             end if
             if (do_entrainment) then
                 buffer_entrain_budgets(1, buffer_count) = budget_detrain_liquid_mass
@@ -232,7 +243,7 @@ contains
                 buffer_entrain_budgets(6, buffer_count) = real(budget_n_entrained, dp)
             end if
             if (do_entrainment .and. time_varying_entrainment) then
-                buffer_ent_rate(buffer_count) = ent_rate
+                buffer_ent_rate(buffer_count) = ent_rate * m_per_km   ! 1/m -> 1/km
                 buffer_n_blob(buffer_count) = n_blob
                 buffer_psigma(buffer_count) = psigma
             end if
@@ -511,6 +522,20 @@ contains
                             "nf90_put_att: parcel_velocity, name" )
             call nc_verify( nf90_put_att(lncid, varid_parcel_velocity, "units", "m/s"), &
                             "nf90_put_att: parcel_velocity, units" )
+
+            ! Diagnostic (v3 + hydrostatic pressure_mode): environment height at
+            ! the parcel's pressure; drift from parcel_height measures how far the
+            ! self-integrated pressure has left the sounding's p(z) curve.
+            if (write_height_env) then
+                call nc_verify( nf90_def_var(lncid, "parcel_height_env", NF90_FLOAT, t_dimid, &
+                                varid_parcel_height_env, deflate_level=1, shuffle=.true.), &
+                                "nf90_def_var: parcel_height_env" )
+                call nc_verify( nf90_put_att(lncid, varid_parcel_height_env, "long_name", &
+                                "Environment Height at Parcel Pressure"), &
+                                "nf90_put_att: parcel_height_env, name" )
+                call nc_verify( nf90_put_att(lncid, varid_parcel_height_env, "units", "m"), &
+                                "nf90_put_att: parcel_height_env, units" )
+            end if
         end if
 
         ! Time-varying entrainment parameter series (active value each output step)
@@ -520,7 +545,7 @@ contains
                             "nf90_def_var: ent_rate" )
             call nc_verify( nf90_put_att(lncid, varid_ent_rate, "long_name", &
                             "Entrainment Rate"), "nf90_put_att: ent_rate, name" )
-            call nc_verify( nf90_put_att(lncid, varid_ent_rate, "units", "1/m"), &
+            call nc_verify( nf90_put_att(lncid, varid_ent_rate, "units", "1/km"), &
                             "nf90_put_att: ent_rate, units" )
 
             call nc_verify( nf90_def_var(lncid, "n_blob", NF90_INT, t_dimid, &
@@ -646,6 +671,10 @@ contains
                             buffer_parcel_pressure(1:buffer_count), start=(/nc_write_iter/)) )
             call nc_verify( nf90_put_var(lncid, varid_parcel_velocity, &
                             buffer_parcel_velocity(1:buffer_count), start=(/nc_write_iter/)) )
+            if (write_height_env) then
+                call nc_verify( nf90_put_var(lncid, varid_parcel_height_env, &
+                                buffer_parcel_height_env(1:buffer_count), start=(/nc_write_iter/)) )
+            end if
         end if
 
         if (do_entrainment .and. time_varying_entrainment) then
@@ -723,12 +752,14 @@ contains
         if (simulation_mode == 'parcel') then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.parcel_file", trim(parcel_file)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_RH", initial_RH) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_mode", trim(pressure_mode)) )
             if (pressure_limit > 0.0) &
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_limit", pressure_limit) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_entrainment", &
                             merge(1, 0, do_entrainment)) )
             if (do_entrainment) then
-                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.ent_rate", ent_rate) )
+                ! ent_rate attribute in 1/km, matching the namelist/file interface
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.ent_rate", ent_rate * m_per_km) )
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.n_blob", n_blob) )
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.psigma", psigma) )
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.random_entrainment", &

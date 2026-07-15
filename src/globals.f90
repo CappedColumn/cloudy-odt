@@ -33,7 +33,15 @@ module globals
     integer, parameter :: i2 = selected_int_kind(4)
     !> Length of default integers, range -2³¹ to 2³¹-1; 32 bits
     integer, parameter :: i4 = selected_int_kind(9)
-    
+
+    ! ------ Segment-axis identifiers ----------------
+    ! Coordinate a piecewise-constant parcel schedule (velocity, entrainment)
+    ! is defined on: time (parcel input v1/v2), or height/pressure (v3).
+    ! Shared here so parcel and entrainment agree without a circular use.
+    integer(i4), parameter :: AXIS_TIME = 1     ! seconds, ascending
+    integer(i4), parameter :: AXIS_HEIGHT = 2   ! metres, ascending
+    integer(i4), parameter :: AXIS_PRESSURE = 3 ! Pa, descending
+
     ! -----------------------------------------------
     ! -----------------------------------------------
 
@@ -87,6 +95,7 @@ module globals
     real(dp), parameter :: g_per_kg = 1e3
     real(dp), parameter :: kg_per_g = 1e-3
     real(dp), parameter :: Pa_per_mb = 100.0
+    real(dp), parameter :: m_per_km = 1e3
 
     character(256) :: namelist_path    ! Path to namelist file (set from command line)
     character(256) :: namelist_dir     ! Parent directory of namelist file (for resolving relative paths)

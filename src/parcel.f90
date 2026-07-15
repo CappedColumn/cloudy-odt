@@ -1,9 +1,12 @@
-! Parcel-mode forcing: drives an adiabatically ascending air parcel (LEM mode).
-! Reads a piecewise-constant vertical-velocity profile from a NetCDF parcel file,
-! and each step lifts the parcel, drops its pressure hydrostatically, and cools it
-! at the (moist-weighted) dry adiabatic rate. Optionally stops at pressure_limit.
-! When do_entrainment is set, also owns the environmental sounding (env_*) and
-! feeds interpolated environmental air to the entrainment module.
+! Parcel-mode forcing: drives an adiabatic air parcel (LEM mode) along a
+! waypoint trajectory read from a v3 parcel NetCDF file. The trajectory is an
+! ordered sequence of legs — "proceed to this level at this signed velocity" —
+! so ascent histories that revisit levels (up, down, up again) are expressible.
+! Completing the final leg ends the simulation (trajectory_complete). Pressure
+! evolves per pressure_mode (hydrostatic self-integration, or following the
+! sounding's p(z)). When present, the module also owns the environmental
+! sounding (env_*) and feeds interpolated environmental air to the entrainment
+! module. Support for the time-based v1/v2 parcel inputs was removed.
 module parcel
     use globals
     use netcdf
@@ -15,58 +18,72 @@ module parcel
     public :: initialize_parcel, apply_adiabatic_forcing, apply_parcel_entrainment, &
               do_parcel_ascent, parcel_height, parcel_velocity, &
               parcel_file, initial_RH, pressure_limit, pressure_limit_reached, &
-              pressure_mode, parcel_height_env, write_height_env
+              pressure_mode, parcel_height_env, write_height_env, &
+              initial_height, trajectory_complete, vertical_axis
 
     ! --- PARCEL namelist variables ---
     character(512) :: parcel_file = ''
     real(dp) :: initial_RH = 1.0
     real(dp) :: pressure_limit = 0.0
-    ! Pressure evolution: 'hydrostatic' integrates dp = -rho_parcel*g*w*dt (v1/v2
-    ! behavior); 'environment' (v3 only) sets pres = p_env(parcel_height) from the
-    ! sounding, so the parcel stays on the environment's pressure-height curve.
+    ! Pressure evolution: 'hydrostatic' integrates dp = -rho_parcel*g*w*dt;
+    ! 'environment' sets pres = p_env(parcel_height) from the sounding, so the
+    ! parcel stays on the environment's pressure-height curve (requires the
+    ! sounding; initial pres is then taken from p_env(initial_height)).
     character(16) :: pressure_mode = 'hydrostatic'
-    ! v3 only: which vertical coordinate the file's segment_coord values are on
-    ! ('height' [m] or 'pressure' [Pa]); governs velocity/entrainment segment
-    ! changes. Ignored for v1/v2 (their segments are in time).
+    ! Which vertical coordinate the file's segment_coord (leg target) values are
+    ! on: 'height' [m] or 'pressure' [Pa].
     character(16) :: vertical_axis = 'height'
+    ! Launch height of the parcel [m] (leg-1 direction is validated against it;
+    ! on the pressure axis the launch level is the initial pres instead).
+    real(dp) :: initial_height = 0.0
 
-    ! --- Velocity segments ---
-    ! Piecewise-constant velocity on segment_coords, whose meaning is set by
-    ! segment_axis: time [s] for input v1/v2, height [m] or pressure [Pa] for v3.
-    integer(i4) :: n_segments
-    integer(i4) :: segment_axis = AXIS_TIME
-    real(dp), allocatable :: segment_coords(:)
-    real(dp), allocatable :: segment_velocity(:)
+    ! --- Trajectory legs ---
+    ! Leg i: move toward leg_target(i) at signed leg_velocity(i). The active leg
+    ! advances when its target is reached; completing the last leg sets
+    ! trajectory_complete, which ends the run (main-loop exit, like
+    ! pressure_limit_reached).
+    integer(i4) :: n_legs
+    integer(i4) :: leg_axis = AXIS_HEIGHT
+    integer(i4) :: current_leg = 1
+    real(dp), allocatable :: leg_target(:)
+    real(dp), allocatable :: leg_velocity(:)
+    logical :: trajectory_complete = .false.
 
     ! --- Parcel state ---
     real(dp) :: parcel_height   = 0.0
     real(dp) :: parcel_velocity = 0.0
     logical  :: do_parcel_ascent = .false.
     logical  :: pressure_limit_reached = .false.
-    ! Diagnostic: environment height at the parcel's current pressure (v3 +
-    ! hydrostatic mode). Its drift from parcel_height quantifies how far the
-    ! self-integrated pressure has left the sounding's p(z) curve.
+    ! Diagnostic: environment height at the parcel's current pressure
+    ! (hydrostatic mode with a sounding). Its drift from parcel_height
+    ! quantifies how far the self-integrated pressure has left the sounding's
+    ! p(z) curve.
     real(dp) :: parcel_height_env = 0.0
     logical  :: write_height_env = .false.
 
-    ! --- Environmental profile (v3: always required; v2: entrainment only) ---
+    ! --- Environmental sounding (optional) ---
+    ! Required when do_entrainment or pressure_mode = 'environment'; a bare
+    ! adiabatic hydrostatic parcel runs without one.
+    logical :: have_sounding = .false.
     integer(i4) :: n_env_levels
     real(dp), allocatable :: env_pressure(:)
     real(dp), allocatable :: env_temperature(:)
     real(dp), allocatable :: env_RH(:)
-    real(dp), allocatable :: env_height(:)   ! v3 only
+    real(dp), allocatable :: env_height(:)
 
 contains
 
     subroutine initialize_parcel()
-        ! Reads &PARCEL, sets the uniform initial parcel state (T = Tref, WV from
-        ! initial_RH at saturation), then loads the velocity profile (and, if
-        ! entraining, the environmental sounding) from the parcel NetCDF file.
+        ! Reads &PARCEL, loads the trajectory (and sounding, if present) from the
+        ! parcel NetCDF file, then sets the uniform initial parcel state
+        ! (T = Tref, WV from initial_RH at saturation). The file is read before
+        ! the state init so that pressure_mode = 'environment' can place the
+        ! initial pressure on the sounding at initial_height.
         integer :: nml_unit, ierr, i
         character(256) :: nml_line, io_emsg
 
         namelist /PARCEL/ parcel_file, initial_RH, pressure_limit, pressure_mode, &
-                          vertical_axis
+                          vertical_axis, initial_height
 
         ! --- Read PARCEL namelist ---
         write(*,*) 'Reading PARCEL namelist values...'
@@ -95,7 +112,14 @@ contains
             call exit(1)
         end if
 
-        ! --- Initialize parcel arrays ---
+        parcel_height = initial_height
+
+        ! --- Read parcel input file (legs, sounding, entrainment schedule) ---
+        if (parcel_file /= '') then
+            call read_parcel_file(resolve_path(namelist_dir, parcel_file))
+        end if
+
+        ! --- Initialize parcel state (pres is final here in both modes) ---
         T(:) = Tref
         WV(:) = initial_RH * saturation_mixing_ratio(Tref, pres)
         do i = 1, N
@@ -103,18 +127,14 @@ contains
         end do
         call update_supersat(T, WV, SS, pres)
 
-        ! --- Read parcel input file ---
-        if (parcel_file /= '') then
-            call read_parcel_file(resolve_path(namelist_dir, parcel_file))
-        end if
-
     end subroutine initialize_parcel
 
 
     subroutine read_parcel_file(filepath)
         character(*), intent(in) :: filepath
-        integer :: dyn_ncid, varid, dimid, i
+        integer :: dyn_ncid, varid, ierr, dimid
         character(64) :: conventions
+        logical :: need_sounding
 
         write(*,*) 'Reading parcel data from: ', trim(filepath)
 
@@ -123,85 +143,72 @@ contains
         call nc_verify(nf90_get_att(dyn_ncid, NF90_GLOBAL, 'conventions', conventions), &
                        'reading conventions attribute')
 
-        if (trim(conventions) /= 'CODT_parcel_input_v1' .and. &
-            trim(conventions) /= 'CODT_parcel_input_v2' .and. &
-            trim(conventions) /= 'CODT_parcel_input_v3') then
-            write(error_unit,*) 'Error: expected CODT_parcel_input_v1, v2 or v3, got: ', trim(conventions)
+        if (trim(conventions) /= 'CODT_parcel_input_v3') then
+            write(error_unit,*) 'Error: expected CODT_parcel_input_v3, got: ', &
+                trim(conventions)
+            write(error_unit,*) '  (v1/v2 parcel inputs are no longer supported; ' // &
+                'regenerate the file in the v3 waypoint format)'
             call exit(1)
         end if
 
-        ! --- Segment coordinate + velocity ---
-        ! v1/v2: piecewise-constant velocity in time. v3: velocity (and the
-        ! optional entrainment schedule) on a vertical coordinate — exactly one
-        ! of 'height' [m, ascending] or 'pressure' [Pa, descending].
+        ! --- Trajectory legs ---
         call nc_verify(nf90_inq_dimid(dyn_ncid, 'segment', dimid), 'finding segment dim')
-        call nc_verify(nf90_inquire_dimension(dyn_ncid, dimid, len=n_segments), 'reading segment dim')
+        call nc_verify(nf90_inquire_dimension(dyn_ncid, dimid, len=n_legs), 'reading segment dim')
 
         ! Allow re-initialization (unit tests exercise multiple configurations)
-        if (allocated(segment_coords)) deallocate(segment_coords, segment_velocity)
+        if (allocated(leg_target)) deallocate(leg_target, leg_velocity)
 
-        allocate(segment_coords(n_segments))
-        if (trim(conventions) == 'CODT_parcel_input_v3') then
-            ! The &PARCEL vertical_axis says whether segment_coord holds heights
-            ! [m] or pressures [Pa]; the sounding always carries both env_height
-            ! and env_pressure.
-            if (trim(vertical_axis) == 'pressure') then
-                segment_axis = AXIS_PRESSURE
-            else
-                segment_axis = AXIS_HEIGHT
-            end if
-            call nc_verify(nf90_inq_varid(dyn_ncid, 'segment_coord', varid), &
-                           'finding segment_coord')
-            call nc_verify(nf90_get_var(dyn_ncid, varid, segment_coords), &
-                           'reading segment_coord')
+        allocate(leg_target(n_legs), leg_velocity(n_legs))
+
+        if (trim(vertical_axis) == 'pressure') then
+            leg_axis = AXIS_PRESSURE
         else
-            segment_axis = AXIS_TIME
-            call nc_verify(nf90_inq_varid(dyn_ncid, 'time', varid), 'finding time')
-            call nc_verify(nf90_get_var(dyn_ncid, varid, segment_coords), 'reading time')
+            leg_axis = AXIS_HEIGHT
         end if
-
-        allocate(segment_velocity(n_segments))
+        call nc_verify(nf90_inq_varid(dyn_ncid, 'segment_coord', varid), &
+                       'finding segment_coord')
+        call nc_verify(nf90_get_var(dyn_ncid, varid, leg_target), &
+                       'reading segment_coord')
         call nc_verify(nf90_inq_varid(dyn_ncid, 'velocity', varid), 'finding velocity')
-        call nc_verify(nf90_get_var(dyn_ncid, varid, segment_velocity), 'reading velocity')
+        call nc_verify(nf90_get_var(dyn_ncid, varid, leg_velocity), 'reading velocity')
 
-        call validate_segment_coords()
-
-        if (trim(pressure_mode) == 'environment' .and. &
-            trim(conventions) /= 'CODT_parcel_input_v3') then
-            write(error_unit,*) "Error: pressure_mode = 'environment' requires a v3 parcel file"
+        ! --- Optional environmental sounding ---
+        ierr = nf90_inq_varid(dyn_ncid, 'env_pressure', varid)
+        have_sounding = (ierr == NF90_NOERR)
+        need_sounding = do_entrainment .or. trim(pressure_mode) == 'environment'
+        if (need_sounding .and. .not. have_sounding) then
+            write(error_unit,*) 'Error: the parcel file has no environmental sounding ' // &
+                '(env_height/env_pressure/env_temperature/env_RH), which is required ' // &
+                "when do_entrainment = .true. or pressure_mode = 'environment'"
             call exit(1)
         end if
+        if (have_sounding) call load_env_profile(dyn_ncid)
 
-        do_parcel_ascent = .true.
-        parcel_velocity = segment_velocity(1)
-
-        ! --- Environmental profile ---
-        ! v3 always carries the sounding (env_height/pressure/temperature/RH):
-        ! pressure_mode = 'environment' needs p(z) even without entrainment, and
-        ! the parcel_height_env diagnostic needs it in hydrostatic mode.
-        ! v2 carries it only for entrainment.
-        if (trim(conventions) == 'CODT_parcel_input_v3') then
-            call load_env_profile(dyn_ncid, require_height=.true.)
-            write_height_env = (trim(pressure_mode) == 'hydrostatic')
-            if (do_entrainment) call load_entrainment_schedule(dyn_ncid)
-        else if (do_entrainment) then
-            if (trim(conventions) /= 'CODT_parcel_input_v2') then
-                write(error_unit,*) 'Error: do_entrainment requires CODT_parcel_input_v2 or v3'
-                call exit(1)
-            end if
-            call load_env_profile(dyn_ncid, require_height=.false.)
-            call initialize_entrainment(parcel_velocity)
+        ! In environment mode the parcel starts on the sounding's p(z) curve.
+        if (trim(pressure_mode) == 'environment') then
+            pres = interp_profile(env_height, env_pressure, initial_height)
         end if
+        write_height_env = have_sounding .and. trim(pressure_mode) == 'hydrostatic'
+
+        call validate_legs()
+
+        current_leg = 1
+        trajectory_complete = .false.
+        do_parcel_ascent = .true.
+        parcel_velocity = leg_velocity(1)
+
+        if (do_entrainment) call load_entrainment_schedule(dyn_ncid)
 
         call nc_verify(nf90_close(dyn_ncid), 'closing parcel file')
 
         ! --- Log ---
         write(*,*) '--- Parcel Configuration ---'
-        write(*,*) 'n_segments:        ', n_segments
-        write(*,'(a,f8.2,a)')  '  initial velocity:  ', segment_velocity(1), ' m/s'
+        write(*,*) 'trajectory legs:   ', n_legs
+        write(*,'(a,f8.2,a)')  '  initial velocity:  ', leg_velocity(1), ' m/s'
+        write(*,'(a,f8.1,a)')  '  initial height:    ', parcel_height, ' m'
         write(*,'(a,f8.1,a)')  '  initial pressure:  ', pres / Pa_per_mb, ' mb'
         write(*,'(a,f8.3)')    '  initial RH:        ', initial_RH
-        if (do_entrainment) then
+        if (have_sounding) then
             write(*,*) '  env levels:      ', n_env_levels
         end if
         write(*,*) '----------------------------'
@@ -209,41 +216,51 @@ contains
     end subroutine read_parcel_file
 
 
-    subroutine validate_segment_coords()
-        ! Time starts at 0; all axes must be strictly monotonic (time/height
-        ! increasing, pressure decreasing). Height and pressure need not start
-        ! at the parcel's launch value — lookups clamp, so the first segment
-        ! covers everything on its side of the profile.
+    subroutine validate_legs()
+        ! Each leg's signed velocity must point from the previous level (the
+        ! launch level for leg 1) toward its target: on the height axis "up"
+        ! means target > previous and requires velocity > 0; on the pressure
+        ! axis "up" means target < previous (pressure falls with ascent) and
+        ! also requires velocity > 0. Zero velocity or a target equal to the
+        ! previous level can never complete and is rejected.
+        real(dp) :: prev, toward
         integer :: i
 
-        select case (segment_axis)
-        case (AXIS_PRESSURE)
-            do i = 2, n_segments
-                if (segment_coords(i) >= segment_coords(i-1)) then
-                    write(error_unit,*) 'Error: segment pressures must be strictly decreasing'
-                    call exit(1)
-                end if
-            end do
-        case default   ! AXIS_TIME, AXIS_HEIGHT
-            if (segment_axis == AXIS_TIME .and. abs(segment_coords(1)) > 1.0e-10) then
-                write(error_unit,*) 'Error: first segment time must be 0, got: ', &
-                    segment_coords(1)
+        if (leg_axis == AXIS_PRESSURE) then
+            prev = pres
+        else
+            prev = initial_height
+        end if
+
+        do i = 1, n_legs
+            if (leg_velocity(i) == 0.0) then
+                write(error_unit,*) 'Error: leg ', i, ' has zero velocity ' // &
+                    '(the leg could never complete)'
                 call exit(1)
             end if
-            do i = 2, n_segments
-                if (segment_coords(i) <= segment_coords(i-1)) then
-                    write(error_unit,*) 'Error: segment coordinates must be strictly increasing'
-                    call exit(1)
-                end if
-            end do
-        end select
+            if (leg_target(i) == prev) then
+                write(error_unit,*) 'Error: leg ', i, ' target equals the previous level: ', prev
+                call exit(1)
+            end if
+            ! Upward displacement is positive on the height axis, negative on
+            ! the pressure axis.
+            toward = leg_target(i) - prev
+            if (leg_axis == AXIS_PRESSURE) toward = -toward
+            if (toward * leg_velocity(i) < 0.0) then
+                write(error_unit,*) 'Error: leg ', i, ' velocity ', leg_velocity(i), &
+                    ' points away from its target ', leg_target(i), ' (previous level ', prev, ')'
+                call exit(1)
+            end if
+            prev = leg_target(i)
+        end do
 
-    end subroutine validate_segment_coords
+    end subroutine validate_legs
 
 
-    subroutine load_env_profile(lncid, require_height)
+    subroutine load_env_profile(lncid)
+        ! Loads the full sounding: env_height, env_pressure, env_temperature,
+        ! env_RH (all required together).
         integer, intent(in) :: lncid
-        logical, intent(in) :: require_height   ! v3: sounding must carry env_height
         integer :: varid, dimid, i
 
         call nc_verify(nf90_inq_dimid(lncid, 'level', dimid), 'finding level dim')
@@ -256,6 +273,7 @@ contains
         allocate(env_pressure(n_env_levels))
         allocate(env_temperature(n_env_levels))
         allocate(env_RH(n_env_levels))
+        allocate(env_height(n_env_levels))
 
         call nc_verify(nf90_inq_varid(lncid, 'env_pressure', varid), 'finding env_pressure')
         call nc_verify(nf90_get_var(lncid, varid, env_pressure), 'reading env_pressure')
@@ -266,33 +284,27 @@ contains
         call nc_verify(nf90_inq_varid(lncid, 'env_RH', varid), 'finding env_RH')
         call nc_verify(nf90_get_var(lncid, varid, env_RH), 'reading env_RH')
 
+        call nc_verify(nf90_inq_varid(lncid, 'env_height', varid), 'finding env_height')
+        call nc_verify(nf90_get_var(lncid, varid, env_height), 'reading env_height')
+
         do i = 2, n_env_levels
             if (env_pressure(i) >= env_pressure(i-1)) then
                 write(error_unit,*) 'Error: env_pressure must be monotonically decreasing'
                 call exit(1)
             end if
+            if (env_height(i) <= env_height(i-1)) then
+                write(error_unit,*) 'Error: env_height must be monotonically increasing'
+                call exit(1)
+            end if
         end do
-
-        if (require_height) then
-            allocate(env_height(n_env_levels))
-            call nc_verify(nf90_inq_varid(lncid, 'env_height', varid), 'finding env_height')
-            call nc_verify(nf90_get_var(lncid, varid, env_height), 'reading env_height')
-            do i = 2, n_env_levels
-                if (env_height(i) <= env_height(i-1)) then
-                    write(error_unit,*) 'Error: env_height must be monotonically increasing'
-                    call exit(1)
-                end if
-            end do
-        end if
 
     end subroutine load_env_profile
 
 
     subroutine load_entrainment_schedule(lncid)
-        ! Reads the per-segment entrainment parameters (parcel input v3) on the
-        ! shared vertical segment coordinate and hands them to the entrainment
-        ! module. The schedule variables are optional: when absent, the constant
-        ! &ENTRAINMENT namelist values apply for the whole run.
+        ! Reads the optional per-leg entrainment parameters and hands them to
+        ! the entrainment module. When absent, the constant &ENTRAINMENT
+        ! namelist values apply for the whole run.
         ! File ent_rate is in 1/km; internal physics uses 1/m.
         integer, intent(in) :: lncid
         integer :: varid, ierr
@@ -305,8 +317,8 @@ contains
             return
         end if
 
-        allocate(sched_ent_rate(n_segments), sched_n_blob(n_segments), &
-                 sched_psigma(n_segments))
+        allocate(sched_ent_rate(n_legs), sched_n_blob(n_legs), &
+                 sched_psigma(n_legs))
 
         call nc_verify(nf90_get_var(lncid, varid, sched_ent_rate), 'reading ent_rate')
         sched_ent_rate = sched_ent_rate / m_per_km   ! 1/km -> 1/m
@@ -317,53 +329,16 @@ contains
         call nc_verify(nf90_inq_varid(lncid, 'psigma', varid), 'finding psigma')
         call nc_verify(nf90_get_var(lncid, varid, sched_psigma), 'reading psigma')
 
-        call initialize_entrainment(parcel_velocity, segment_axis, segment_coords, &
-                                    sched_ent_rate, sched_n_blob, sched_psigma)
+        call initialize_entrainment(parcel_velocity, sched_ent_rate, sched_n_blob, &
+                                    sched_psigma)
 
     end subroutine load_entrainment_schedule
-
-
-    ! Current value of the segment coordinate for schedule lookups: simulation
-    ! time (v1/v2) or the parcel's height/pressure (v3).
-    pure function parcel_axis_query() result(query)
-        real(dp) :: query
-
-        select case (segment_axis)
-        case (AXIS_HEIGHT)
-            query = parcel_height
-        case (AXIS_PRESSURE)
-            query = pres
-        case default
-            query = time
-        end select
-    end function parcel_axis_query
-
-
-    pure function get_velocity(query) result(vel)
-        ! Piecewise-constant ascent velocity: returns the velocity of the segment
-        ! containing query on the segment axis. Time/height segments are sorted
-        ! ascending, pressure descending; either way segment i spans from
-        ! segment_coords(i) toward segment_coords(i+1).
-        real(dp), intent(in) :: query   ! time [s], height [m], or pressure [Pa]
-        real(dp) :: vel                 ! ascent velocity (m/s)
-        integer :: i
-
-        vel = segment_velocity(1)
-        do i = 2, n_segments
-            if (segment_axis == AXIS_PRESSURE) then
-                if (query > segment_coords(i)) exit
-            else
-                if (query < segment_coords(i)) exit
-            end if
-            vel = segment_velocity(i)
-        end do
-    end function get_velocity
 
 
     pure function interp_profile(coords, values, query) result(v)
         ! Clamped piecewise-linear lookup on a strictly monotonic coordinate
         ! array (ascending, e.g. env_height, or descending, e.g. env_pressure).
-        ! Used both ways on the v3 sounding: p_env(z) = interp_profile(env_height,
+        ! Used both ways on the sounding: p_env(z) = interp_profile(env_height,
         ! env_pressure, z) and z_env(p) = interp_profile(env_pressure, env_height, p).
         real(dp), intent(in) :: coords(:)   ! monotonic coordinate array
         real(dp), intent(in) :: values(:)   ! values on the same levels
@@ -390,25 +365,30 @@ contains
 
 
     subroutine apply_adiabatic_forcing(ldt)
-        ! Advances the parcel one step: raise height, update pressure, and change
-        ! temperature adiabatically. Pressure evolves per pressure_mode:
-        !   'hydrostatic'  — self-integration dp = -rho_parcel*g*w*dt with cooling
-        !                    dT = -(g/cp_moist)*w*dt (v1/v2 behavior, default);
-        !   'environment'  — pres = p_env(parcel_height) from the sounding (v3),
-        !                    with dT = (Rd*Tv/(cp_m*p))*dp from the actual dp
-        !                    (identical to the hydrostatic form when the sounding
-        !                    is hydrostatic in the parcel's Tv, correct otherwise;
-        !                    reversible under descent since p is a function of z).
-        ! WV is unchanged here (condensation is handled by droplet growth); only T,
-        ! Tv, SS and pres update. Sets pressure_limit_reached and returns early if
-        ! the parcel reaches the target pressure.
+        ! Advances the parcel one step along the active trajectory leg: move at
+        ! the leg's signed velocity, update pressure, change temperature
+        ! adiabatically, then advance the leg if its target was reached
+        ! (completing the last leg sets trajectory_complete, which ends the
+        ! run). Pressure evolves per pressure_mode:
+        !   'hydrostatic'  — self-integration dp = -rho_parcel*g*w*dt with
+        !                    cooling dT = -(g/cp_moist)*w*dt;
+        !   'environment'  — pres = p_env(parcel_height) from the sounding, with
+        !                    dT = (Rd*Tv/(cp_m*p))*dp from the actual dp
+        !                    (identical to the hydrostatic form when the
+        !                    sounding is hydrostatic in the parcel's Tv, correct
+        !                    otherwise; reversible under descent since p is a
+        !                    function of z).
+        ! WV is unchanged here (condensation is handled by droplet growth); only
+        ! T, Tv, SS and pres update. Sets pressure_limit_reached and returns
+        ! early if the parcel reaches the target pressure.
         real(dp), intent(in) :: ldt   ! time step (s)
         real(dp) :: rho_air, qv_mean, cp_m, dT_adi   ! air density; mean qv; moist cp; adiabatic dT
         real(dp) :: pres_old
         integer :: k
 
-        parcel_velocity = get_velocity(parcel_axis_query())
-        if (abs(parcel_velocity) < 1.0e-30) return
+        if (trajectory_complete) return
+
+        parcel_velocity = leg_velocity(current_leg)
 
         parcel_height = parcel_height + parcel_velocity * ldt
 
@@ -441,21 +421,52 @@ contains
         end do
         call update_supersat(T, WV, SS, pres)
 
-        ! Diagnostic: where this pressure sits in the environment (v3 hydrostatic
-        ! mode). Drift from parcel_height measures the departure of the
-        ! self-integrated pressure from the sounding's p(z).
+        ! Diagnostic: where this pressure sits in the environment (hydrostatic
+        ! mode with a sounding). Drift from parcel_height measures the departure
+        ! of the self-integrated pressure from the sounding's p(z).
         if (write_height_env) then
             parcel_height_env = interp_profile(env_pressure, env_height, pres)
         end if
 
+        call advance_leg()
+
     end subroutine apply_adiabatic_forcing
+
+
+    subroutine advance_leg()
+        ! Advance past every leg whose target the parcel has reached (a single
+        ! step can overshoot more than one target). A reversing leg is never
+        ! "already reached", so the loop terminates. Completing the last leg
+        ! sets trajectory_complete, which exits the main loop.
+        logical :: reached
+
+        do
+            if (leg_axis == AXIS_PRESSURE) then
+                reached = (leg_velocity(current_leg) > 0.0 .and. pres <= leg_target(current_leg)) &
+                     .or. (leg_velocity(current_leg) < 0.0 .and. pres >= leg_target(current_leg))
+            else
+                reached = (leg_velocity(current_leg) > 0.0 .and. parcel_height >= leg_target(current_leg)) &
+                     .or. (leg_velocity(current_leg) < 0.0 .and. parcel_height <= leg_target(current_leg))
+            end if
+            if (.not. reached) return
+
+            if (current_leg == n_legs) then
+                trajectory_complete = .true.
+                write(*,'(a,f8.1,a)') ' Trajectory complete at height ', parcel_height, ' m. Stopping.'
+                write(error_unit,'(a,f8.1,a)') ' Trajectory complete at height ', parcel_height, ' m. Stopping.'
+                return
+            end if
+            current_leg = current_leg + 1
+        end do
+
+    end subroutine advance_leg
 
 
     subroutine apply_parcel_entrainment()
         real(dp) :: T_env, qv_env
 
         call interp_env(pres, T_env, qv_env)
-        call apply_entrainment(T_env, qv_env, parcel_velocity, parcel_axis_query())
+        call apply_entrainment(T_env, qv_env, parcel_velocity, current_leg)
 
     end subroutine apply_parcel_entrainment
 
@@ -467,23 +478,10 @@ contains
         real(dp), intent(in) :: p_current    ! current parcel pressure (Pa)
         real(dp), intent(out) :: T_env       ! interpolated environmental temperature (K)
         real(dp), intent(out) :: qv_env      ! environmental vapor mixing ratio (kg/kg)
-        real(dp) :: RH_env, frac
-        integer :: k
+        real(dp) :: RH_env
 
-        if (p_current >= env_pressure(1)) then
-            T_env = env_temperature(1)
-            RH_env = env_RH(1)
-        else if (p_current <= env_pressure(n_env_levels)) then
-            T_env = env_temperature(n_env_levels)
-            RH_env = env_RH(n_env_levels)
-        else
-            do k = 2, n_env_levels
-                if (p_current > env_pressure(k)) exit
-            end do
-            frac = (p_current - env_pressure(k)) / (env_pressure(k-1) - env_pressure(k))
-            T_env = env_temperature(k) + frac * (env_temperature(k-1) - env_temperature(k))
-            RH_env = env_RH(k) + frac * (env_RH(k-1) - env_RH(k))
-        end if
+        T_env = interp_profile(env_pressure, env_temperature, p_current)
+        RH_env = interp_profile(env_pressure, env_RH, p_current)
 
         qv_env = RH_env * saturation_mixing_ratio(T_env, p_current)
     end subroutine interp_env

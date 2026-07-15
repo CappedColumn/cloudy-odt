@@ -18,7 +18,8 @@ module writeout
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
                       parcel_file, initial_RH, pressure_limit, &
-                      pressure_mode, parcel_height_env, write_height_env
+                      pressure_mode, parcel_height_env, write_height_env, &
+                      initial_height, vertical_axis
     use entrainment, only: ent_rate, n_blob, psigma, random_entrainment, &
                            time_varying_entrainment
     use radiation, only: rad_F_net, rad_heating_rate, radiation_method, mie_data_file, &
@@ -753,6 +754,8 @@ contains
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.parcel_file", trim(parcel_file)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_RH", initial_RH) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_mode", trim(pressure_mode)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.vertical_axis", trim(vertical_axis)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.initial_height", initial_height) )
             if (pressure_limit > 0.0) &
                 call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARCEL.pressure_limit", pressure_limit) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "PARAMETERS.do_entrainment", &

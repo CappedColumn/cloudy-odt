@@ -55,73 +55,40 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 
 > In **parcel** mode, particles are pre-loaded at initialization from this distribution (using `aerosol_concentration`), not injected over time; `injection_time`/`injection_rate` apply to chamber mode.
 
-## Parcel input — `CODT_parcel_input_v1` / `v2` / `v3`
+## Parcel input — `CODT_parcel_input_v3`
 
-Drives adiabatic ascent when `simulation_mode = 'parcel'` (set by `parcel_file`). The velocity profile is piecewise-constant: in **time** for v1/v2, on a **vertical coordinate** (height or pressure) for v3.
+Drives the parcel trajectory when `simulation_mode = 'parcel'` (set by `parcel_file`). The trajectory is an **ordered sequence of waypoint legs**: each leg says "proceed to this level at this signed velocity," and the active leg advances when its target is reached. Because the lookup key is the leg counter (not the current position), trajectories may revisit levels — e.g. ascend to 4 km at 2 m/s, descend to 2 km at 1 m/s, ascend again. **Completing the final leg ends the simulation** (like `pressure_limit`); the `_DONE` marker is written normally.
 
-### v1 (basic)
-
-**Dimensions**
-
-| Dimension | Description |
-|-----------|-------------|
-| `segment` | Number of velocity segments |
-
-**Variables**
-
-| Variable | Dims | Units | Description |
-|----------|------|-------|-------------|
-| `time` | (segment) | s | Start time of each segment (first must be `0`, monotonically increasing) |
-| `velocity` | (segment) | m/s | Vertical velocity for each segment (piecewise-constant) |
-
-**Global attributes:** `conventions = "CODT_parcel_input_v1"`, `initial_pressure` (Pa)
-
-### v2 (with environmental profile)
-
-Required when `do_entrainment = .true.` Adds an environmental sounding that the blob method mixes in.
-
-Adds to v1:
+> **Removed formats:** the time-based `CODT_parcel_input_v1`/`v2` schemas are no longer read (last supported by CODT 1.x). Regenerate old inputs in the v3 waypoint format.
 
 **Dimensions**
 
 | Dimension | Description |
 |-----------|-------------|
-| `level` | Number of environmental sounding levels |
+| `segment` | Number of trajectory legs (≥ 1) |
+| `level` | Sounding levels (only when the sounding is present) |
 
 **Variables**
 
 | Variable | Dims | Units | Description |
 |----------|------|-------|-------------|
-| `env_pressure` | (level) | Pa | Environmental pressure (monotonically decreasing) |
-| `env_temperature` | (level) | K | Environmental temperature |
-| `env_RH` | (level) | — | Environmental relative humidity (0–1) |
+| `segment_coord` | (segment) | m or Pa | Leg **target** levels, per `&PARCEL vertical_axis` (`'height'` or `'pressure'`). Consecutive targets must differ; no monotonicity requirement. |
+| `velocity` | (segment) | m/s | Signed velocity of each leg (nonzero). Must point from the previous level (the launch level for leg 1: `initial_height`, or the initial `pres` on the pressure axis) toward the leg's target — validated at read. |
+| `env_height` | (level) | m | *Sounding:* height (monotonically increasing) |
+| `env_pressure` | (level) | Pa | *Sounding:* pressure (monotonically decreasing) |
+| `env_temperature` | (level) | K | *Sounding:* temperature |
+| `env_RH` | (level) | — | *Sounding:* relative humidity (0–1) |
+| `ent_rate` | (segment) | **1/km** | *Optional:* fractional entrainment rate per leg (> 0) |
+| `n_blob` | (segment) | — | *Optional:* blobs per event per leg (integer ≥ 1; stored as `int`) |
+| `psigma` | (segment) | — | *Optional:* blob fraction per leg (0–1, `psigma * n_blob < 1`) |
 
-**Global attributes:** `conventions = "CODT_parcel_input_v2"`
+**The sounding is optional**: it is required when `do_entrainment = .true.` or `pressure_mode = 'environment'`; a bare adiabatic hydrostatic parcel runs without it (the `parcel_height_env` diagnostic is then skipped). The four `env_*` variables come as a set.
 
-### v3 (vertical coordinate, full sounding, optional entrainment schedule)
-
-v3 puts the segments on a **vertical coordinate** instead of time: `segment_coord` holds either heights [m, strictly increasing] or pressures [Pa, strictly decreasing], selected by `vertical_axis = 'height' | 'pressure'` in the `&PARCEL` namelist. Velocity (and the optional entrainment schedule) change when the *parcel* crosses those levels — descent (negative velocity) re-enters lower segments naturally, and `velocity = 0` stalls the parcel at that level. The segment coordinate need not start at the launch height/pressure; lookups clamp to the first/last segment.
-
-The **environmental sounding is always required** in v3 (not just for entrainment) and must carry `env_height` in addition to the v2 variables. It supports the `pressure_mode = 'environment'` option (parcel pressure follows the sounding's p(z) at the parcel's height) and, in the default `'hydrostatic'` mode, the `parcel_height_env` output diagnostic.
-
-**Variables** (replacing/adding to v2)
-
-| Variable | Dims | Units | Description |
-|----------|------|-------|-------------|
-| `segment_coord` | (segment) | m or Pa | Segment start levels, per `vertical_axis` (replaces `time`) |
-| `velocity` | (segment) | m/s | Vertical velocity per segment (may be negative or zero) |
-| `env_height` | (level) | m | Environmental height (monotonically increasing; **required**) |
-| `ent_rate` | (segment) | **1/km** | *Optional:* fractional entrainment rate per segment (> 0) |
-| `n_blob` | (segment) | — | *Optional:* blobs per event per segment (integer ≥ 1; stored as `int`) |
-| `psigma` | (segment) | — | *Optional:* blob fraction per segment (0–1, `psigma * n_blob < 1`) |
-
-The three entrainment variables are present together or not at all. When present, they **override** the constant `ent_rate`/`n_blob`/`psigma` from the `&ENTRAINMENT` namelist (`random_entrainment` is still taken from the namelist); when absent, the namelist constants apply. Lookup is piecewise-constant on the segment coordinate, like `velocity`.
+The three entrainment variables are present together or not at all. When present, they **override** the constant `ent_rate`/`n_blob`/`psigma` from the `&ENTRAINMENT` namelist per leg (`random_entrainment` is still taken from the namelist) — so entrainment during a descent leg can differ from the ascent leg through the same heights. When absent, the namelist constants apply.
 
 **Global attributes:** `conventions = "CODT_parcel_input_v3"`
 
-> Readers accept v1/v2/v3. With `do_entrainment = .true.`, the file must be v2 or v3. In a v3 run with a schedule, the active `ent_rate`/`n_blob`/`psigma` are also written to the main output file as time series (see below).
->
-> **Stagnation levels:** a segment boundary with `velocity > 0` below and `< 0` above makes the parcel settle at that boundary — a detrainment level, not an error. Note that entrainment event *timing* stays in the time domain (interval from `ent_rate`, blob geometry, and |velocity|); only the parameter changes are keyed to the vertical coordinate.
+> Entrainment event *timing* stays in the time domain (interval from `ent_rate`, blob geometry, and |velocity|); only the parameter values are keyed to the active leg. In a run with a per-leg schedule, the active `ent_rate`/`n_blob`/`psigma` are also written to the main output file as time series (see below).
 
 ## Mie absorption table (radiation)
 
@@ -180,7 +147,7 @@ Profiles and time series. Always written.
 
 `budget_detrain_liquid_mass`, `budget_detrain_solute_mass` (kg); `budget_entrain_liquid_mass`, `budget_entrain_solute_mass` (kg); `budget_n_detrained`, `budget_n_entrained` (counts as double).
 
-**Varying entrainment series** (only with a v3 parcel input carrying an entrainment schedule)
+**Varying entrainment series** (only with a parcel input carrying a per-leg entrainment schedule)
 
 | Variable | Dims | Units | Description |
 |----------|------|-------|-------------|
@@ -197,9 +164,9 @@ With a constant schedule these are not written; the constant values remain avail
 | `parcel_height` | (time) | m | Parcel height (integrated from velocity) |
 | `parcel_pressure` | (time) | mb | Parcel pressure |
 | `parcel_velocity` | (time) | m/s | Ascent velocity |
-| `parcel_height_env` | (time) | m | Environment height at the parcel's pressure (v3 with `pressure_mode = 'hydrostatic'` only). Its drift from `parcel_height` measures how far the self-integrated pressure has left the sounding's p(z). |
+| `parcel_height_env` | (time) | m | Environment height at the parcel's pressure (`pressure_mode = 'hydrostatic'` with a sounding only). Its drift from `parcel_height` measures how far the self-integrated pressure has left the sounding's p(z). |
 
-The `PARCEL.pressure_mode` global attribute records which pressure evolution was used.
+The `PARCEL.pressure_mode`, `PARCEL.vertical_axis`, and `PARCEL.initial_height` global attributes record the trajectory configuration.
 
 ## Particle output — `CODT_particle_output_v1` (`{sim_name}_particles.nc`)
 

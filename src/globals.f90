@@ -34,13 +34,11 @@ module globals
     !> Length of default integers, range -2³¹ to 2³¹-1; 32 bits
     integer, parameter :: i4 = selected_int_kind(9)
 
-    ! ------ Segment-axis identifiers ----------------
-    ! Coordinate a piecewise-constant parcel schedule (velocity, entrainment)
-    ! is defined on: time (parcel input v1/v2), or height/pressure (v3).
-    ! Shared here so parcel and entrainment agree without a circular use.
-    integer(i4), parameter :: AXIS_TIME = 1     ! seconds, ascending
-    integer(i4), parameter :: AXIS_HEIGHT = 2   ! metres, ascending
-    integer(i4), parameter :: AXIS_PRESSURE = 3 ! Pa, descending
+    ! ------ Vertical-axis identifiers ---------------
+    ! Coordinate the parcel trajectory-leg targets are specified on
+    ! (&PARCEL vertical_axis).
+    integer(i4), parameter :: AXIS_HEIGHT = 1   ! metres
+    integer(i4), parameter :: AXIS_PRESSURE = 2 ! Pa
 
     ! -----------------------------------------------
     ! -----------------------------------------------

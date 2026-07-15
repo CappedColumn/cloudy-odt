@@ -98,10 +98,10 @@ Before launching, walk the namelist top-to-bottom and confirm the pieces line up
 **Referenced files must exist** (relative to the namelist dir):
 
 - `aerosol_file` (e.g. `aerosol_input.nc`) when microphysics is on.
-- `parcel_file` (e.g. `parcel_input.nc`) in parcel mode — **required** for the ascent
-  rate. In parcel mode with `do_entrainment`, this file must carry the
-  environmental sounding (`CODT_parcel_input_v2` or `v3` schema — see
-  [Data Formats](data_formats.md)).
+- `parcel_file` (e.g. `parcel_input.nc`) in parcel mode — **required** for the
+  waypoint trajectory (`CODT_parcel_input_v3` schema; v1/v2 are no longer read).
+  With `do_entrainment` or `pressure_mode = 'environment'`, the file must also
+  carry the environmental sounding — see [Data Formats](data_formats.md).
 - `mie_data_file` when radiation is on.
 
 A quick pre-flight check:
@@ -217,7 +217,7 @@ The mode flips several inputs' meanings. The common traps:
 | `Tdiff` | top–bottom ΔT (drives convection) | unused |
 | `initial_RH` | ignored | sets initial water-vapor field |
 | `aerosol_concentration` | ignored | droplet number concentration (cm⁻³) |
-| `parcel_file` | unused | **required** (ascent rate) |
+| `parcel_file` | unused | **required** (waypoint trajectory) |
 | Particle init | injected over time (aerosol schedule) | pre-loaded + Köhler-equilibrated |
 | `&SPECIALEFFECTS` | available (sidewalls, fallout) | not applicable |
 | Entrainment | not yet implemented | blob method (`do_entrainment` + `&ENTRAINMENT`) |

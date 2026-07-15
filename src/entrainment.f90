@@ -35,17 +35,14 @@ module entrainment
     ! --- Entrainment timing ---
     real(dp) :: t_next_entrain = 0.0 ! time of next entrainment event [s]
 
-    ! --- Optional vertically-varying schedule (parcel input v3) ---
-    ! When time_varying_entrainment is set, ent_rate/n_blob/psigma above hold the
-    ! currently active values, refreshed from these per-segment arrays. The
-    ! schedule shares the parcel velocity segment coordinate: height [m,
-    ! ascending] or pressure [Pa, descending] per sched_axis (AXIS_* from
-    ! globals). sched_ent_rate is stored in 1/m (converted by the reader).
+    ! --- Optional per-leg schedule (parcel input v3) ---
+    ! When time_varying_entrainment is set, ent_rate/n_blob/psigma above hold
+    ! the values of the active trajectory leg, refreshed from these per-leg
+    ! arrays (indexed by the parcel's current leg). sched_ent_rate is stored in
+    ! 1/m (converted by the reader).
     logical :: time_varying_entrainment = .false.
     integer(i4) :: n_ent_segments = 0
     integer(i4) :: active_segment = 1
-    integer(i4) :: sched_axis = AXIS_TIME
-    real(dp), allocatable :: sched_coords(:)
     real(dp), allocatable :: sched_ent_rate(:)
     integer(i4), allocatable :: sched_n_blob(:)
     real(dp), allocatable :: sched_psigma(:)
@@ -59,18 +56,16 @@ contains
     ! Read &ENTRAINMENT namelist, validate parameters, and schedule the first event.
     !
     ! The schedule arguments are optional: when supplied (parcel input v3), the
-    ! per-segment arrays make ent_rate/n_blob/psigma vary along sched_axis_in
-    ! (height or pressure) and override the namelist scalars (random_entrainment
-    ! is always taken from the namelist). When absent, the namelist scalars are
-    ! used unchanged for the whole run. Schedule ent_rate arrives already in 1/m.
-    subroutine initialize_entrainment(vel, sched_axis_in, sched_coords_in, &
-                                      sched_ent_rate_in, sched_n_blob_in, sched_psigma_in)
+    ! per-leg arrays make ent_rate/n_blob/psigma follow the parcel's trajectory
+    ! legs and override the namelist scalars (random_entrainment is always taken
+    ! from the namelist). When absent, the namelist scalars are used unchanged
+    ! for the whole run. Schedule ent_rate arrives already in 1/m.
+    subroutine initialize_entrainment(vel, sched_ent_rate_in, sched_n_blob_in, &
+                                      sched_psigma_in)
         real(dp), intent(in) :: vel  ! current parcel/eddy velocity [m/s]
-        integer(i4), intent(in), optional :: sched_axis_in      ! AXIS_HEIGHT or AXIS_PRESSURE
-        real(dp), intent(in), optional :: sched_coords_in(:)    ! segment starts [m or Pa]
-        real(dp), intent(in), optional :: sched_ent_rate_in(:)  ! ent_rate per segment [1/m]
-        integer(i4), intent(in), optional :: sched_n_blob_in(:) ! n_blob per segment
-        real(dp), intent(in), optional :: sched_psigma_in(:)    ! psigma per segment
+        real(dp), intent(in), optional :: sched_ent_rate_in(:)  ! ent_rate per leg [1/m]
+        integer(i4), intent(in), optional :: sched_n_blob_in(:) ! n_blob per leg
+        real(dp), intent(in), optional :: sched_psigma_in(:)    ! psigma per leg
         integer :: nml_unit, ierr, i
         character(256) :: nml_line, io_emsg
 
@@ -89,18 +84,16 @@ contains
         ! Namelist ent_rate is in 1/km; internal physics uses 1/m.
         ent_rate = ent_rate / m_per_km
 
-        ! --- Optional vertically-varying schedule (parcel input v3) ---
-        if (present(sched_coords_in)) then
+        ! --- Optional per-leg schedule (parcel input v3) ---
+        if (present(sched_ent_rate_in)) then
             time_varying_entrainment = .true.
-            sched_axis = sched_axis_in
-            n_ent_segments = size(sched_coords_in)
+            n_ent_segments = size(sched_ent_rate_in)
             ! Allow re-initialization (unit tests exercise multiple schedules)
-            if (allocated(sched_coords)) then
-                deallocate(sched_coords, sched_ent_rate, sched_n_blob, sched_psigma)
+            if (allocated(sched_ent_rate)) then
+                deallocate(sched_ent_rate, sched_n_blob, sched_psigma)
             end if
-            allocate(sched_coords(n_ent_segments), sched_ent_rate(n_ent_segments), &
-                     sched_n_blob(n_ent_segments), sched_psigma(n_ent_segments))
-            sched_coords   = sched_coords_in
+            allocate(sched_ent_rate(n_ent_segments), sched_n_blob(n_ent_segments), &
+                     sched_psigma(n_ent_segments))
             sched_ent_rate = sched_ent_rate_in
             sched_n_blob   = sched_n_blob_in
             sched_psigma   = sched_psigma_in
@@ -163,62 +156,37 @@ contains
     end subroutine validate_entrainment_params
 
 
-    ! Index of the schedule segment containing query on the schedule coordinate
-    ! (piecewise-constant; structural twin of parcel's get_velocity). Coordinates
-    ! are ascending for time/height, descending for pressure.
-    pure function schedule_segment(query) result(idx)
-        real(dp), intent(in) :: query   ! time [s], height [m], or pressure [Pa]
-        integer :: idx, i
-
-        idx = 1
-        do i = 2, n_ent_segments
-            if (sched_axis == AXIS_PRESSURE) then
-                if (query > sched_coords(i)) exit
-            else
-                if (query < sched_coords(i)) exit
-            end if
-            idx = i
-        end do
-    end function schedule_segment
-
-
-    ! Refresh ent_rate/n_blob/psigma to the segment containing query. No-op when
-    ! the schedule is not varying, leaving the namelist scalars in place.
-    subroutine get_entrainment_params(query)
-        real(dp), intent(in) :: query   ! value on the schedule coordinate
-        integer :: i
+    ! Refresh ent_rate/n_blob/psigma to trajectory leg `leg`. No-op when the
+    ! schedule is not varying, leaving the namelist scalars in place.
+    subroutine get_entrainment_params(leg)
+        integer(i4), intent(in) :: leg   ! active trajectory leg index
 
         if (.not. time_varying_entrainment) return
 
-        i = schedule_segment(query)
-        ent_rate = sched_ent_rate(i)
-        n_blob   = sched_n_blob(i)
-        psigma   = sched_psigma(i)
+        ent_rate = sched_ent_rate(leg)
+        n_blob   = sched_n_blob(leg)
+        psigma   = sched_psigma(leg)
 
     end subroutine get_entrainment_params
 
 
-    ! Track the active schedule segment; on a segment change, adopt the new
-    ! parameters and redraw the next-event time with them, so a rate increase
-    ! takes effect immediately instead of waiting out an interval drawn under
-    ! the old rate. Exact for the Poisson case (exponential waiting times are
-    ! memoryless); the deterministic cadence simply restarts at the boundary.
-    ! The redraw is anchored at the current simulation time (event timing stays
-    ! in the time domain even when the schedule coordinate is vertical). With a
-    ! near-zero velocity the redraw is skipped (no meaningful interval exists);
-    ! the next segment change redraws again.
-    subroutine refresh_entrainment_schedule(query, vel)
-        real(dp), intent(in) :: query   ! value on the schedule coordinate
-        real(dp), intent(in) :: vel     ! parcel/eddy velocity [m/s]
-        integer :: seg
+    ! Track the active trajectory leg; on a leg change, adopt the new parameters
+    ! and redraw the next-event time with them, so a rate increase takes effect
+    ! immediately instead of waiting out an interval drawn under the old rate.
+    ! Exact for the Poisson case (exponential waiting times are memoryless); the
+    ! deterministic cadence simply restarts at the leg change. The redraw is
+    ! anchored at the current simulation time (event timing stays in the time
+    ! domain). With a near-zero velocity the redraw is skipped (no meaningful
+    ! interval exists); the next leg change redraws again.
+    subroutine refresh_entrainment_schedule(leg, vel)
+        integer(i4), intent(in) :: leg   ! active trajectory leg index
+        real(dp), intent(in) :: vel      ! parcel/eddy velocity [m/s]
 
         if (.not. time_varying_entrainment) return
+        if (leg == active_segment) return
 
-        seg = schedule_segment(query)
-        if (seg == active_segment) return
-
-        active_segment = seg
-        call get_entrainment_params(query)
+        active_segment = leg
+        call get_entrainment_params(leg)
         if (abs(vel) >= 1.0e-30) then
             t_next_entrain = time + compute_dt_entm(vel)
         end if
@@ -236,19 +204,19 @@ contains
     ! Detrainment precedes scalar replacement so budget counters capture the
     ! pre-entrainment particle state. Entrainment follows scalar replacement
     ! so new particles equilibrate to the entrained environmental air.
-    subroutine apply_entrainment(T_env, qv_env, vel, sched_query)
+    subroutine apply_entrainment(T_env, qv_env, vel, leg)
         real(dp), intent(in) :: T_env       ! environmental temperature [K]
         real(dp), intent(in) :: qv_env      ! environmental water vapor mixing ratio [kg/kg]
         real(dp), intent(in) :: vel         ! parcel/eddy velocity for timing [m/s]
-        real(dp), intent(in) :: sched_query ! current value on the schedule coordinate
+        integer(i4), intent(in) :: leg      ! active trajectory leg index
         ! Blobs that wrap the periodic boundary split in two, so up to 2*max_blobs
         ! contiguous segments can come back from place_blobs.
         integer :: blob_start(2*max_blobs), blob_end(2*max_blobs), n_final
         integer :: i, k
 
-        ! Before the timing checks, so a segment change redraws t_next_entrain
-        ! and the new rate takes effect immediately.
-        call refresh_entrainment_schedule(sched_query, vel)
+        ! Before the timing checks, so a leg change redraws t_next_entrain and
+        ! the new rate takes effect immediately.
+        call refresh_entrainment_schedule(leg, vel)
 
         if (abs(vel) < 1.0e-30) return
         if (time < t_next_entrain) return

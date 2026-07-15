@@ -34,6 +34,9 @@ do_entrainment = .false.
 
 parcel_file = "parcel_input.nc"
 initial_RH = 1.0
+vertical_axis = 'height'       ! units of the file's leg targets: 'height' (m) or 'pressure' (Pa)
+pressure_mode = 'hydrostatic'  ! 'hydrostatic' (self-integrated) or 'environment' (follow sounding p(z))
+initial_height = 0.0           ! parcel launch height (m)
 
 /
 

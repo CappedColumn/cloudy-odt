@@ -121,6 +121,15 @@ Events need **no ordering**, and a parcel that re-crosses a seeded level does **
 
 The growth bound on `equilibrium` exists for GCCN: their equilibrium radius is tens of microns, and starting them there would condense water they would really need minutes to collect.
 
+### What a seed becomes when droplets coalesce
+
+With `do_coalescence`, two droplets merge into one, and the survivor takes a single category and material. The rules:
+
+- **Both from the same population:** the **larger** droplet's category and material survive. (Collisions only occur when the faster-falling droplet catches a slower one, and fall speed grows with radius, so the survivor is the larger one.)
+- **A seed and a background droplet:** the **seed** survives, regardless of which was larger. A seed collected by a big background droplet still counts as seed, so seeded runs don't lose track of their seed material through collection.
+
+> **Caveat — mass is conserved, dissolved ions are not.** A particle carries one material, so merging droplets of different composition adds the solute masses but treats the total as the survivor's material: its density sets the merged dry radius, and its `n_ions`/`molar_mass` set the Köhler curve. Seeding a material chemically unlike your background makes this approximation bite on every collection event. Seeding a chemical twin of the background (the duplicate-composition-row recipe above) avoids it entirely, since both rows describe the same substance.
+
 ## Parcel input — `CODT_parcel_input_v3`
 
 Drives the parcel trajectory when `simulation_mode = 'parcel'` (set by `parcel_file`). The trajectory is an **ordered sequence of waypoint legs**: each leg says "proceed to this level at this signed velocity," and the active leg advances when its target is reached. Because the lookup key is the leg counter (not the current position), trajectories may revisit levels — e.g. ascend to 4 km at 2 m/s, descend to 2 km at 1 m/s, ascend again. **Completing the final leg ends the simulation** (like `pressure_limit`); the `_DONE` marker is written normally.

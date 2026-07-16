@@ -221,6 +221,24 @@ contains
                     keep = i
                     kill = j
 
+                    ! Identity (category and material) of the merged droplet.
+                    !
+                    ! The survivor is always i, which is the larger droplet: a
+                    ! collision requires vrel > 0 above, so i falls faster than j,
+                    ! and fall speed grows with radius. The merged droplet therefore
+                    ! inherits the larger droplet's category by default.
+                    !
+                    ! Seed outranks size. If a larger background droplet collects a
+                    ! seed, the merged droplet still counts as seed, so a seeded run
+                    ! does not quietly lose its seed to collection by the background
+                    ! it was released into. The reverse case needs nothing: a seed
+                    ! that collects background already survives as itself.
+                    if (lparticles(kill)%solute_type%is_seed .and. &
+                        .not. lparticles(keep)%solute_type%is_seed) then
+                        lparticles(keep)%aerosol_category = lparticles(kill)%aerosol_category
+                        lparticles(keep)%solute_type = lparticles(kill)%solute_type
+                    end if
+
                     r_keep = lparticles(keep)%radius
                     r_kill = lparticles(kill)%radius
 
@@ -236,7 +254,23 @@ contains
                     lparticles(keep)%water_liquid = lparticles(keep)%water_liquid &
                                                    + lparticles(kill)%water_liquid
 
-                    ! Conserve solute mass and recompute solute radius
+                    ! Conserve solute mass and recompute solute radius.
+                    !
+                    ! A particle holds one material, so when droplets of different
+                    ! composition merge the solute masses still add but the total is
+                    ! then treated as the survivor's material throughout: its density
+                    ! sets the dry radius below, and its n_ions and molar mass set the
+                    ! Kohler curve. Mass is conserved; dissolved ion count is not.
+                    !
+                    ! TODO: this needs to change. Seeding makes droplets of unlike
+                    ! composition collide routinely -- that is the point of it -- and
+                    ! every such merge silently relabels the minority solute as the
+                    ! survivor's material, biasing the merged droplet's Kohler curve
+                    ! and its dry radius. The fix is an internally mixed particle:
+                    ! a per-type solute mass vector rather than one solute_type, with
+                    ! density and n_ions/molar_mass taken as mass-weighted means.
+                    ! That reaches particle_types, the Kohler routines, and the
+                    ! aerosol sampler, so it is its own piece of work.
                     lparticles(keep)%solute_gross_mass = lparticles(keep)%solute_gross_mass &
                                                         + lparticles(kill)%solute_gross_mass
                     if (lparticles(keep)%solute_type%solute_density > 0.0) then

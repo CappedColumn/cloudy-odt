@@ -9,11 +9,12 @@ module CODT
     use initialize, only: initialize_simulation, close_simulation
     use writeout, only: write_profiles, write_eddy
     use droplets, only: particles, update_droplets, &
-                        total_n_fellout, current_n_particles, n_injected, write_trajectories
+                        total_n_fellout, current_n_particles, n_injected, write_trajectories, &
+                        do_seeding, n_seeded
     use special_effects, only: run_special_effects
     use parcel, only: do_parcel_ascent, apply_adiabatic_forcing, apply_parcel_entrainment, &
                       trajectory_complete, &
-                      pressure_limit_reached
+                      pressure_limit_reached, parcel_height, vertical_axis
     use radiation, only: compute_radiation
     implicit none
 
@@ -21,6 +22,25 @@ module CODT
     public :: run_simulation
 
 contains
+
+    subroutine advance_droplets(ltime, ldt)
+        ! Steps the droplets, supplying the axis that seeding events are keyed to.
+        ! Parcel runs seed on position, so they hand down the vertical coordinate:
+        ! droplets cannot read it itself, since parcel depends on entrainment which
+        ! depends on droplets. Chamber runs seed on time, which droplets already has.
+        real(dp), intent(in) :: ltime, ldt
+
+        if (simulation_mode == 'parcel') then
+            if (trim(vertical_axis) == 'pressure') then
+                call update_droplets(ltime, ldt, pres)
+            else
+                call update_droplets(ltime, ldt, parcel_height)
+            end if
+        else
+            call update_droplets(ltime, ldt)
+        end if
+
+    end subroutine advance_droplets
 
     subroutine run_simulation()
         ! Initialize, then march from time=0 to tmax. Each step:
@@ -61,7 +81,7 @@ contains
             ! time accumulated since the last physics update).
             if (delta_time >= diffusion_step) then
                 call diffuse_step(delta_time)
-                if (do_microphysics) call update_droplets(time, delta_time)
+                if (do_microphysics) call advance_droplets(time, delta_time)
                 if (do_special_effects) call run_special_effects(T, WV, delta_time)
                 if (do_radiation) call compute_radiation(T, delta_time, time)
                 call sync_after_physics()
@@ -74,7 +94,7 @@ contains
             if (eddy_accepted) then
                 if (write_eddies) call write_eddy(eddy_location, eddy_length, time)
                 call diffuse_step(delta_time)
-                if (do_microphysics) call update_droplets(time, delta_time)
+                if (do_microphysics) call advance_droplets(time, delta_time)
                 if (do_special_effects) call run_special_effects(T, WV, delta_time)
                 if (do_radiation) call compute_radiation(T, delta_time, time)
                 call sync_after_physics()
@@ -91,6 +111,7 @@ contains
         write(*,*) 'Total Particles: ', current_n_particles
         write(*,*) 'Fallout: ', total_n_fellout
         write(*,*) 'Injected: ', n_injected
+        if (do_seeding) write(*,*) 'Seeded: ', n_seeded
         write(*,*) 'Wall-clock time (s): ', t_end - t_start
 
         call date_and_time(date=date_str, time=time_str)

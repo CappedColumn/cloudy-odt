@@ -77,6 +77,15 @@ initial_wet_radius = 1.5      ! Injected wet radius is # times dry-radius
 aerosol_file = "aerosol_input.nc"
 aerosol_concentration = 100.0 ! Initial aerosol number concentration (cm-3, parcel mode only)
 
+! --- Aerosol Seeding Parameters ---
+! Releases seed aerosol at the events defined in aerosol_file (chamber: at a time,
+! parcel: at a height/pressure). Requires a seed group in aerosol_file; the bundled
+! aerosol_input.nc has none, so do_seeding must stay .false. with it.
+
+do_seeding = .false.
+seed_hydration = 'equilibrium'  ! 'equilibrium' | 'double_growth' | 'dry'; seed material only
+seed_growth_time = 5.0          ! Growth time allowed at release, bounds 'equilibrium' (s)
+
 ! --- Collision-Coalescence Parameters ---
 
 do_collisions = .false.

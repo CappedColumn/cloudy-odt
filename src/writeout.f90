@@ -13,7 +13,7 @@ module writeout
                         trajectory_end, trajectory_timer, initial_wet_radius, &
                         dsd_varid, aerDSD_varids, aerosol_file, aerosol_concentration, &
                         do_collisions, do_coalescence, wmax_collision, write_collisions, &
-                        coalescence_kernel
+                        coalescence_kernel, do_seeding, seed_hydration, seed_growth_time
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
@@ -807,6 +807,14 @@ contains
                             merge(1, 0, write_collisions)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.coalescence_kernel", &
                             trim(coalescence_kernel)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.do_seeding", &
+                            merge(1, 0, do_seeding)) )
+            if (do_seeding) then
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.seed_hydration", &
+                                trim(seed_hydration)) )
+                call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.seed_growth_time", &
+                                seed_growth_time) )
+            end if
 
             ! MICROPHYSICS — chamber only
             if (simulation_mode == 'chamber') then

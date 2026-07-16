@@ -32,9 +32,9 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 
 | Dimension | Description |
 |-----------|-------------|
-| `aerosol_type` | Number of aerosol species |
-| `edge` | Number of bins + 1 |
-| `bin` | Number of bins |
+| `aerosol_type` | Number of aerosol species (rows of the composition table) |
+| `edge` | Number of background bins + 1 |
+| `bin` | Number of background bins |
 | `time` | Injection time steps |
 
 **Variables**
@@ -44,7 +44,8 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 | `n_ions` | (aerosol_type) | — | Van't Hoff factor |
 | `molar_mass` | (aerosol_type) | kg/mol | Solute molar mass |
 | `solute_density` | (aerosol_type) | kg/m³ | Solute density |
-| `category` | (aerosol_type) | — | Aerosol category index |
+| `category` | (bin) | — | Aerosol category index (output label) |
+| `bin_type` | (bin) | — | *Optional.* Composition row each bin is made of. Absent ⇒ all bins are type 1 |
 | `edge_radii` | (edge) | nm | Bin edge radii |
 | `dsd_bin_edges` | (edge) | m | DSD bin edges used for output histograms |
 | `cumulative_frequency` | (bin, time) | — | Cumulative size distribution sampled for injection |
@@ -54,6 +55,71 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 **Global attributes:** `conventions = "CODT_aerosol_input_v1"`, `aerosol_name`
 
 > In **parcel** mode, particles are pre-loaded at initialization from this distribution (using `aerosol_concentration`), not injected over time; `injection_time`/`injection_rate` apply to chamber mode.
+
+### The three per-bin labels
+
+A **bin** is the atom of the size distribution: one sampleable kind of dry aerosol. Sampling draws a bin, and two labels come along with it. They are easy to conflate, so:
+
+| Label | What it is | What it affects |
+|-------|-----------|-----------------|
+| `bin` | A dry radius that can be drawn | The size that gets sampled |
+| `category(bin)` | An **output label only** | Which per-category DSD (`DSD_1`, `DSD_2`, …) the particle is counted in, and its `aerosol_category` tag in trajectory output |
+| `bin_type(bin)` | A row of the composition table | The particle's solute physics (`n_ions`, `molar_mass`, `solute_density`), and whether `seed_hydration` applies |
+
+The CDF is over **bins only** — neither `category` nor `bin_type` subdivides it. So you can categorize a background aerosol by size (categories 1–6, say) while every bin shares one composition row, or carry several background materials (types 1–3) under a single category. The two labels are independent.
+
+## Aerosol seeding — the seed group
+
+Seeding introduces a **second aerosol population** with its own bins, its own size distribution, and its own release schedule, kept separate from the background so the file states each explicitly. The group is **optional and all-or-nothing**: include every variable below, or none.
+
+Enabling it requires `&MICROPHYSICS do_seeding = .true.`. The file and the namelist must agree — a seed group with `do_seeding = .false.`, or `do_seeding = .true.` with no seed group, is an error rather than a silent no-op.
+
+**Dimensions**
+
+| Dimension | Description |
+|-----------|-------------|
+| `seed_bin` | Number of seed bins |
+| `seed_edge` | `seed_bin` + 1 |
+| `seed_event` | Number of seeding events |
+
+**Variables**
+
+| Variable | Dims | Units | Description |
+|----------|------|-------|-------------|
+| `seed_edge_radii` | (seed_edge) | nm | Seed bin edge radii |
+| `seed_category` | (seed_bin) | — | Output category for each seed bin |
+| `seed_bin_type` | (seed_bin) | — | Composition row each seed bin is made of. **Required** |
+| `seed_frequency` | (seed_bin, seed_event) | — | Cumulative size distribution, per event. Each event's row runs to 1.0 |
+| `seed_coord` | (seed_event) | s or m or Pa | Point on the schedule axis that triggers the event |
+| `seed_concentration` | (seed_event) | cm⁻³ | Concentration released by the event |
+
+### Seeding events
+
+An event says *"release this concentration, with this size distribution, when the run reaches this point"*. It fires **once**, the first time the run reaches `seed_coord`, and never again.
+
+`seed_coord` is interpreted per mode:
+
+| Mode | Axis | Meaning |
+|------|------|---------|
+| chamber | time [s] | "Seed at t = 300 s" |
+| parcel, `vertical_axis = 'height'` | height [m] | "Seed at z = 600 m" |
+| parcel, `vertical_axis = 'pressure'` | pressure [Pa] | "Seed at p = 85000 Pa" |
+
+Events need **no ordering**, and a parcel that re-crosses a seeded level does **not** seed again — the release is a discrete burst, not an ambient concentration the parcel keeps sweeping up. Two events at the same `seed_coord` are rejected; write one larger event instead. Each event has its own `seed_frequency` row, so successive releases may differ in size distribution.
+
+> **A chemically identical seed still needs its own composition row.** What marks material as seed is that `seed_bin_type` points at it — so seeding NaCl into an NaCl background means duplicating the NaCl row as type 2 and pointing `seed_bin_type` there. That duplicate is what earns the seed its own `seed_hydration` treatment and its own DSD category. A type referenced by both `bin_type` and `seed_bin_type` is rejected, since `seed_hydration` would have no answer for it.
+
+### Hydration at release
+
+`&MICROPHYSICS seed_hydration` sets the wet radius seed particles are born with. It applies **only** to seed material; background particles keep the `initial_wet_radius` multiple of their dry radius.
+
+| Value | Wet radius at release |
+|-------|----------------------|
+| `equilibrium` (default) | Köhler equilibrium at the local RH (capped at 0.99 to stay on the stable branch), bounded by what the droplet could actually grow to in `seed_growth_time` seconds |
+| `double_growth` | Twice the dry radius, regardless of humidity |
+| `dry` | The bare dry radius; the growth model wets it from there |
+
+The growth bound on `equilibrium` exists for GCCN: their equilibrium radius is tens of microns, and starting them there would condense water they would really need minutes to collect.
 
 ## Parcel input — `CODT_parcel_input_v3`
 

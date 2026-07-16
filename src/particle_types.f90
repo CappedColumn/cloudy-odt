@@ -19,6 +19,11 @@ module particle_types
         integer(i4) :: n_ions = 0
         real(dp) :: solute_molar_mass = 0.0
         real(dp) :: solute_density = 0.0 ! kg/m3
+        ! Seed material receives the seed_hydration treatment at injection; a
+        ! background type is hydrated with initial_wet_radius as before. This is a
+        ! property of the type, not its index, so a file may hold several
+        ! background types alongside the seed.
+        logical :: is_seed = .false.
     contains
         ! All type-bound procedures begin with "aerosol_"
         ! Renamed for ease of reading when calling procedures
@@ -65,6 +70,7 @@ module particle_types
         ! Renamed for ease of reading when calling procedures
         procedure :: update_scalars => particle_update_scalars
         procedure :: critical_kohler => particle_critical_kohler
+        procedure :: kohler_equilibrium_radius => particle_kohler_equilibrium_radius
         procedure :: settling => particle_settling
         procedure :: update_gridcell => particle_update_gridcell
         procedure :: calculate_water_content => particle_calculate_water_content
@@ -73,7 +79,7 @@ module particle_types
 
 contains
 
-    subroutine aerosol_initialize(this, name, id, n_ions, molar_mass, density)
+    subroutine aerosol_initialize(this, name, id, n_ions, molar_mass, density, is_seed)
         ! Type-bound procedure for aerosol. Initializes aerosol properties with
         ! passed values.
         class(aerosol), intent(out) :: this
@@ -82,12 +88,15 @@ contains
         integer(i4), intent(in) :: n_ions
         real(dp), intent(in) :: molar_mass
         real(dp), intent(in) :: density
+        logical, intent(in), optional :: is_seed
 
         this%aerosol_name = name
         this%aerosol_id = id
         this%n_ions = n_ions
         this%solute_molar_mass = molar_mass
         this%solute_density = density
+        this%is_seed = .false.
+        if (present(is_seed)) this%is_seed = is_seed
 
     end subroutine aerosol_initialize
 
@@ -117,6 +126,50 @@ contains
         this%critical_supersaturation = supersaturation
 
     end subroutine particle_critical_kohler
+
+    pure function particle_kohler_equilibrium_radius(this, RH) result(radius)
+        ! Wet radius at which the Kohler curve balances the ambient humidity, on the
+        ! stable (haze) branch below the critical radius. Solves
+        !     S(r) - 1 = a/r - b/r^3 = RH - 1
+        ! for r by bisection, using the same a and b as particle_critical_kohler.
+        !
+        ! S(r) increases monotonically from far below the target at the dry radius
+        ! (where the solute term dominates) up to S_crit at the critical radius, so
+        ! the root is bracketed for any RH < 1 + S_crit. Callers cap RH below 1 to
+        ! keep that guarantee: at or above saturation a large seed may sit past the
+        ! critical radius, where no stable equilibrium exists.
+        class(particle), intent(in) :: this
+        real(dp), intent(in) :: RH          ! ambient humidity as a fraction (< 1)
+        real(dp) :: radius                  ! equilibrium wet radius, m
+        real(dp) :: a, b, s_target
+        real(dp) :: r_lo, r_hi, r_mid       ! bracket and midpoint, cm
+        integer(i4) :: iter
+        integer(i4), parameter :: max_iter = 100
+
+        a = a_RY / (this%temperature)
+        b = 4.3 * this%solute_gross_mass * this%solute_type%n_ions / this%solute_type%solute_molar_mass
+
+        s_target = RH - 1.0
+
+        ! Bracket the root on the stable branch, in cm to match a and b
+        r_lo = this%solute_radius / m_per_cm
+        r_hi = this%critical_radius / m_per_cm
+
+        do iter = 1, max_iter
+            r_mid = 0.5 * (r_lo + r_hi)
+            if (a / r_mid - b / r_mid**3 < s_target) then
+                r_lo = r_mid
+            else
+                r_hi = r_mid
+            end if
+        end do
+
+        radius = 0.5 * (r_lo + r_hi) * m_per_cm
+
+        ! A haze droplet is never smaller than its own dry solute core
+        radius = max(radius, this%solute_radius)
+
+    end function particle_kohler_equilibrium_radius
 
     pure subroutine particle_verify_activation(this)
         ! Changes the activated flag for a particle, depending on its

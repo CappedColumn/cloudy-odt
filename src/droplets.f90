@@ -30,6 +30,12 @@ module droplets
     public :: do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
     public :: aerosol_file
     public :: detrain_particles, entrain_particles
+    public :: do_seeding, seed_hydration, seed_growth_time, n_seeded
+    public :: read_aerosol_netcdf, sample_radius, aerosols, aerosol_bin_type, &
+              aerosol_radii, aerosol_partition, aerosol_bin_freq, aerosol_size_edges, &
+              injection_times, injection_rates
+    public :: n_seed_bins, seed_radii, seed_partition, seed_bin_type, seed_bin_freq, &
+              seed_event_coord, seed_event_conc
 
     ! Counters to track particles, used for statistics and array indexing
     integer(i4) :: current_n_particles = 0
@@ -57,6 +63,23 @@ module droplets
     real(dp), allocatable :: aerosol_size_edges(:), aerosol_bin_freq(:,:) ! allocated in read_aerosol_netcdf()
     real(dp), allocatable :: aerosol_radii(:) ! allocated in read_aerosol_netcdf()
     integer(i4), allocatable :: aerosol_partition(:)
+    integer(i4), allocatable :: aerosol_bin_type(:) ! per-bin aerosol type; all 1 unless the file has bin_type
+
+    ! Seed aerosol: a size distribution of its own, sampled and injected separately
+    ! from the background rather than sharing its CDF, so the file states the two
+    ! populations independently and neither implies the other. Present only when the
+    ! aerosol file carries the seed group (see docs/data_formats.md).
+    real(dp), allocatable :: seed_size_edges(:), seed_radii(:)
+    real(dp), allocatable :: seed_bin_freq(:,:) ! (seed bin, event), CDF -> 1
+    integer(i4), allocatable :: seed_partition(:), seed_bin_type(:)
+    integer(i4) :: n_seed_bins = 0
+
+    ! Seeding events. Each event names a point on the schedule axis and a
+    ! concentration to release when the run reaches it: one burst, fired once.
+    real(dp), allocatable :: seed_event_coord(:)  ! axis value that triggers the event
+    real(dp), allocatable :: seed_event_conc(:)   ! concentration released [cm-3]
+    logical, allocatable :: seed_event_fired(:)
+    integer(i4) :: seed_event_idx = 1  ! event being injected; selects its CDF row
     real(dp) :: last_injection_time
     real(dp) :: injection_dt
     integer(i4) :: n_injected, inj_time_idx
@@ -67,6 +90,17 @@ module droplets
     real(dp) :: aerosol_concentration = 0.0
     character(256) :: aerosol_file = ''
 
+    ! Aerosol seeding. One driver serves both modes; only the schedule axis differs.
+    ! Chamber seeds on time [s], parcel on the vertical coordinate set by &PARCEL
+    ! vertical_axis (m or Pa). Either way an event fires once, when the run first
+    ! reaches its level. See docs/data_formats.md.
+    logical :: do_seeding = .false.
+    character(16) :: seed_hydration = 'equilibrium' ! 'equilibrium' | 'double_growth' | 'dry'
+    real(dp) :: seed_growth_time = 5.0 ! growth time a seed is allowed at injection, s
+    real(dp), parameter :: seed_RH_cap = 0.99 ! keeps the Kohler solve on the stable branch
+    integer(i4) :: n_seeded = 0
+    real(dp) :: prev_seed_coord         ! axis value at the previous step, to detect crossings
+    logical :: seed_coord_set = .false.
 
     ! Particle I/O Handling
     logical :: write_trajectories = .false.
@@ -75,14 +109,27 @@ module droplets
 
 contains
 
-    subroutine update_droplets(ltime, ldt)
+    subroutine update_droplets(ltime, ldt, coord)
         ! Interface subroutine to main.f90. Does aerosol injection, settling,
         ! droplet-environment property update, and droplet growth.
         ! Caller is responsible for syncing nondim fields afterward.
+        !
+        ! coord is the seeding schedule axis. Parcel runs pass the parcel's vertical
+        ! coordinate, which this module cannot read for itself: parcel depends on
+        ! entrainment, which depends on this module, so a use here would be circular.
+        ! Chamber runs omit it and seed on time.
         real(dp), intent(in) :: ltime, ldt
+        real(dp), intent(in), optional :: coord
+        real(dp) :: current_coord
         integer :: i
 
         if (simulation_mode == 'chamber') call injection_controller(time, particles)
+
+        if (do_seeding) then
+            current_coord = ltime
+            if (present(coord)) current_coord = coord
+            call seeding_controller(particles, current_coord)
+        end if
 
         if (do_collisions) then
             ! CC owns settling across the ldt window (writes back final
@@ -103,6 +150,55 @@ contains
         call droplet_growth_model(particles, ltime, ldt)
 
     end subroutine update_droplets
+
+    subroutine seeding_controller(lparticles, coord)
+        ! Fires any seeding event the run has just reached. Both modes share this
+        ! driver; only the axis differs. Chamber runs pass time, so an event means
+        ! "seed at t = 300 s"; parcel runs pass the vertical coordinate, so it means
+        ! "seed at z = 600 m". Each event releases its concentration in a single
+        ! burst and then never fires again, even if the parcel returns to the level.
+        !
+        ! An event triggers when the step brackets its coordinate, which needs no
+        ! notion of which way the run is moving along the axis: a parcel descending
+        ! onto a level crosses it exactly as one rising onto it does.
+        !
+        ! Input:
+        ! lparticles - array of particle types
+        ! coord - current value on the schedule axis (time, height, or pressure)
+        type(particle), allocatable, intent(inout) :: lparticles(:)
+        real(dp), intent(in) :: coord
+        integer(i4) :: i, j, inject_n
+
+        ! The first call only establishes where the run starts on the axis: with no
+        ! previous value there is no interval yet, and nothing can have been crossed.
+        if (.not. seed_coord_set) then
+            prev_seed_coord = coord
+            seed_coord_set = .true.
+            return
+        end if
+
+        do i = 1, size(seed_event_coord)
+            if (seed_event_fired(i)) cycle
+            if ((prev_seed_coord - seed_event_coord(i)) * (coord - seed_event_coord(i)) > 0.0) cycle
+
+            ! seed_event_idx selects this event's row of the seed CDF, so each event
+            ! may release a different size distribution.
+            seed_event_idx = i
+            inject_n = nint(seed_event_conc(i) * 1.0e6 * domain_volume)
+
+            do j = 1, inject_n
+                call inject_particle(lparticles, T, WV, Tv, SS, seed=.true.)
+                n_seeded = n_seeded + 1
+            end do
+
+            seed_event_fired(i) = .true.
+            write(*,'(a,i0,a,es10.3,a,i0,a)') ' Seeding event ', i, ' fired at coord ', &
+                  coord, ': ', inject_n, ' particles injected'
+        end do
+
+        prev_seed_coord = coord
+
+    end subroutine seeding_controller
 
     subroutine injection_controller(ltime, lparticles)
         ! Controller subroutine to manage particle injection
@@ -131,7 +227,7 @@ contains
             ! Determine number of particles to inject
             inject_n = int(time_since_last_injection / injection_dt)
             do i = 1, inject_n
-                call inject_particle(lparticles, T, WV, Tv, SS, aerosols(1))
+                call inject_particle(lparticles, T, WV, Tv, SS)
                 n_injected = n_injected + 1
             end do
 
@@ -160,12 +256,13 @@ contains
 
     end subroutine injection_controller
 
-    subroutine inject_particle(lparticles_array, Temp, Vapor, VirtTemp, Supersat, aerosol_type)
+    subroutine inject_particle(lparticles_array, Temp, Vapor, VirtTemp, Supersat, seed)
         ! Injects a new particle into the simulation at a random location. Particle inherets
-        ! the properties of the gridcell which it originates
+        ! the properties of the gridcell which it originates. The caller chooses only
+        ! which population to draw from; the material within it comes from the file.
         type(particle), allocatable, intent(inout) :: lparticles_array(:)
         real(dp), intent(in) :: Temp(:), Vapor(:), VirtTemp(:), Supersat(:)
-        type(aerosol), intent(in) :: aerosol_type
+        logical, intent(in), optional :: seed
         type(particle) :: injected_particle
         type(particle), allocatable :: temp_array(:)
         real(dp) :: random_position
@@ -199,8 +296,8 @@ contains
         random_position = grid_idx * (H / N)
 
         ! Initialize the new particle using properties from the gridcell
-        call particle_initialize(injected_particle, aerosol_type, total_n_particles, random_position, grid_idx, &
-                    Temp(grid_idx), Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx))
+        call particle_initialize(injected_particle, total_n_particles, random_position, grid_idx, &
+                    Temp(grid_idx), Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx), seed)
 
         call injected_particle%update_gridcell()
 
@@ -377,10 +474,9 @@ contains
     ! A flat random index over total blob cells is mapped to the actual gridcell
     ! by walking through the blob segments sequentially.
     subroutine inject_particle_in_region(lparticles_array, Temp, Vapor, VirtTemp, Supersat, &
-                                         aerosol_type, blob_starts, blob_ends, n_blobs, n_blob_cells)
+                                         blob_starts, blob_ends, n_blobs, n_blob_cells)
         type(particle), allocatable, intent(inout) :: lparticles_array(:)
         real(dp), intent(in) :: Temp(:), Vapor(:), VirtTemp(:), Supersat(:)
-        type(aerosol), intent(in) :: aerosol_type
         integer(i4), intent(in) :: blob_starts(:), blob_ends(:), n_blobs, n_blob_cells
         type(particle) :: injected_particle
         type(particle), allocatable :: temp_array(:)
@@ -413,7 +509,7 @@ contains
             cell_count = cell_count - (blob_ends(j) - blob_starts(j) + 1)
         end do
 
-        call particle_initialize(injected_particle, aerosol_type, total_n_particles, &
+        call particle_initialize(injected_particle, total_n_particles, &
                     grid_idx * (H / N), grid_idx, &
                     Temp(grid_idx), Vapor(grid_idx), VirtTemp(grid_idx), Supersat(grid_idx))
         call injected_particle%update_gridcell()
@@ -466,7 +562,7 @@ contains
         old_count = current_n_particles
 
         do i = 1, n_inject
-            call inject_particle_in_region(particles, T, WV, Tv, SS, aerosols(1), &
+            call inject_particle_in_region(particles, T, WV, Tv, SS, &
                                            blob_starts, blob_ends, n_blobs, n_blob_cells)
         end do
 
@@ -504,8 +600,11 @@ contains
     !!!! SUBROUTINES TO INITIALIZE PARTICLES AND AEROSOLS !!!!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    subroutine particle_initialize(this, solute, ln_particles, pos, grid_idx, temp, vapor, virt_temp, supersat)
-
+    subroutine particle_initialize(this, ln_particles, pos, grid_idx, temp, vapor, virt_temp, supersat, seed)
+        ! Draws a dry aerosol from a size distribution at the current schedule row
+        ! and hydrates it. The seed flag selects which population to draw from; the
+        ! material then follows from the sampled bin, so a file with several
+        ! aerosol types populates the domain with the mixture its CDF describes.
         type(particle), intent(out) :: this
         integer(i4), intent(in) :: ln_particles
         real(dp), intent(in) :: pos
@@ -514,7 +613,14 @@ contains
         real(dp), intent(in) :: vapor
         real(dp), intent(in) :: virt_temp
         real(dp), intent(in) :: supersat
-        type(aerosol), intent(in) :: solute
+        logical, intent(in), optional :: seed  ! draw seed material rather than background
+        logical :: is_seed
+        integer(i4) :: type_idx  ! composition row the sampled bin is made of
+
+        ! Background is the default: callers that never seed (chamber injection,
+        ! entrainment, the parcel preload) simply omit the flag.
+        is_seed = .false.
+        if (present(seed)) is_seed = seed
 
         ! Each of us, a cell of awareness
         ! Imperfect and incomplete
@@ -528,14 +634,19 @@ contains
         this%virt_temp = virt_temp
         this%supersaturation = supersat
 
-        ! Assign the selected aerosol type to the particle
-        this%solute_type = solute
-
         ! Currently in domain
         this%fellout = .false.
 
-        ! Determine solute properties (sampled from aerosol input) and initial radius
-        call sample_radius(aerosol_bin_freq(:,inj_time_idx), aerosol_radii, this%solute_radius, this%aerosol_category)
+        ! Determine solute properties (sampled from aerosol input) and initial radius.
+        ! Each population is drawn from its own distribution at its own schedule row.
+        if (is_seed) then
+            call sample_radius(seed_bin_freq(:,seed_event_idx), seed_radii, seed_partition, &
+                               seed_bin_type, this%solute_radius, this%aerosol_category, type_idx)
+        else
+            call sample_radius(aerosol_bin_freq(:,inj_time_idx), aerosol_radii, aerosol_partition, &
+                               aerosol_bin_type, this%solute_radius, this%aerosol_category, type_idx)
+        end if
+        this%solute_type = aerosols(type_idx)
         this%solute_gross_mass = ( pi_43 * this%solute_type%solute_density ) * this%solute_radius**3
         this%radius = initial_wet_radius * this%solute_radius
 
@@ -545,26 +656,119 @@ contains
         ! Determine the critical radius and supersaturation for this particle
         call this%critical_kohler()
 
+        ! Seed material is hydrated on its own terms; background keeps
+        ! initial_wet_radius. Testing the material rather than the local is_seed says
+        ! what the rule actually is. The two agree in any case: build_aerosol_table
+        ! rejects a composition row that is both background and seed.
+        if (this%solute_type%is_seed) call hydrate_seed_particle(this)
+
     end subroutine particle_initialize
 
-    subroutine sample_radius(bin_freq, radii, radius, aer_partition)
-        ! Selects an aerosol size from CDF distribution in aerosol input file
+    subroutine hydrate_seed_particle(this)
+        ! Sets the wet radius of a freshly injected seed particle according to
+        ! seed_hydration. Background particles never reach here: they keep the
+        ! initial_wet_radius multiple of their dry radius.
+        type(particle), intent(inout) :: this
+        real(dp) :: RH
+
+        select case (trim(seed_hydration))
+        case ('dry')
+            ! Injected as a bare solute core, leaving the growth model to wet it
+            this%radius = this%solute_radius
+
+        case ('double_growth')
+            ! Fixed wet radius at twice the dry radius, independent of humidity
+            this%radius = 2.0 * this%solute_radius
+
+        case ('equilibrium')
+            ! Haze equilibrium with the humidity of the cell it lands in, bounded by
+            ! what the droplet could actually grow to in seed_growth_time. The RH cap
+            ! keeps the solve on the stable branch even in a supersaturated cell,
+            ! where a large seed would otherwise have no equilibrium radius at all.
+            !
+            ! The growth bound matters for GCCN: their equilibrium radius is tens of
+            ! microns, and injecting them there would condense water they need
+            ! minutes to collect. Anything small enough to equilibrate quickly
+            ! reaches its equilibrium radius and the bound does not bind.
+            !
+            ! TODO: the growth bound is a stopgap. seed_growth_time is a free
+            ! parameter with no physical derivation, and a bounded seed lands at a
+            ! radius that is neither an equilibrium nor a state the flow produced,
+            ! so a GCCN's initial size still depends on a tuning knob. Worth
+            ! revisiting: inject GCCN dry and let the DGM supply the transient, or
+            ! derive the bound from the growth timescale at the injection RH.
+            RH = 1.0 + this%supersaturation / 100.0
+            this%radius = min(this%kohler_equilibrium_radius(min(RH, seed_RH_cap)), &
+                              grown_radius(this, seed_growth_time))
+        end select
+
+        call this%calculate_water_content()
+
+    end subroutine hydrate_seed_particle
+
+    function grown_radius(this, t_grow) result(radius)
+        ! Radius a particle would reach by growing at the humidity of its own
+        ! gridcell for t_grow seconds, starting from the initial wet radius. This is
+        ! a hypothetical: it asks how far the droplet could get, and the caller wants
+        ! only the answer, so the growth runs on a throwaway copy.
+        !
+        ! single_droplet_growth accumulates into the global condensation and
+        ! temperature budgets, and this growth never happens -- the droplet is about
+        ! to be born at the resulting radius, and the water it holds is accounted for
+        ! by the injection budget. So the budgets are restored afterwards, or every
+        ! seed release would book condensation the run never performed.
+        type(particle), intent(in) :: this
+        real(dp), intent(in) :: t_grow
+        real(dp) :: radius
+        type(particle) :: trial
+        real(dp) :: t_elapsed, condensation_before, delta_T_before
+        real(dp), parameter :: growth_dt = 0.01
+
+        trial = this
+        condensation_before = budget_condensation
+        delta_T_before = budget_dgm_delta_T
+
+        ! Growth depends on the interval, not on where the run sits in time, so the
+        ! integration starts from zero like the other off-clock growth in this module.
+        t_elapsed = 0.0
+        do while (t_elapsed < t_grow)
+            call single_droplet_growth(trial, 0.0_dp, growth_dt)
+            call update_particle(trial)
+            t_elapsed = t_elapsed + growth_dt
+        end do
+
+        budget_condensation = condensation_before
+        budget_dgm_delta_T = delta_T_before
+
+        radius = trial%radius
+
+    end function grown_radius
+
+    subroutine sample_radius(bin_freq, radii, partition, bin_types, radius, aer_partition, type_idx)
+        ! Selects an aerosol size from a CDF in the aerosol input file. The caller
+        ! passes one group's arrays (background or seed), which are indexed
+        ! alike, so the two populations are drawn by the same code from their own
+        ! distributions. The sampled bin carries its output category and its
+        ! material type along with the radius.
         real(dp), intent(in) :: bin_freq(:), radii(:)
+        integer(i4), intent(in) :: partition(:), bin_types(:)
         real(dp), intent(out) :: radius
         integer(i4), intent(out) :: aer_partition
+        integer(i4), intent(out) :: type_idx
         real(dp) :: random_num
         integer :: idx
 
         ! Generate a random number between 0 and 1
         call random_number(random_num)
-        
+
         idx = 1
         do while ( random_num .gt. bin_freq(idx) )
             idx = idx + 1
         end do
 
         radius = radii(idx) * m_per_nm
-        aer_partition = aerosol_partition(idx)
+        aer_partition = partition(idx)
+        type_idx = bin_types(idx)
 
     end subroutine sample_radius
 
@@ -736,7 +940,7 @@ contains
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
         do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel, &
-        aerosol_concentration
+        aerosol_concentration, do_seeding, seed_hydration, seed_growth_time
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -779,8 +983,13 @@ contains
         ! Set up aerosol type, injection forcings, and DSD bin edges
         call read_aerosol_netcdf(trim(aerosol_file))
 
+        call validate_seeding_params()
+
         ! Set up DSD arrays
+        ! Seed bins carry their own categories, and a per-category DSD is allocated
+        ! for each, so the count has to span both populations.
         n_aer_category = maxval(aerosol_partition)
+        if (n_seed_bins > 0) n_aer_category = max(n_aer_category, maxval(seed_partition))
         if (n_aer_category > 1) then
             allocate(size_distribution(1 + n_aer_category, n_DSD_bins))
         else
@@ -811,6 +1020,68 @@ contains
     end subroutine initialize_microphysics
 
 
+    subroutine validate_seeding_params()
+        ! Checks the seeding namelist settings against each other and against the
+        ! aerosol file. Collects every problem before exiting so one run surfaces
+        ! them all.
+        logical :: has_error
+        integer(i4) :: i
+
+        has_error = .false.
+
+        select case (trim(seed_hydration))
+        case ('equilibrium', 'double_growth', 'dry')
+            ! valid
+        case default
+            write(error_unit,*) 'ERROR: seed_hydration must be equilibrium, double_growth, or dry. Got: ', &
+                                trim(seed_hydration)
+            has_error = .true.
+        end select
+
+        if (seed_growth_time <= 0.0) then
+            write(error_unit,*) 'ERROR: seed_growth_time must be > 0. Got: ', seed_growth_time
+            has_error = .true.
+        end if
+
+        ! do_seeding and the seed group must agree. Enabling it without a seed group
+        ! would seed nothing; shipping a seed group without enabling it would leave
+        ! material in the file silently unused. Either way the run would not be what
+        ! the file describes, so neither is allowed to pass quietly.
+        if (do_seeding .and. n_seed_bins == 0) then
+            write(error_unit,*) 'ERROR: do_seeding is set but the aerosol file has no seed group.', &
+                                ' See docs/data_formats.md.'
+            has_error = .true.
+        end if
+
+        if (.not. do_seeding .and. n_seed_bins > 0) then
+            write(error_unit,*) 'ERROR: the aerosol file defines a seed group but do_seeding is not set.'
+            has_error = .true.
+        end if
+
+        if (do_seeding .and. n_seed_bins > 0) then
+            ! Events fire independently on crossing, so they need no ordering. Two
+            ! events at the same coordinate would both fire on the same step, which
+            ! is a confusing way to write one larger event.
+            do i = 2, size(seed_event_coord)
+                if (any(seed_event_coord(:i-1) == seed_event_coord(i))) then
+                    write(error_unit,*) 'ERROR: duplicate seed_coord at event ', i, &
+                                        '. Combine them into a single event instead.'
+                    has_error = .true.
+                    exit
+                end if
+            end do
+
+            if (any(seed_event_conc < 0.0)) then
+                write(error_unit,*) 'ERROR: seed_concentration must be >= 0.'
+                has_error = .true.
+            end if
+        end if
+
+        if (has_error) call exit(1)
+
+    end subroutine validate_seeding_params
+
+
     subroutine initialize_chamber_aerosol()
         integer(i4) :: i
 
@@ -818,7 +1089,7 @@ contains
         allocate(particles(int(expected_Ndrops_per_gridpoint*N)))
         if (init_drop_each_gridpoint) then
             do i = 1, N
-                call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
+                call inject_particle(particles, T, WV, Tv, SS)
             end do
         end if
 
@@ -837,7 +1108,7 @@ contains
         allocate(particles(max(n_total, 1)))
 
         do i = 1, n_total
-            call inject_particle(particles, T, WV, Tv, SS, aerosols(1))
+            call inject_particle(particles, T, WV, Tv, SS)
         end do
 
         call equilibrate_particles(particles, n_total)
@@ -946,15 +1217,21 @@ contains
     end subroutine netcdf_add_aerDSD
 
     subroutine read_aerosol_netcdf(filepath)
-        ! Reads aerosol properties, injection schedule, and size distribution
-        ! from a NetCDF file (CODT_aerosol_input_v1 schema).
+        ! Reads the background aerosol from a NetCDF file (CODT_aerosol_input_v1
+        ! schema): the composition table, the per-bin size distribution and labels,
+        ! and the injection schedule. Delegates the optional seed group to
+        ! read_seed_group and the composition table to build_aerosol_table.
+        !
+        ! The schema has grown backward-compatibly under the v1 string: bin_type and
+        ! the whole seed group are optional, and a file written before they existed
+        ! reads as a single background material, which is what it is.
         character(*), intent(in) :: filepath
-        integer :: i, aer_ncid, varid, dimid
+        integer :: i, aer_ncid, varid, dimid, status
         integer :: n_types, n_bins, n_edges, n_times, n_dsd_edges
         character(64) :: conventions
         character(20) :: aer_name
-        integer :: aer_n_ions
-        real(dp) :: aer_molar_mass, aer_density
+        integer, allocatable :: aer_n_ions(:)
+        real(dp), allocatable :: aer_molar_mass(:), aer_density(:)
 
         write(*,*) 'Reading aerosol data from: ', trim(filepath)
 
@@ -1000,21 +1277,36 @@ contains
         call nc_verify(nf90_inq_varid(aer_ncid, 'category', varid), 'finding category')
         call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_partition), 'reading category')
 
+        ! bin_type maps each bin to a row of the composition table. It is optional:
+        ! a single-material file omits it and every bin is type 1, exactly as before.
+        allocate(aerosol_bin_type(n_bins))
+        status = nf90_inq_varid(aer_ncid, 'bin_type', varid)
+        if (status == NF90_NOERR) then
+            call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_bin_type), 'reading bin_type')
+            if (minval(aerosol_bin_type) < 1 .or. maxval(aerosol_bin_type) > n_types) then
+                write(error_unit,*) 'Error: bin_type values must lie in 1..', n_types
+                call exit(1)
+            end if
+        else
+            aerosol_bin_type = 1
+        end if
+
         allocate(aerosol_bin_freq(n_bins, n_times))
         call nc_verify(nf90_inq_varid(aer_ncid, 'cumulative_frequency', varid), &
                        'finding cumulative_frequency')
         call nc_verify(nf90_get_var(aer_ncid, varid, aerosol_bin_freq), &
                        'reading cumulative_frequency')
 
-        ! Read aerosol properties for type 1
+        ! Read the composition table: one entry per aerosol type
+        allocate(aer_n_ions(n_types), aer_molar_mass(n_types), aer_density(n_types))
         call nc_verify(nf90_inq_varid(aer_ncid, 'n_ions', varid), 'finding n_ions')
-        call nc_verify(nf90_get_var(aer_ncid, varid, aer_n_ions, start=[1]), 'reading n_ions')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_n_ions), 'reading n_ions')
 
         call nc_verify(nf90_inq_varid(aer_ncid, 'molar_mass', varid), 'finding molar_mass')
-        call nc_verify(nf90_get_var(aer_ncid, varid, aer_molar_mass, start=[1]), 'reading molar_mass')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_molar_mass), 'reading molar_mass')
 
         call nc_verify(nf90_inq_varid(aer_ncid, 'solute_density', varid), 'finding solute_density')
-        call nc_verify(nf90_get_var(aer_ncid, varid, aer_density, start=[1]), 'reading solute_density')
+        call nc_verify(nf90_get_var(aer_ncid, varid, aer_density), 'reading solute_density')
 
         ! Read aerosol name from global attribute
         call nc_verify(nf90_get_att(aer_ncid, NF90_GLOBAL, 'aerosol_name', aer_name), &
@@ -1028,6 +1320,8 @@ contains
         call nc_verify(nf90_inq_varid(aer_ncid, 'dsd_bin_edges', varid), 'finding dsd_bin_edges')
         call nc_verify(nf90_get_var(aer_ncid, varid, particle_bin_edges), 'reading dsd_bin_edges')
 
+        call read_seed_group(aer_ncid, n_types)
+
         call nc_verify(nf90_close(aer_ncid), 'closing aerosol file')
 
         ! Calculate midpoint radii (nanometers)
@@ -1036,12 +1330,140 @@ contains
             aerosol_radii(i) = (aerosol_size_edges(i) + aerosol_size_edges(i+1)) / 2.0_dp
         end do
 
-        ! Initialize aerosol type
-        allocate(aerosols(1))
-        call aerosols(1)%aerosol_initialize(trim(aer_name), 1, aer_n_ions, &
-                                            aer_molar_mass, aer_density)
+        call build_aerosol_table(aer_name, aer_n_ions, aer_molar_mass, aer_density)
 
     end subroutine read_aerosol_netcdf
+
+    subroutine read_seed_group(aer_ncid, n_types)
+        ! Reads the optional seed aerosol group: its own bins, size distribution,
+        ! and event schedule, kept separate from the background so the file states
+        ! each population explicitly and neither implies the other.
+        !
+        ! The group is present as a whole or not at all. Absent, n_seed_bins stays
+        ! zero and nothing downstream seeds. seed_coord is time [s] in chamber mode
+        ! and the vertical coordinate (m or Pa) in parcel mode.
+        integer, intent(in) :: aer_ncid, n_types
+        integer :: varid, dimid, status, i
+        integer :: n_seed_edges, n_seed_events
+
+        status = nf90_inq_dimid(aer_ncid, 'seed_bin', dimid)
+        if (status /= NF90_NOERR) then
+            n_seed_bins = 0
+            return
+        end if
+
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_seed_bins), 'reading seed_bin dim')
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'seed_edge', dimid), 'finding seed_edge dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_seed_edges), 'reading seed_edge dim')
+        call nc_verify(nf90_inq_dimid(aer_ncid, 'seed_event', dimid), 'finding seed_event dim')
+        call nc_verify(nf90_inquire_dimension(aer_ncid, dimid, len=n_seed_events), 'reading seed_event dim')
+
+        if (n_seed_edges /= n_seed_bins + 1) then
+            write(error_unit,*) 'Error: seed_edge dimension must equal seed_bin + 1'
+            call exit(1)
+        end if
+
+        allocate(seed_size_edges(n_seed_edges))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_edge_radii', varid), 'finding seed_edge_radii')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_size_edges), 'reading seed_edge_radii')
+
+        allocate(seed_partition(n_seed_bins))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_category', varid), 'finding seed_category')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_partition), 'reading seed_category')
+
+        ! Required for the seed group: this mapping is what marks a composition row
+        ! as seed material, so there is no sensible default for it.
+        allocate(seed_bin_type(n_seed_bins))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_bin_type', varid), 'finding seed_bin_type')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_bin_type), 'reading seed_bin_type')
+        if (minval(seed_bin_type) < 1 .or. maxval(seed_bin_type) > n_types) then
+            write(error_unit,*) 'Error: seed_bin_type values must lie in 1..', n_types
+            call exit(1)
+        end if
+
+        allocate(seed_bin_freq(n_seed_bins, n_seed_events))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_frequency', varid), 'finding seed_frequency')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_bin_freq), 'reading seed_frequency')
+
+        allocate(seed_event_coord(n_seed_events))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_coord', varid), 'finding seed_coord')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_event_coord), 'reading seed_coord')
+
+        allocate(seed_event_conc(n_seed_events))
+        call nc_verify(nf90_inq_varid(aer_ncid, 'seed_concentration', varid), 'finding seed_concentration')
+        call nc_verify(nf90_get_var(aer_ncid, varid, seed_event_conc), 'reading seed_concentration')
+
+        allocate(seed_event_fired(n_seed_events))
+        seed_event_fired = .false.
+
+        ! Midpoint radii (nanometers), as for the background bins
+        allocate(seed_radii(n_seed_bins))
+        do i = 1, n_seed_bins
+            seed_radii(i) = (seed_size_edges(i) + seed_size_edges(i+1)) / 2.0_dp
+        end do
+
+    end subroutine read_seed_group
+
+    subroutine build_aerosol_table(base_name, n_ions, molar_mass, density)
+        ! Fills the aerosol composition table from the per-type arrays read out of
+        ! the aerosol input file, then checks it against the bin -> type mappings.
+        ! The global aerosol_name attribute names type 1; further types are named
+        ! from their index, since the v1 schema carries no per-type names.
+        !
+        ! A type is seed material iff the seed group points at it: the file cannot
+        ! state that separately and so cannot contradict itself. Background types
+        ! are whatever bin_type references, which is what lets a file carry several
+        ! background materials alongside the seed.
+        character(*), intent(in) :: base_name
+        integer, intent(in) :: n_ions(:)
+        real(dp), intent(in) :: molar_mass(:), density(:)
+        character(20) :: type_name
+        character(8) :: strint
+        logical :: is_background, is_seed
+        integer :: i, n_aerosol_types
+
+        n_aerosol_types = size(n_ions)
+        allocate(aerosols(n_aerosol_types))
+
+        do i = 1, n_aerosol_types
+            if (i == 1) then
+                type_name = trim(base_name)
+            else
+                write(strint,'(i0)') i
+                type_name = trim(base_name) // '_type' // trim(strint)
+            end if
+            call aerosols(i)%aerosol_initialize(trim(type_name), i, n_ions(i), &
+                                                molar_mass(i), density(i), is_seed_type(i))
+        end do
+
+        do i = 1, n_aerosol_types
+            is_background = any(aerosol_bin_type == i)
+            is_seed = is_seed_type(i)
+
+            ! An unreachable type describes material that can never be sampled, and
+            ! a type in both groups has no answer to whether seed_hydration applies
+            ! to it. Both are writer bugs worth catching at read time.
+            if (.not. is_background .and. .not. is_seed) then
+                write(error_unit,*) 'Error: aerosol type ', i, ' is referenced by neither bin_type nor seed_bin_type'
+                call exit(1)
+            end if
+            if (is_background .and. is_seed) then
+                write(error_unit,*) 'Error: aerosol type ', i, ' is referenced as both background and seed.', &
+                                    ' Duplicate the composition row so each group has its own.'
+                call exit(1)
+            end if
+        end do
+
+    end subroutine build_aerosol_table
+
+    logical function is_seed_type(itype)
+        ! A composition row holds seed material iff a seed bin maps to it.
+        integer, intent(in) :: itype
+
+        is_seed_type = .false.
+        if (n_seed_bins > 0) is_seed_type = any(seed_bin_type == itype)
+
+    end function is_seed_type
 
     subroutine initialize_injection(inj_rate)
         ! 

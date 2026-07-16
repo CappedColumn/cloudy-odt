@@ -219,6 +219,7 @@ The mode flips several inputs' meanings. The common traps:
 | `aerosol_concentration` | ignored | droplet number concentration (cm⁻³) |
 | `parcel_file` | unused | **required** (waypoint trajectory) |
 | Particle init | injected over time (aerosol schedule) | pre-loaded + Köhler-equilibrated |
+| `seed_coord` (in `aerosol_file`) | a **time** [s] | a **height** [m] or **pressure** [Pa], per `vertical_axis` |
 | `&SPECIALEFFECTS` | available (sidewalls, fallout) | not applicable |
 | Entrainment | not yet implemented | blob method (`do_entrainment` + `&ENTRAINMENT`) |
 
@@ -257,10 +258,20 @@ A checklist of the things that most often bite when running by hand:
 11. **Cross-setting warnings won't stop the run but signal a likely mistake:**
     `do_radiation` without `do_microphysics`, `write_eddies` without `do_turbulence`,
     `do_entrainment` in chamber mode. Treat them as a prompt to re-check intent.
-12. **Compiler/NetCDF mismatch at runtime.** If you see `error while loading shared
+12. **`do_seeding` must match your `aerosol_file`, and this one is fatal, not a
+    warning.** Setting it against a file with no seed group — including the bundled
+    `input/aerosol_input.nc` — aborts, as does shipping a seed group without setting
+    it. Seeding needs an aerosol file built for it.
+13. **Seeding events fire once, on first arrival.** A parcel that re-crosses a seeded
+    level does *not* seed again, and events are keyed to position, not to trajectory
+    legs. If you want a level seeded on each pass, that is not currently expressible.
+14. **A seed chemically identical to your background still needs its own composition
+    row.** What makes material "seed" is that `seed_bin_type` points at it, so seeding
+    NaCl into NaCl means duplicating the row. Reusing the background's row is rejected.
+15. **Compiler/NetCDF mismatch at runtime.** If you see `error while loading shared
     libraries: libnetcdf...`, the right module isn't loaded — re-evaluate how you set
     up the environment in the same shell/job that runs CODT.
-13. **Login-node etiquette.** Long runs belong on compute/owner nodes via batch
+16. **Login-node etiquette.** Long runs belong on compute/owner nodes via batch
     processing. Respect your HPC center's rules.
 
 ---

@@ -79,8 +79,10 @@ aerosol_concentration = 100.0 ! Initial aerosol number concentration (cm-3, parc
 
 ! --- Aerosol Seeding Parameters ---
 ! Releases seed aerosol at the events defined in aerosol_file (chamber: at a time,
-! parcel: at a height/pressure). Requires a seed group in aerosol_file; the bundled
-! aerosol_input.nc has none, so do_seeding must stay .false. with it.
+! parcel: at a height/pressure). do_seeding is the absolute controller: .true.
+! requires a seed group in aerosol_file (absent => fatal); .false. ignores any
+! seed group present (with a warning). The bundled aerosol_input.nc ships with a
+! seed group, so .true. runs it as-is and .false. simply ignores it.
 
 do_seeding = .false.
 seed_hydration = 'equilibrium'  ! 'equilibrium' | 'double_growth' | 'dry'; seed material only

@@ -258,10 +258,13 @@ A checklist of the things that most often bite when running by hand:
 11. **Cross-setting warnings won't stop the run but signal a likely mistake:**
     `do_radiation` without `do_microphysics`, `write_eddies` without `do_turbulence`,
     `do_entrainment` in chamber mode. Treat them as a prompt to re-check intent.
-12. **`do_seeding` must match your `aerosol_file`, and this one is fatal, not a
-    warning.** Setting it against a file with no seed group — including the bundled
-    `input/aerosol_input.nc` — aborts, as does shipping a seed group without setting
-    it. Seeding needs an aerosol file built for it.
+12. **`do_seeding` is the absolute controller of seeding.** With `do_seeding=.true.`
+    the `aerosol_file` **must** contain a seed group — its absence is fatal. With
+    `do_seeding=.false.` any seed group present is simply **ignored** (not read, no
+    effect on output); CODT prints a warning so you know the seed data is dormant,
+    but does not abort. The bundled `input/aerosol_input.nc` ships **with** a seed
+    group, so it runs seeded when you set `do_seeding=.true.` and unseeded (with the
+    warning) otherwise.
 13. **Seeding events fire once, on first arrival.** A parcel that re-crosses a seeded
     level does *not* seed again, and events are keyed to position, not to trajectory
     legs. If you want a level seeded on each pass, that is not currently expressible.

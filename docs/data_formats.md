@@ -35,6 +35,7 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 | `aerosol_type` | Number of aerosol species (rows of the composition table) |
 | `edge` | Number of background bins + 1 |
 | `bin` | Number of background bins |
+| `dsd_edge` | Number of DSD output-histogram bins + 1 (independent of `edge`) |
 | `time` | Injection time steps |
 
 **Variables**
@@ -47,10 +48,10 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 | `category` | (bin) | — | Aerosol category index (output label) |
 | `bin_type` | (bin) | — | *Optional.* Composition row each bin is made of. Absent ⇒ all bins are type 1 |
 | `edge_radii` | (edge) | nm | Bin edge radii |
-| `dsd_bin_edges` | (edge) | m | DSD bin edges used for output histograms |
-| `cumulative_frequency` | (bin, time) | — | Cumulative size distribution sampled for injection |
+| `dsd_bin_edges` | (dsd_edge) | µm | DSD output-histogram bin edges. Uses its own `dsd_edge` dim (output resolution), independent of the aerosol `edge` dim |
+| `cumulative_frequency` | (time, bin) | — | Cumulative size distribution sampled for injection |
 | `injection_time` | (time) | s | Injection times |
-| `injection_rate` | (time) | 1/s | Injection rate at each injection time |
+| `injection_rate` | (time) | m⁻³ s⁻¹ | Injection rate (per-volume per-time) at each injection time |
 
 **Global attributes:** `conventions = "CODT_aerosol_input_v1"`, `aerosol_name`
 
@@ -72,7 +73,7 @@ The CDF is over **bins only** — neither `category` nor `bin_type` subdivides i
 
 Seeding introduces a **second aerosol population** with its own bins, its own size distribution, and its own release schedule, kept separate from the background so the file states each explicitly. The group is **optional and all-or-nothing**: include every variable below, or none.
 
-Enabling it requires `&MICROPHYSICS do_seeding = .true.`. The file and the namelist must agree — a seed group with `do_seeding = .false.`, or `do_seeding = .true.` with no seed group, is an error rather than a silent no-op.
+`&MICROPHYSICS do_seeding` is the sole controller. With `do_seeding = .true.` the file **must** contain a seed group (its absence is a fatal error). With `do_seeding = .false.` the seed group is **ignored** — never read, and with no effect on the composition table, DSD categories, or any output — so a file may carry a dormant seed group and still run unseeded; CODT prints a warning ("seeding input detected but do_seeding is false; the seed group is ignored") when it detects one so the unused data is not a surprise. This is what lets one aerosol file serve both a seeded and an unseeded run. (The bundled `input/aerosol_input.nc` ships **with** a seed group for exactly this reason.)
 
 **Dimensions**
 
@@ -89,7 +90,7 @@ Enabling it requires `&MICROPHYSICS do_seeding = .true.`. The file and the namel
 | `seed_edge_radii` | (seed_edge) | nm | Seed bin edge radii |
 | `seed_category` | (seed_bin) | — | Output category for each seed bin |
 | `seed_bin_type` | (seed_bin) | — | Composition row each seed bin is made of. **Required** |
-| `seed_frequency` | (seed_bin, seed_event) | — | Cumulative size distribution, per event. Each event's row runs to 1.0 |
+| `seed_frequency` | (seed_event, seed_bin) | — | Cumulative size distribution, per event. Each event's row runs to 1.0 |
 | `seed_coord` | (seed_event) | s or m or Pa | Point on the schedule axis that triggers the event |
 | `seed_concentration` | (seed_event) | cm⁻³ | Concentration released by the event |
 

@@ -1043,18 +1043,14 @@ contains
             has_error = .true.
         end if
 
-        ! do_seeding and the seed group must agree. Enabling it without a seed group
-        ! would seed nothing; shipping a seed group without enabling it would leave
-        ! material in the file silently unused. Either way the run would not be what
-        ! the file describes, so neither is allowed to pass quietly.
+        ! do_seeding is the absolute controller. Enabling it requires a seed group
+        ! to act on; without one there is nothing to seed, so that is fatal. With
+        ! seeding off the group is never read (n_seed_bins == 0 here regardless of
+        ! what the file contains), so a dormant seed group in the file is simply
+        ! ignored rather than rejected.
         if (do_seeding .and. n_seed_bins == 0) then
             write(error_unit,*) 'ERROR: do_seeding is set but the aerosol file has no seed group.', &
                                 ' See docs/data_formats.md.'
-            has_error = .true.
-        end if
-
-        if (.not. do_seeding .and. n_seed_bins > 0) then
-            write(error_unit,*) 'ERROR: the aerosol file defines a seed group but do_seeding is not set.'
             has_error = .true.
         end if
 
@@ -1320,7 +1316,19 @@ contains
         call nc_verify(nf90_inq_varid(aer_ncid, 'dsd_bin_edges', varid), 'finding dsd_bin_edges')
         call nc_verify(nf90_get_var(aer_ncid, varid, particle_bin_edges), 'reading dsd_bin_edges')
 
-        call read_seed_group(aer_ncid, n_types)
+        ! do_seeding is the sole gate on the seed group: when off, the group is
+        ! not read at all (n_seed_bins stays 0), so a seed group present in the
+        ! file is ignored and never reaches build_aerosol_table, n_aer_category,
+        ! or any output. When on, read_seed_group requires the group to be
+        ! present (its absence is caught by validate_seeding_params).
+        if (do_seeding) then
+            call read_seed_group(aer_ncid, n_types)
+        else if (nf90_inq_dimid(aer_ncid, 'seed_bin', dimid) == NF90_NOERR) then
+            ! Seed data present but seeding disabled: ignored, but warn so the
+            ! user is not surprised that the file's seed population does nothing.
+            write(*,*) 'Warning: seeding input detected but do_seeding is false; ' // &
+                       'the seed group is ignored.'
+        end if
 
         call nc_verify(nf90_close(aer_ncid), 'closing aerosol file')
 
@@ -1442,8 +1450,11 @@ contains
 
             ! An unreachable type describes material that can never be sampled, and
             ! a type in both groups has no answer to whether seed_hydration applies
-            ! to it. Both are writer bugs worth catching at read time.
-            if (.not. is_background .and. .not. is_seed) then
+            ! to it. Both are writer bugs worth catching at read time. The
+            ! unreachable check is skipped when do_seeding is off: the seed group
+            ! is then unread, so its composition row is legitimately unreferenced
+            ! (ignored, not a bug), which is what lets one file serve both modes.
+            if (do_seeding .and. .not. is_background .and. .not. is_seed) then
                 write(error_unit,*) 'Error: aerosol type ', i, ' is referenced by neither bin_type nor seed_bin_type'
                 call exit(1)
             end if

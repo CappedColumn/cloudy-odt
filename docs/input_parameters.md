@@ -68,7 +68,7 @@ Required when `do_microphysics = .true.` (the default).
 | `expected_Ndrops_per_gridpoint` | real | — | `1` | Expected droplets per grid point; sizes the initial particle array to avoid reallocation. |
 | `initial_wet_radius` | real | × dry radius | **— (required)** | Injected wet radius as a multiple of the dry radius (must be > 1). |
 | `aerosol_concentration` | real | cm⁻³ | `0.0` | Initial aerosol number concentration. **Parcel mode only** (chamber injects from `aerosol_file`). |
-| `do_seeding` | logical | — | `.false.` | Release seed aerosol at the events defined in `aerosol_file`. Must match the file: setting it without a seed group (or shipping a seed group without it) is an error. Works in both modes. |
+| `do_seeding` | logical | — | `.false.` | Release seed aerosol at the events defined in `aerosol_file`. Absolute controller: `.true.` **requires** a seed group in the file (absent ⇒ fatal); `.false.` **ignores** any seed group present (not read, no effect on outputs), warning if one is found. Works in both modes. |
 | `seed_hydration` | string | — | `'equilibrium'` | Wet radius seed particles are born with: `'equilibrium'` (Köhler solve at local RH, capped at 0.99 and bounded by `seed_growth_time`), `'double_growth'` (2× dry radius), or `'dry'`. Applies to seed material only — background keeps `initial_wet_radius`. |
 | `seed_growth_time` | real | s | `5.0` | Growth time a seed is allowed at release, bounding the `'equilibrium'` radius. Keeps GCCN from being born at a radius they would need minutes to grow to. Ignored by the other hydration modes. |
 | `do_collisions` | logical | — | `.false.` | Enable collision detection (event-driven 1-D collision-coalescence). |

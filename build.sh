@@ -17,6 +17,11 @@ source fpm_env
 
 VERSION_FILE="src/version.f90"
 if git rev-parse --git-dir >/dev/null 2>&1; then
+    # A prior build injected real strings into version.f90, changing its mtime.
+    # The clean filter keeps those out of git, but the stale stat-cache still
+    # trips `--dirty`. Renormalize just this file so its build-injected changes
+    # don't count as dirty -- a real edit to any OTHER source file still does.
+    git add --renormalize "$VERSION_FILE" 2>/dev/null || true
     VERSION=$(git describe --tags --dirty --always)
 else
     VERSION="$(grep '^version' fpm.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')-src"

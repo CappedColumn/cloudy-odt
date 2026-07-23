@@ -576,19 +576,26 @@ contains
         ! Move particles within an eddy based on the triplet map.
         ! The triplet map moves gridcell z1 -> z2. A particle at pz1 in that
         ! cell carries its offset: pz2 = z2 + (pz1 - z1), then wraps periodic.
+        ! The mapped grid is looked up one cell at a time via triplet_map_cell
+        ! instead of building a mapped copy of z. Only the L cells inside the
+        ! eddy move, and L is typically a few gridpoints against N, so
+        ! materializing all N was the dominant cost of the whole simulation
+        ! (~86% of runtime; see docs/known_issues.md).
+        !
+        ! This is exact, not an approximation. z is strictly increasing
+        ! (z(k) = H*k/N), so its entries are distinct and z(src) /= z(gc) holds
+        ! precisely when src /= gc -- the same condition the array version
+        ! tested. The arithmetic below is unchanged, so results are bit-identical.
         type(particle), intent(inout) :: lparticles(:)
         integer(i4), intent(in) :: M, L
-        real(dp) :: mapped_z(N)
-        integer :: i, gc
-
-        mapped_z = z
-        call triplet_map(L, M, mapped_z)
+        integer :: i, gc, src
 
         do i = 1, current_n_particles
             gc = lparticles(i)%gridcell
-            if (mapped_z(gc) /= z(gc)) then
+            src = triplet_map_cell(L, M, gc)
+            if (src /= gc) then
                 lparticles(i)%position = modulo( &
-                    mapped_z(gc) + (lparticles(i)%position - z(gc)), H)
+                    z(src) + (lparticles(i)%position - z(gc)), H)
             end if
         end do
 

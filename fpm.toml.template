@@ -15,13 +15,76 @@ external-modules = ["netcdf", "netcdff"]
 
 [library]
 source-dir = "src"
-# Note: include-dir can be handled by shell env variable: FPM_FFLAGS, declared in the script "fpm_env"
-# include-dir = "-I/path/to/netcdf/include"
 
 [install]
 library = false
 
 [dependencies]
+
+# ---------------------------------------------------------------------------
+# Build features and profiles
+# ---------------------------------------------------------------------------
+# Build flags live here, not in fpm_env. Select a profile at build time:
+#
+#   fpm build --profile release  --compiler gfortran   # production (-O2)
+#   fpm build --profile debug    --compiler gfortran   # bounds/leak checks
+#   fpm build --profile profiled --compiler gfortran   # release + gprof (-pg)
+#
+# fpm_env only loads the compiler module and sets FPM_FC; ./build.sh defaults
+# to --profile release (a production binary). Each profile is a list of the
+# features below, and every feature has per-compiler flag sets, so gfortran and
+# nvfortran each get their own release/debug/profiled flags.
+#
+# NOTE: fpm's own built-in `release`/`debug` (which force -O3 / -O0) are
+# overridden by the definitions here. Use -O2 for production: -O3/-flto cause
+# instruction-cache pressure in the hot DGM path and run SLOWER (see
+# docs/known_issues.md).
+# ---------------------------------------------------------------------------
+
+# --- Machine-specific netCDF paths -----------------------------------------
+# EDIT THESE in your LOCAL fpm.toml (copy this template to fpm.toml). They are
+# the only site-specific values; everything else in this file is portable.
+# Layout assumed: ${BASE}/${compilerstack}/netcdf/{include,lib}. The -rpath
+# bakes the runtime library path into the binary so it runs without loading
+# any module (self-contained -- important for batch/nohup runs).
+[features.netcdf-local.gfortran]
+flags = "-I/PATH/TO/gcc-X.X.X/netcdf/include"
+link-time-flags = "-L/PATH/TO/gcc-X.X.X/netcdf/lib -Wl,-rpath=/PATH/TO/gcc-X.X.X/netcdf/lib"
+
+[features.netcdf-local.nvfortran]
+flags = "-I/PATH/TO/nvhpc-XX.X/netcdf/include"
+link-time-flags = "-L/PATH/TO/nvhpc-XX.X/netcdf/lib -Wl,-rpath=/PATH/TO/nvhpc-XX.X/netcdf/lib"
+
+# --- Production optimization (-O2) ------------------------------------------
+[features.optimized.gfortran]
+flags = "-O2 -finline-functions -ffree-line-length-none"
+
+[features.optimized.nvfortran]
+flags = "-O2"
+
+# --- Debug (no optimization, runtime checks) --------------------------------
+[features.debugging.gfortran]
+flags = "-g -O0 -fcheck=all -fbacktrace -ffree-line-length-none"
+
+[features.debugging.nvfortran]
+flags = "-g -O0 -Mbounds -traceback"
+
+# --- Profiling instrumentation ----------------------------------------------
+# gfortran: gprof (-pg). nvfortran: -Mprof=ccff for pgprof; note the
+# profile-codt workflow uses `perf` on the plain release binary, which needs
+# no build flags -- profile with --profile release in that case.
+[features.profiling.gfortran]
+flags = "-pg"
+link-time-flags = "-pg"
+
+[features.profiling.nvfortran]
+flags = "-Mprof=ccff"
+link-time-flags = "-Mprof=ccff"
+
+[profiles]
+release  = ["optimized", "netcdf-local"]
+debug    = ["debugging", "netcdf-local"]
+profiled = ["optimized", "profiling", "netcdf-local"]
 
 [[executable]]
 name = "CODT"

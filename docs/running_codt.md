@@ -13,14 +13,21 @@ below works with just a shell, a namelist, and the binary.)
 You need a `CODT` executable on your `$PATH` (or an explicit path to one). Two
 common routes:
 
-1. **Build from source** with the Fortran Package Manager:
+1. **Build from source** with the Fortran Package Manager. Build flags live in
+   `fpm.toml` profiles (`release`/`debug`/`profiled`); `fpm_env` loads the
+   compiler module and the netCDF paths live in the `netcdf-local` feature of
+   your local `fpm.toml` (see `fpm.toml.template` / `fpm_env.template`):
 
    ```bash
-   source fpm_env                            # compiler + NetCDF paths (see fpm_env.template)
-   fpm build
-   fpm install --prefix <install-dir>        # puts CODT in <install-dir>/bin
+   source fpm_env                                              # gfortran (default); `source fpm_env nvfortran` to switch
+   fpm build   --profile release --compiler gfortran           # optimized build
+   fpm install --profile release --compiler gfortran --prefix <install-dir>   # puts CODT in <install-dir>/bin
    export PATH="<install-dir>/bin:$PATH"
    ```
+
+   A bare `fpm build` (no `--profile`) is unoptimized — always pass
+   `--profile release` for production, or use `./build.sh` (defaults to release
+   and stamps the version into output metadata).
 
 2. **Use a pre-built executable** if one has been provided to you (e.g. inside a
    shared conda environment). Activate/locate it, then confirm it resolves:
@@ -33,11 +40,14 @@ common routes:
 `--help`/`-h` and `--version`/`-v` short-circuit *before* any simulation modules
 load, so they're a cheap way to confirm the binary is healthy.
 
-> **NetCDF / shared libraries:** if you see `error while loading shared libraries:
-> libnetcdf...` at launch, the executable can't find its NetCDF libraries — make the
-> same NetCDF available at runtime that it was built against (e.g. `module load` the
-> matching netcdf module, or use an executable whose NetCDF was built with rpath) in
-> the same shell/job that runs CODT.
+> **NetCDF / shared libraries:** CODT's manifest bakes an rpath to its NetCDF
+> libraries into the binary (the `netcdf-local` feature's `-Wl,-rpath=...`), so a
+> normally-built executable is self-contained and runs without loading any module
+> — important for batch/`nohup` jobs. If you *do* see `error while loading shared
+> libraries: libnetcdf...` at launch (e.g. an executable built without the rpath),
+> make the same NetCDF it was built against available at runtime — `module load`
+> the matching netcdf module, or set `LD_LIBRARY_PATH` — in the same shell/job that
+> runs CODT.
 
 ---
 

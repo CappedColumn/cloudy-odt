@@ -21,25 +21,43 @@ A numerical model for warm-cloud microphysics in turbulent flows. CODT was built
 
 CODT uses [netCDF](https://docs.unidata.ucar.edu/netcdf-fortran/current/) for data output, but otherwise has no dependencies. Post-processing is handled by the companion **CODT_tools** Python package, which reads CODT's netCDF output (profiles and time series, droplet trajectories) and the collision/eddy binary streams.
 
-For ease of build, it is highly recommended to use the [Fortran Package Manager](https://fpm.fortran-lang.org). The source files in `app` and `src` are highly modular, and FPM tracks build dependencies between each source file. If you choose to use FPM, the provided `fpm_env` bash script can be used to set the location of your fortran compilers and netcdf build. Source it once per shell to establish the build environment, then build:
+For ease of build, it is highly recommended to use the [Fortran Package Manager](https://fpm.fortran-lang.org). The source files in `app` and `src` are highly modular, and FPM tracks build dependencies between each source file.
+
+Build flags live in the fpm manifest (`fpm.toml`) as **profiles**, selected with `--profile`:
+
+| Profile | Purpose | gfortran flags |
+|---------|---------|----------------|
+| `release`  | optimized production build | `-O2 -finline-functions` |
+| `debug`    | no optimization, runtime checks | `-g -O0 -fcheck=all -fbacktrace` |
+| `profiled` | release plus gprof instrumentation | `-O2 … -pg` |
+
+Two files hold the machine-specific settings; copy each template and edit it for your site:
+
+- **`fpm.toml`** (from `fpm.toml.template`) — put your netCDF include/lib paths in the `netcdf-local` feature. All optimization/debug/profiling flags are already generic and need no editing.
+- **`fpm_env`** (from `fpm_env.template`) — loads your compiler module. Source it once per shell, choosing the compiler (Lmod compiler modules are mutually exclusive, so pick one and re-source to switch):
 
 ```bash
-source fpm_env
-fpm build              # plain build
-./build.sh             # build with version + git hash stamped into output metadata
+source fpm_env                                     # gfortran (default)
+# source fpm_env nvfortran                         # or nvfortran
+
+./build.sh                                         # production build (release), version-stamped
+fpm build --profile release --compiler gfortran    # equivalent plain build
+fpm build --profile debug   --compiler gfortran    # debug build (bounds/backtrace)
 ```
 
-`build.sh` derives the version from git tags: a released build (a clean checkout of a tagged commit) reports a bare version such as `v1.0.0`, while development and fork builds self-identify with a commit hash and a `-dirty` suffix. These values are written into the global attributes of CODT's netCDF output for provenance.
+> A bare `fpm build` (no `--profile`) is an **unoptimized** debug build. Always pass `--profile release` for production runs, or just use `./build.sh`, which defaults to release.
+
+`build.sh` derives the version from git tags: a released build (a clean checkout of a tagged commit) reports a bare version such as `v1.0.0`, while development and fork builds self-identify with a commit hash and a `-dirty` suffix. These values are written into the global attributes of CODT's netCDF output for provenance. Override the compiler or profile with `CODT_COMPILER=nvfortran ./build.sh` or `CODT_PROFILE=debug ./build.sh`.
 
 ## Running CODT
 
 Simulations are setup entirely from a Fortran namelist (yes, a namelist, the original YAML/TOML/XML/CSON/JSON configuration file). A template lives at `input/params.nml`; it sets model parameters/physics, write locations, and simulation naming conventions. CODT takes the namelist path as its single argument:
 
 ```bash
-fpm run -- input/params.nml      # via fpm
-codt input/params.nml            # installed executable
-codt --help                      # usage and namelist groups
-codt --version                   # version and git commit
+fpm run --profile release --compiler gfortran -- input/params.nml   # via fpm
+CODT input/params.nml            # installed executable
+CODT --help                      # usage and namelist groups
+CODT --version                   # version and git commit
 ```
 
 CODT redirects its own stdout to `{simulation_name}.log` in the output directory, so no shell redirection is needed. Running the executable with no argument prints usage and exits.

@@ -1,106 +1,51 @@
-
 #!/bin/bash
+#
+# Environment setup for building CODT with the Fortran Package Manager (fpm).
+#
+# CODT keeps its build flags in the fpm manifest (fpm.toml features/profiles),
+# NOT here. This script's only job is to make your Fortran compiler available
+# (on PATH) so that `fpm build --compiler <name>` can find it. The
+# machine-specific netCDF paths live in the `netcdf-local` feature of your
+# LOCAL fpm.toml (copy fpm.toml.template -> fpm.toml and edit the paths).
+#
+# CODT's manifest defines flags for gfortran and nvfortran. Select one at build
+# time:
+#   fpm build --profile release --compiler gfortran
+#   fpm build --profile release --compiler nvfortran
+#
+# NOTE: with environment modules (Lmod), compilers are usually in one "family"
+# and are mutually exclusive -- loading nvhpc swaps out gcc, etc. So load the
+# ONE compiler you are building with and re-source to switch, rather than
+# loading several at once.
+#
+# Usage:
+#   source fpm_env            # gfortran (default)
+#   source fpm_env nvfortran  # if you build with nvfortran
+#   ./build.sh                # production (release) build
 
-# This bash script is used to set up an environment
-# for the Fortran Package Manager (FPM). By specifying
-# COMPIILER, linking libraries and flags, the "fpm build"
-# command will automatically make use of the evironmental
-# variables specified below.
+COMPILER="${1:-gfortran}"
 
-# NOTE: Depending on your software build structure, the LIB/INC
-# and netcdf/netcdf-fortran paths have to be restructured below,
-# here they follow a ${BASE_PATH}/compilerstack/netcdf/{lib,include}
-# structure. Modules are used to load the appropriate builds and
-# may need to be altered as well.
-
-# ------------------------------------------------------------
-# ------------ USER SETTINGS ---------------------------------
-# ------------------------------------------------------------
-
-# unload all modules: 0-false, 1-true
+# unload all modules first: 0-false, 1-true
 PURGE_MODULES=0
+[ "$PURGE_MODULES" = 1 ] && module purge
 
-# to perform profiling: 0-false, 1-true
-PROFILING=0
+# ---------------------------------------------------------------------------
+# USER SETTINGS -- map each compiler to its environment module (adjust names).
+# Delete a branch you do not have; most users only need gfortran.
+# ---------------------------------------------------------------------------
+case "$COMPILER" in
+    gfortran)  module load gcc/X.X.X ;;
+    nvfortran) module load nvhpc/XX.X ;;
+    *)
+        echo "Unknown compiler: $COMPILER (use gfortran or nvfortran)"
+        return 1 2>/dev/null || exit 1
+        ;;
+esac
 
-# Specify compiler of choice
-# gfortran, nvfortran or ifort
-COMPIILER="nvfortran"
+# --- No environment modules? -----------------------------------------------
+# Put the compiler on PATH yourself, or point fpm at it explicitly:
+#   export FPM_FC=/full/path/to/gfortran
+#   export PATH=/opt/compiler/bin:$PATH
 
-# Specify netcdf build path and compiler versions
-BASE_PATH="/path/to/software/builds"
-NVHPC_VER="XX.X"
-GCC_VER="X.X.X"
-INTEL_VER="XXXX.X.X"
-
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-
-# Unload all prior loaded modules
-if [ $PURGE_MODULES = 1 ]; then 
-    module purge
-fi
-
-# Set ENV Variables to be added
-FPM_FFLAGS=""
-FPM_LDFLAGS=""
-
-# COMPIILER SELECTION
-if [[ $COMPIILER == "nvfortran" ]]; then
-    echo -e "Using nvfortran"
-    module load nvhpc/${NVHPC_VER}
-    LIB_NETCDF="${BASE_PATH}/nvhpc-${NVHPC_VER}/netcdf/lib"
-    INC_NETCDF="${BASE_PATH}/nvhpc-${NVHPC_VER}/netcdf/include"
-    FPM_FFLAGS+=" -O2"
-    if [ $PROFILING == 1 ]; then
-        FPM_FFLAGS+=" -Mprof=ccff"
-    fi
-
-elif [[ $COMPIILER == "gfortran" ]]; then
-    echo -e "Using gfortran"
-    module load gcc/${GCC_VER}
-    LIB_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/lib"
-    INC_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/include"
-    FPM_FFLAGS+=" -O2 -finline-functions -ffree-line-length-none"
-    if [ $PROFILING == 1 ]; then
-        FPM_FFLAGS+=" -pg"
-    fi
-
-elif [[ $COMPIILER == "ifort" ]]; then
-    echo -e "Using ifort"
-    module load intel/${INTEL_VER}
-    LIB_NETCDF="${BASE_PATH}/intel-${INTEL_VER}/netcdf/lib"
-    INC_NETCDF="${BASE_PATH}/intel-${INTEL_VER}/netcdf/include"
-    FPM_FFLAGS=""
-    if [ $PROFILING == 1 ]; then
-        FPM_FFLAGS+=" -pg"
-    fi
-    
-else
-    echo -e "Unkown COMPIILER specification.\nDefaulting to gfortran."
-    COMPIILER = "gfortran"
-    module load gcc/${GCC_VER}
-    LIB_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/lib"
-    INC_NETCDF="${BASE_PATH}/gcc-${GCC_VER}/netcdf/include"
-    FPM_FFLAGS=" -O2  -finline-functions -ffree-line-length-none"
-fi
-
-COMPIILER_PATH=$(which $COMPIILER)
-export FPM_FC="${COMPIILER_PATH}"
-
-
-# LINKING FLAG SELECTION
-FPM_LDFLAGS="-L${LIB_NETCDF} -Wl,-rpath=${LIB_NETCDF}"
-if [ $PROFILING == 1 ]; then
-    if [[ $COMPIILER == "gfortran" || $COMPIILER == "ifort" ]]; then
-        FPM_LDFLAGS+=" -pg"
-    elif [[ $COMPIILER == "nvfortran" ]]; then
-        FPM_LDFLAGS+=" -Mprof=ccff"
-    fi
-fi
-export FPM_LDFLAGS
-
-# FLAG SELECTION
-FPM_FFLAGS+=" -I${INC_NETCDF}"
-export FPM_FFLAGS
+echo "CODT build env ready: $COMPILER module loaded."
+echo "Build:  ./build.sh   |   fpm build --profile release --compiler $COMPILER"

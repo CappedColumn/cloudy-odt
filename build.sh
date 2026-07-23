@@ -13,7 +13,14 @@
 
 set -e
 
-source fpm_env
+# build.sh produces a production (release) binary. Override the compiler or
+# profile via environment variables if needed:
+#   CODT_COMPILER=nvfortran ./build.sh      # build with nvfortran
+#   CODT_PROFILE=debug      ./build.sh      # debug build (usually use fpm directly)
+COMPILER="${CODT_COMPILER:-gfortran}"
+PROFILE="${CODT_PROFILE:-release}"
+
+source fpm_env "$COMPILER"
 
 VERSION_FILE="src/version.f90"
 if git rev-parse --git-dir >/dev/null 2>&1; then
@@ -28,9 +35,9 @@ else
 fi
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-echo "Building CODT v${VERSION} (${COMMIT})"
+echo "Building CODT ${VERSION} (${COMMIT})"
 
 sed -i "s/code_version = '.*'/code_version = '${VERSION}'/" "$VERSION_FILE"
 sed -i "s/git_commit   = '.*'/git_commit   = '${COMMIT}'/" "$VERSION_FILE"
 
-fpm build "$@"
+fpm build --profile "$PROFILE" --compiler "$COMPILER" "$@"

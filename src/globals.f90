@@ -445,46 +445,6 @@ contains
     end subroutine triplet_map
 
 
-    pure function triplet_map_cell(eddy_length, eddy_start, cell) result(source_index)
-        ! Inverse index lookup for triplet_map: returns the index whose value
-        ! lands in `cell` once the map is applied. Returns `cell` unchanged when
-        ! `cell` lies outside the eddy, since the map leaves those cells alone.
-        !
-        ! This mirrors triplet_map's own indexing exactly and must be kept in
-        ! step with it. It exists so callers that need the mapped value of a
-        ! single cell can get it in O(1), without building a mapped copy of a
-        ! whole N-length field.
-        !
-        ! Assumes eddy_length is a multiple of 3, which is what both samplers
-        ! produce (ODT: L = 3*Pidx; LEM: nint(...)*3). triplet_map itself relies
-        ! on the same assumption -- its write-back loop would otherwise read
-        ! uninitialized entries of mapped_values.
-        integer(i4), intent(in) :: eddy_length, eddy_start, cell
-        integer(i4) :: source_index, j, segment_length
-
-        segment_length = eddy_length / 3
-
-        ! Slot of `cell` in the write-back ordering: triplet_map stores slot j
-        ! at mod(eddy_start + j - 2, N) + 1, so invert that for j.
-        j = modulo(cell - eddy_start, N) + 1
-
-        if (j > eddy_length) then
-            source_index = cell
-        else if (j <= segment_length) then
-            ! Segment 1: every 3rd element, forward
-            source_index = mod(eddy_start + 3*(j-1) - 1, N) + 1
-        else if (j <= 2*segment_length) then
-            ! Segment 2: every 3rd element, reversed (block inversion)
-            source_index = mod(eddy_start + eddy_length &
-                               - 3*(j - segment_length), N) + 1
-        else
-            ! Segment 3: every 3rd element, forward offset by 2
-            source_index = mod(eddy_start + 3*(j - 2*segment_length) - 2, N) + 1
-        end if
-
-    end function triplet_map_cell
-
-
     subroutine reset_budgets()
         budget_diffusion_delta_T = 0.0
         budget_diffusion_delta_WV = 0.0

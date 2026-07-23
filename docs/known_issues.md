@@ -171,7 +171,7 @@ trap, or a code defect; move it once you know.
   mechanical but should be confirmed against the ghost-point commit and covered
   by a reftest before being applied.
 
-### ~~`move_particles_in_eddy` does full-domain work per eddy event (86% of runtime)~~ — fixed in `ab89628`
+### Eddy-particle movement (`move_particles_in_eddy`) is ~90% of parcel runtime
 
 - **Symptom** — `droplets::move_particles_in_eddy` is **~86% of total runtime**
   in parcel mode, dwarfing everything else. It is a bookkeeping routine, not
@@ -211,14 +211,34 @@ trap, or a code defect; move it once you know.
 - **Note on an earlier assumption** — this is why removing the eddy acceptance
   method did not speed runs up appreciably. Neither acceptance sampling nor DGM
   was ever the bottleneck; the cost was always this routine.
-- **Fix direction (not yet attempted)** — only cells in `[M, M+L-1] (mod N)` can
-  move, and only particles whose `gridcell` lies in that window. The `mapped_z`
-  copy can be reduced to `O(L)` outright and looks straightforward. The particle
-  scan is the harder half: the particle list is not indexed by gridcell, so
-  getting below `O(n_particles)` needs a per-cell index or a sorted list, which
-  is a real design change. Any fix must be bit-reproducible against a reftest —
-  the routine sets particle positions, so an error here corrupts all
-  microphysics downstream.
+- **Reframing (2026-07-23) — the 86% attribution above is misleading.** That
+  number came from `-pg`/gprof, which lumps the whole routine together. The
+  `mapped_z = z` copy is **not** wasted work: it is a per-eddy *cache*. The
+  triplet map is computed once per eddy (`O(L)`) into `mapped_z`, and every
+  particle then does a cheap array lookup `mapped_z(gc)`. The intrinsic cost is
+  the sheer number of eddy-events × particles (a genuinely hot path), not the
+  copy.
+- **Attempted fix `ab89628` (shipped as v2.0.1) — REVERTED, it was a ~39%
+  REGRESSION.** It removed `mapped_z` and had each particle re-derive its mapped
+  cell via a new `globals::triplet_map_cell` (integer `modulo` arithmetic),
+  called ~2.69e9 times. That function does **not** inline even at `-O2`, so it
+  replaced one cheap bulk copy with billions of expensive non-inlined modulo
+  calls. Clean 40-core benchmark (ent1, tmax=10, `perf` on release builds):
+
+  | build | wall | hotspot |
+  |---|---|---|
+  | v2.0.0 (copy+cache) | **49 s** | `move_particles_in_eddy` 90% |
+  | v2.0.1 (per-cell)   | **68 s** | `triplet_map_cell` 61% + `move_particles` 32% |
+
+  Lesson: the per-cell recompute loses whenever `n_particles ≈ N` (madison:
+  both ≈ 6000). Bit-identical output, but slower — a pessimization.
+- **Correct fix direction (planned, not yet done)** — keep the cache idea but
+  shrink it: only cells in `[M, M+L-1] (mod N)` move, so build a small
+  **eddy-local** mapped array of length `L` once per eddy (`O(L)`, no full-N
+  copy, no per-particle modulo), then per-particle array lookup indexed by
+  offset within the eddy. This beats *both* v2.0.0 (drops the `O(N)` copy) and
+  v2.0.1 (drops the per-particle modulo). Needs planning + a reftest gate
+  (the routine sets particle positions; an error corrupts all microphysics).
 - **Evidence** — gprof flat profiles and call graphs from the original madison
   SF1 runs, which were themselves built with `-pg`:
   `/scratch/general/vast/u1342804/madison/madison_SF1_ent{0,1}/inputs/gmon.out`
@@ -229,16 +249,10 @@ trap, or a code defect; move it once you know.
   source, not just inferred from the profile.
 - **Found in** — `527cd7f` (`v2.0.0-1-g527cd7f`), `main`; from the output
   `git_commit` attribute of the madison SF1 runs.
-- **Status** — **fixed in `ab89628`** (released as `v2.0.1`). Performance only —
-  no evidence of a correctness defect. `move_particles_in_eddy` now looks up the
-  mapped source cell one at a time via `globals::triplet_map_cell` (an O(1)
-  inverse of `triplet_map`) instead of materializing an N-length copy of the
-  grid. Exact / bit-identical: both reftests unchanged and
-  `test/test_remap_compare` shows 0 mismatches between the old and new remapping
-  for a mid-domain and a wrapping eddy. Only the full-domain `mapped_z` copy was
-  removed; the per-particle `O(n_particles)` scan remains and is a possible
-  future enhancement (would require indexing particles by gridcell — see item 2
-  of the profiling discussion, deferred as non-critical).
+- **Status** — **open.** The v2.0.1 attempt was reverted (see above); code is
+  back to v2.0.0's copy+cache. Performance only — no correctness defect in either
+  version. The eddy-local `O(L)` approach is the planned next step, pending
+  design + benchmark against the 49 s v2.0.0 baseline.
 
 ---
 

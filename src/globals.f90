@@ -261,6 +261,21 @@ module globals
     procedure(turbulence_iface), pointer :: turbulence_step => null()
     procedure(sync_iface), pointer :: sync_after_physics => null()
 
+    ! Generic triplet map: the real variant rearranges scalar fields (T, WV, ...);
+    ! the integer variant rearranges a cell-label tracer using the identical
+    ! permutation, so droplet transport can compose maps by advecting labels.
+    interface triplet_map
+        module procedure triplet_map_real, triplet_map_int
+    end interface triplet_map
+
+    ! Cell-label tracer backing the eddy-sequence API below. Shared by ODT (one
+    ! eddy per turbulence step) and LEM (several), so both move droplets through
+    ! exactly the same code.
+    !   origin_cell(j)      = the cell whose fluid now sits at j   (gather view)
+    !   destination_cell(c) = where the fluid originally in c ended up (forward)
+    integer(i4), allocatable :: origin_cell(:)
+    integer(i4), allocatable :: destination_cell(:)
+
     ! -----------------------------------------------
     ! -----------------------------------------------
 
@@ -406,10 +421,11 @@ contains
     end function resolve_path
 
 
-    subroutine triplet_map(eddy_length, eddy_start, field)
-        ! Applies the triplet map rearrangement to field.
+    subroutine triplet_map_real(eddy_length, eddy_start, field)
+        ! Applies the triplet map rearrangement to a real scalar field.
         ! Uses mod indexing so wrapping eddies on periodic domains are handled
         ! automatically. For non-periodic domains the mod is a no-op.
+        ! Invoke via the generic name triplet_map.
         integer(i4), intent(in) :: eddy_length, eddy_start
         real(dp), intent(inout) :: field(:)
 
@@ -442,7 +458,126 @@ contains
             field(dest_index) = mapped_values(j)
         end do
 
-    end subroutine triplet_map
+    end subroutine triplet_map_real
+
+    subroutine triplet_map_int(eddy_length, eddy_start, field)
+        ! Integer counterpart of triplet_map_real, applying the identical
+        ! permutation to a cell-label tracer. Keep the index arithmetic in
+        ! lockstep with triplet_map_real: the whole point of the tracer is that
+        ! it undergoes exactly the same rearrangement as the scalar fields.
+        ! Invoke via the generic name triplet_map.
+        integer(i4), intent(in) :: eddy_length, eddy_start
+        integer(i4), intent(inout) :: field(:)
+
+        integer(i4) :: mapped_values(eddy_length)
+        integer(i4) :: j, source_index, dest_index, segment_length
+
+        segment_length = eddy_length / 3
+
+        ! Segment 1: every 3rd element, forward
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*(j-1) - 1, N) + 1
+            mapped_values(j) = field(source_index)
+        end do
+
+        ! Segment 2: every 3rd element, reversed (block inversion)
+        do j = 1, segment_length
+            source_index = mod(eddy_start + eddy_length - 3*j, N) + 1
+            mapped_values(j + segment_length) = field(source_index)
+        end do
+
+        ! Segment 3: every 3rd element, forward offset by 2
+        do j = 1, segment_length
+            source_index = mod(eddy_start + 3*j - 2, N) + 1
+            mapped_values(j + 2*segment_length) = field(source_index)
+        end do
+
+        ! Write rearranged values back
+        do j = 1, eddy_length
+            dest_index = mod(eddy_start + j - 2, N) + 1
+            field(dest_index) = mapped_values(j)
+        end do
+
+    end subroutine triplet_map_int
+
+
+    ! -----------------------------------------------
+    ! Eddy sequence: composing one or more triplet maps into the single net cell
+    ! rearrangement used to displace droplets.
+    !
+    ! Usage, identical for ODT (one eddy) and LEM (several):
+    !
+    !     call begin_eddy_sequence()
+    !     ... for each accepted eddy, beside the scalar triplet_map calls:
+    !         call accumulate_eddy(eddy_length, eddy_start)
+    !     call finalize_eddy_sequence()
+    !     call move_particles_by_cellmap(particles, destination_cell)
+    ! -----------------------------------------------
+
+    subroutine begin_eddy_sequence()
+        ! Start a new sequence with the tracer at the identity.
+        integer(i4) :: c
+
+        ! Reallocate if N has changed since the last sequence. In a run N is
+        ! fixed, so this costs one size comparison per event; the unit tests do
+        ! vary N between cases.
+        if (allocated(origin_cell)) then
+            if (size(origin_cell) /= N) deallocate(origin_cell)
+        end if
+        if (allocated(destination_cell)) then
+            if (size(destination_cell) /= N) deallocate(destination_cell)
+        end if
+        if (.not. allocated(origin_cell)) allocate(origin_cell(N))
+        if (.not. allocated(destination_cell)) allocate(destination_cell(N))
+
+        do c = 1, N
+            origin_cell(c) = c
+        end do
+
+    end subroutine begin_eddy_sequence
+
+
+    subroutine accumulate_eddy(eddy_length, eddy_start)
+        ! Fold one eddy into the sequence. Call with the same arguments as the
+        ! triplet_map calls on the scalar fields, so the tracer and the scalars
+        ! stay in lockstep.
+        !
+        ! Composition order needs no special handling: applying the maps to the
+        ! tracer in the order the eddies occurred yields the correct composed
+        ! gather automatically. Written out explicitly the nesting runs in
+        ! reverse (eddies 1,2,3 compose as s1(s2(s3(z)))), which is easy to get
+        ! backwards -- so do not replace this with hand-rolled index arithmetic.
+        integer(i4), intent(in) :: eddy_length, eddy_start
+
+        call triplet_map(eddy_length, eddy_start, origin_cell)
+
+    end subroutine accumulate_eddy
+
+
+    subroutine finalize_eddy_sequence()
+        ! Invert the composed tracer into the forward map used to move droplets.
+        !
+        ! triplet_map is a gather: it fills each cell with the value pulled from
+        ! its source, so after a sequence origin_cell(j) says what arrived at j.
+        ! That receiver's view is exactly what a scalar field needs -- every cell
+        ! is filled with whatever landed in it.
+        !
+        ! A droplet asks the opposite question: not "what arrived here?" but
+        ! "where did my fluid go?". That is the sender's view, and it is the
+        ! inverse permutation, which is what this builds.
+        !
+        ! The two coincide when the permutation is its own inverse -- true for
+        ! eddy lengths 3 and 6, false for 9 and above.
+        !
+        ! origin_cell is a permutation of 1..N, so destination_cell is too: the
+        ! droplet population is neither lost nor duplicated.
+        integer(i4) :: j
+
+        do j = 1, N
+            destination_cell(origin_cell(j)) = j
+        end do
+
+    end subroutine finalize_eddy_sequence
 
 
     subroutine reset_budgets()

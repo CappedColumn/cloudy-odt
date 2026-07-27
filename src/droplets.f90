@@ -20,7 +20,8 @@ module droplets
 
     private
     public :: particles, particle, current_n_particles, total_n_particles, total_n_fellout, n_injected
-    public :: initialize_microphysics, update_droplets, move_particles_in_eddy
+    public :: initialize_microphysics, update_droplets
+    public :: move_particles_by_cellmap
     public :: calculate_droplet_statistics, bin_droplet_radii
     public :: particle_bin_edges, size_distribution, n_DSD_bins, n_aer_category
     public :: dsd_varid, aerDSD_varids
@@ -572,27 +573,41 @@ contains
     end subroutine entrain_particles
 
 
-    subroutine move_particles_in_eddy(lparticles, M, L)
-        ! Move particles within an eddy based on the triplet map.
-        ! The triplet map moves gridcell z1 -> z2. A particle at pz1 in that
-        ! cell carries its offset: pz2 = z2 + (pz1 - z1), then wraps periodic.
+    subroutine move_particles_by_cellmap(lparticles, dest_cell)
+        ! Displace every particle once, using the net cell rearrangement produced
+        ! by a whole sequence of composed triplet maps. dest_cell(c) is the grid
+        ! cell that the fluid originally in cell c has ended up in after the
+        ! sequence, built by begin_eddy_sequence / accumulate_eddy /
+        ! finalize_eddy_sequence in globals. Both ODT (one eddy per turbulence
+        ! step) and LEM (several) reach this routine through that same API, so
+        ! droplets follow the fluid through the composition
+        ! c -> map1(c) -> map2(map1(c)) -> ... and are touched exactly once per
+        ! turbulence step.
+        !
+        ! The displacement is a whole number of cells, so each particle keeps its
+        ! sub-cell offset. Because the offset is bounded (0 <= offset < dz_length)
+        ! and dest_cell is always in [1, N], the new position lands inside
+        ! [0, H) by construction, including for eddies that wrap the periodic
+        ! boundary -- no modulo is needed. gridcell is set directly rather than
+        ! re-derived, so position and gridcell stay consistent at all times.
+        !
+        ! (Argument is named dest_cell, not destination_cell, to avoid masking
+        ! the module variable of that name in globals.)
         type(particle), intent(inout) :: lparticles(:)
-        integer(i4), intent(in) :: M, L
-        real(dp) :: mapped_z(N)
-        integer :: i, gc
-
-        mapped_z = z
-        call triplet_map(L, M, mapped_z)
+        integer(i4), intent(in) :: dest_cell(:)
+        integer(i4) :: i, start_cell, end_cell
 
         do i = 1, current_n_particles
-            gc = lparticles(i)%gridcell
-            if (mapped_z(gc) /= z(gc)) then
-                lparticles(i)%position = modulo( &
-                    mapped_z(gc) + (lparticles(i)%position - z(gc)), H)
+            start_cell = lparticles(i)%gridcell
+            end_cell = dest_cell(start_cell)
+            if (end_cell /= start_cell) then
+                lparticles(i)%position = z(end_cell) &
+                    + (lparticles(i)%position - z(start_cell))
+                lparticles(i)%gridcell = end_cell
             end if
         end do
 
-    end subroutine move_particles_in_eddy
+    end subroutine move_particles_by_cellmap
 
     !-----------------------------------------------------------
 

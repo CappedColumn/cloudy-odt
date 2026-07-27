@@ -1,7 +1,7 @@
 module LEM
     use globals
     use microphysics, only: virtual_temp, update_supersat
-    use droplets, only: particle, particles, current_n_particles, move_particles_in_eddy
+    use droplets, only: particle, particles, current_n_particles, move_particles_by_cellmap
     implicit none
 
     private
@@ -24,6 +24,9 @@ module LEM
     real(dp) :: vapor_diffusivity        ! Molecular diffusivity for water vapor (m^2/s)
     real(dp) :: thermal_diffusivity      ! Molecular diffusivity for temperature (m^2/s)
 
+    ! The cell-label tracers used to compose the per-event triplet maps now live
+    ! in globals alongside triplet_map, so ODT and LEM share one implementation.
+
 contains
 
     subroutine initialize_LEM(domain_height)
@@ -44,6 +47,36 @@ contains
 
         thermal_diffusivity = kT
         vapor_diffusivity   = Dv
+
+        ! -------------------------------------------------------------------
+        ! Timestep naming -- four similar names, different quantities. Note in
+        ! particular that `diffusion_step` and `diffusion_timestep` differ by one
+        ! word and are NOT the same thing.
+        !
+        !   dt                  (global)    the model timestep; the main loop
+        !                                   advances time = time + dt (CODT.f90:69)
+        !   delta_time          (global)    time since the last physics update,
+        !                                   time - last_time_updated (CODT.f90:73)
+        !   diffusion_step      (global)    the backstop THRESHOLD compared
+        !                                   against delta_time (CODT.f90:82);
+        !                                   set to dt below
+        !   diffusion_timestep  (LEM local) the diffusive STABILITY LIMIT
+        !                                   0.2*dz^2/D, computed just below and
+        !                                   used only to derive dt,
+        !                                   maps_per_event, steps_between_events
+        !
+        ! diffusion_step == diffusion_timestep only in the
+        ! diffusion_timestep >= convection_timestep branch, where dt is taken
+        ! from diffusion_timestep. In the other branch dt comes from
+        ! convection_timestep and the two differ.
+        !
+        ! The names change again at the call boundary: lem_turbulence_step takes
+        ! dt and delta_time as dummies named ldt and ldelta_time.
+        !
+        ! See docs/known_issues.md, "Physics chain may run twice per iteration
+        ! when an eddy is accepted" -- an open question about delta_time being
+        ! computed once per iteration and not recomputed after the backstop.
+        ! -------------------------------------------------------------------
 
         ! Diffusion stability timestep
         diffusion_timestep = 0.2 * dz_length**2 / max(vapor_diffusivity, thermal_diffusivity)
@@ -67,6 +100,8 @@ contains
 
         diffusion_step = dt
         iteration_count = 0
+
+        call begin_eddy_sequence()   ! allocates the shared tracers once
 
         write(*,*) '--- LEM Configuration ---'
         write(*,*) 'Re:                  ', reynolds_number
@@ -115,7 +150,7 @@ contains
         logical, intent(out) :: leddy_accepted
         integer(i4), intent(out) :: eddy_loc, eddy_len
 
-        integer(i4) :: j, gridpoints_raw, eddy_gridpoints, eddy_start
+        integer(i4) :: j, c, gridpoints_raw, eddy_gridpoints, eddy_start
         real(dp) :: rand_size, rand_position, sampled_eddy_size
 
         iteration_count = iteration_count + 1
@@ -124,6 +159,10 @@ contains
         eddy_len = 0
 
         if (mod(iteration_count, steps_between_events) /= 0) return
+
+        ! Compose all maps_per_event maps into one net rearrangement, so droplets
+        ! are displaced once per event rather than once per map.
+        if (do_microphysics) call begin_eddy_sequence()
 
         do j = 1, maps_per_event
             ! Sample eddy size from -5/3 inertial-subrange spectrum
@@ -142,18 +181,20 @@ contains
             call random_number(rand_position)
             eddy_start = int(rand_position * N) + 1
 
-            ! Apply periodic triplet map to dimensional scalars
+            ! Apply periodic triplet map to dimensional scalars, and the identical
+            ! permutation to the cell-label tracer so the maps compose.
             call triplet_map(eddy_gridpoints, eddy_start, T)
             call triplet_map(eddy_gridpoints, eddy_start, WV)
-
-            ! Move particles
-            if (do_microphysics) then
-                call move_particles_in_eddy(particles, eddy_start, eddy_gridpoints)
-            end if
+            if (do_microphysics) call accumulate_eddy(eddy_gridpoints, eddy_start)
 
             eddy_loc = eddy_start
             eddy_len = eddy_gridpoints
         end do
+
+        if (do_microphysics) then
+            call finalize_eddy_sequence()
+            call move_particles_by_cellmap(particles, destination_cell)
+        end if
 
         leddy_accepted = .true.
 

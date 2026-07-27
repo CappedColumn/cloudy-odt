@@ -1,7 +1,7 @@
 module ODT
     use globals
     use microphysics, only: update_supersat, saturation_mixing_ratio, virtual_temp
-    use droplets, only: particles, move_particles_in_eddy
+    use droplets, only: particles, move_particles_by_cellmap
     implicit none
 
     ! Contains the subroutines and functions necessary for implementing the turbulent aspects
@@ -440,10 +440,19 @@ contains
             cw = -6.75*(qw + wK)/(1.*L)
         end if
 
+        ! Start the droplet eddy sequence here rather than at the top of the
+        ! turbulence step: implement_eddy is reached only when an eddy is
+        ! accepted, and acceptance is rare. Beginning the sequence per step
+        ! instead costs an O(N) identity fill on every rejected step, which
+        ! measured as a ~50% chamber slowdown (N=2000).
+        if (do_microphysics) call begin_eddy_sequence()
+
         ! Create triplet copies
         call triplet_map(L, M, W_nd)
         call triplet_map(L, M, T_nd)
         call triplet_map(L, M, WV_nd)
+        ! Fold the same map into the eddy sequence that displaces droplets.
+        if (do_microphysics) call accumulate_eddy(L, M)
         ! Scale for energy conservation
         call addK(L, M, W_nd, cw)
         
@@ -578,11 +587,19 @@ contains
         logical, intent(out) :: leddy_accepted
         integer(i4), intent(out) :: eddy_loc, eddy_len
 
+        ! ODT implements one eddy per turbulence step, so this is the
+        ! single-eddy case of the same sequence LEM builds from several maps.
+        ! begin_eddy_sequence is called inside implement_eddy (acceptance-only);
+        ! by the time we get past the return below, the sequence holds exactly
+        ! the one accepted eddy.
         call eddy_acceptance_method(ldt, eddy_loc, eddy_len, leddy_accepted)
 
         if (.not. leddy_accepted) return
 
-        if (do_microphysics) call move_particles_in_eddy(particles, eddy_loc, eddy_len)
+        if (do_microphysics) then
+            call finalize_eddy_sequence()
+            call move_particles_by_cellmap(particles, destination_cell)
+        end if
 
     end subroutine odt_turbulence_step
 

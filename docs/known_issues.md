@@ -249,14 +249,147 @@ trap, or a code defect; move it once you know.
   source, not just inferred from the profile.
 - **Found in** — `527cd7f` (`v2.0.0-1-g527cd7f`), `main`; from the output
   `git_commit` attribute of the madison SF1 runs.
-- **Status** — **open.** The v2.0.1 attempt was reverted (see above); code is
-  back to v2.0.0's copy+cache. Performance only — no correctness defect in either
-  version. The eddy-local `O(L)` approach is the planned next step, pending
-  design + benchmark against the 49 s v2.0.0 baseline.
+- **Status** — **resolved on `feature/lem-empm-port`** (slice 1). The routine was
+  replaced by the composed-map path described in the next entry, which touches
+  each droplet once per turbulence step instead of once per map: madison ent1
+  went **48.1 s -> 4.0 s (~12x)**, and the mover dropped to 0.2% of runtime with
+  the hotspot moving onto DGM/ODE physics.
+- **Correction to an earlier claim in this entry** — a previous revision stated
+  *"Performance only — no correctness defect in either version."* **That was
+  wrong.** The routine had two independent correctness defects, documented in
+  the next entry. The performance framing is what kept them unexamined for so
+  long: the routine was read as bookkeeping, so nobody checked its arithmetic.
+
+### Droplet transport through triplet maps used the wrong map direction
+
+Two independent defects in `droplets::move_particles_in_eddy`, both silent —
+droplet count was conserved, positions stayed in `[0,H)` and indices stayed
+valid, so bulk statistics looked plausible. What was corrupted was the pairing
+between each droplet and the thermodynamic history of the air around it.
+
+- **Defect A — wrong map direction (affected both parcel and chamber).**
+  `triplet_map` (`src/globals.f90`) is written as a *gather*: after the call,
+  `field(k)` holds the value pulled from `source_index`, i.e. "what arrived in
+  cell k". That receiver's-side view is exactly right for scalars — every cell
+  is filled with whatever landed in it, and `T`/`WV` were always correct.
+
+  A droplet asks the opposite question — "where did *my* fluid go?" — which is
+  the sender's view, the inverse permutation. `move_particles_in_eddy` indexed
+  the gather array at the particle's own cell, so droplets were advected
+  *backwards* through the rearrangement, landing in a parcel they had no history
+  with.
+
+- **Why it went unnoticed for so long** — the two tables coincide exactly when
+  the permutation is its own inverse (all cycles of length 2). That is true for
+  eddy lengths **3 and 6**, and false for **9 and above**:
+
+  | eddy length | cells where gather and forward tables differ (N=36) |
+  |---|---|
+  | 3, 6 | 0 — identical |
+  | 9 | 4 |
+  | 12 | 10 |
+  | 18 | 16 |
+  | 36 | 30 |
+
+  Every case in `test/test_move_particles.f90` used `L=6`, except one `L=9` case
+  whose particle sat on a fixed point of both maps. The suite was therefore
+  direction-blind: no test ever asked a droplet to travel a cycle longer than 2.
+
+- **Defect B — stale `gridcell` across composed maps (parcel only).**
+  `move_particles_in_eddy` updated `position` but never `gridcell`. With one
+  eddy per step that is harmless, because `move_particles_by_gravity` /
+  the collision branch refresh the index every step
+  (`src/droplets.f90:143-144`, `352-354`). LEM applies `maps_per_event` maps
+  (madison ~5693) between refreshes, so every map after the first looked up its
+  displacement against the cell the droplet had already left. Note that moving
+  per eddy is *not* wrong in itself — it is wrong only without carrying the
+  index forward.
+
+- **Resolution** — a single eddy-sequence API in `src/globals.f90`, used
+  identically by both backends:
+
+  | call | does |
+  |---|---|
+  | `begin_eddy_sequence()` | cell-label tracer to the identity |
+  | `accumulate_eddy(L, M)` | folds one eddy in; sits beside the scalar `triplet_map` calls so the two stay in lockstep |
+  | `finalize_eddy_sequence()` | inverts the composed tracer into `destination_cell` — the gather->forward flip, and the *only* place it happens |
+
+  `droplets::move_particles_by_cellmap` then displaces each droplet once, setting
+  `position` and `gridcell` together. ODT is the one-eddy case
+  (`src/ODT.f90`: `begin` in `odt_turbulence_step`, `accumulate` in
+  `implement_eddy`, `finalize` + move at the end); LEM is the many-eddy case
+  (`src/LEM.f90:lem_turbulence_step`). `move_particles_in_eddy` was deleted.
+
+  Composition order needs no special handling: applying the maps in sequence to
+  the tracer yields the correct composed gather automatically. Written out
+  explicitly the nesting runs in reverse (eddies 1,2,3 compose as
+  `s1(s2(s3(z)))`), which is easy to get backwards — so the tracer approach
+  should not be "optimized" into hand-rolled index arithmetic.
+
+- **Consequence for existing results** — parcel results change (this was already
+  expected; slice 1 is a correction, not a refactor). **Chamber results also
+  change**, for any eddy with `L >= 9`. Chamber was previously believed
+  unaffected; it is not. Any completed chamber run with droplets has backwards
+  droplet transport for most of its eddies.
+- **Verification** — `test/test_eddy_cellmap_standalone.f90` validates the scheme
+  using no production code but `triplet_map`: it carries a labelled scalar field
+  through the same eddies and asserts each droplet ends in the parcel it started
+  in, over 300 random multi-eddy sequences. `test/test_move_particles.f90` adds a
+  positive equivalence check (compose-then-move-once == per-eddy moves with the
+  index carried forward) and a stale-index regression guard.
+- **Found in** — `afc798f`, branch `feature/lem-empm-port`; found by reading the
+  code and by an equivalence test, not from a run.
+- **Status** — **fixed on `feature/lem-empm-port`** (uncommitted at time of
+  writing; update this line with the commit hash when slice 1 lands).
 
 ---
 
 ## Unknown
 
-*(No items yet. Use this section for behavior that has not been classified —
-move it to Physics, Input/Output, or Coding once the cause is understood.)*
+### Physics chain may run twice per iteration when an eddy is accepted
+
+- **Naming hazard (read this first)** — four similar names are involved and are
+  easy to conflate. In particular `diffusion_step` and `diffusion_timestep`
+  differ by one word and are **different quantities**:
+
+  | name | scope | meaning |
+  |---|---|---|
+  | `dt` | global | the model timestep; `time = time + dt` each iteration (`CODT.f90:69`) |
+  | `delta_time` | global | time since the last physics update, `time - last_time_updated` (`CODT.f90:73`) |
+  | `diffusion_step` | global | the backstop *threshold* compared against `delta_time` (`CODT.f90:82`); set to `dt` by both backends (`LEM.f90:101`, `ODT.f90:85-86`) |
+  | `diffusion_timestep` | LEM local | the diffusive *stability limit* `0.2*dz^2/D` (`LEM.f90:82`); used only to derive `dt`, `maps_per_event`, `steps_between_events` (`LEM.f90:91-99`) |
+
+  `diffusion_step == diffusion_timestep` only in the
+  `diffusion_timestep >= convection_timestep` branch, where `dt` is set from
+  `diffusion_timestep` (`LEM.f90:92`). In the other branch `dt` comes from
+  `convection_timestep` (`:97`) and the two differ. Note also that
+  `turbulence_step` receives both as dummies named `ldt` and `ldelta_time`
+  (`LEM.f90:141`, `ODT.f90:576-579`).
+
+- **Symptom** — Both backends set `diffusion_step = dt` and the main loop
+  advances `time = time + dt`, so `delta_time` is `dt` on essentially every
+  iteration and the diffusion backstop at `CODT.f90:82` fires every step.
+  `delta_time` is computed once at `CODT.f90:73` and is **not** recomputed after
+  that block, so when an eddy is also accepted the chain at `CODT.f90:96-100`
+  re-runs `diffuse_step`, `advance_droplets`, special effects and radiation with
+  the full `dt` again.
+- **Scope** — In ODT eddy acceptance is stochastic and rare, so this is an
+  occasional extra `dt`. In LEM with `steps_between_events = 1` (the
+  `diffusion_timestep >= convection_timestep` branch, `LEM.f90:91-94` — the
+  branch madison takes) `leddy_accepted` is set unconditionally, so every
+  iteration would double-apply.
+- **Why this may not be a defect** — it may be the intended design: an accepted
+  eddy is a distinct physical event, and re-running the chain after the
+  rearrangement lets droplets and scalars respond to the new field
+  configuration. This is filed here rather than under Coding because nobody has
+  established which reading is correct.
+- **How to settle it** — instrument one short parcel run: count `diffuse_step`
+  calls per iteration and compare integrated diffusion time against elapsed
+  `time`. If integrated physics time is ~2x elapsed time in LEM, it is a defect.
+- **Note** — floating point softens it: `(time + dt) - time` is not exactly `dt`
+  at large `time`, so the backstop occasionally skips and the next iteration
+  carries a larger `delta_time`. Any over-application is therefore irregular
+  rather than exactly 2x.
+- **Found in** — `afc798f`, branch `feature/lem-empm-port`; found by reading the
+  code, not from a run.
+- **Status** — open question, not yet classified.

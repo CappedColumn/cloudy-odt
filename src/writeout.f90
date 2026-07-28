@@ -26,7 +26,9 @@ module writeout
                          eps_top, eps_bot, sky_temp, sky_cooling_flag, rad_call_interval, &
                          nPhotons, nBins, Lx_rad, Ly_rad, T_side, max_droplets_per_cell
     use ODT, only: Tdiff, Lmin, Lprob, max_accept_prob, C2, ZC2
-    use LEM, only: integral_length_scale, kolmogorov_length_scale, dissipation_rate
+    use LEM, only: integral_length_scale, dissipation_rate, &
+                   actual_kolmogorov_scale, grid_eddy_scale, diffusivity_length_scale, &
+                   smallest_eddy_scale, smallest_eddy_gridpoints, diffusivity_enhancement
     implicit none
 
     private
@@ -783,10 +785,22 @@ contains
         if (simulation_mode == 'parcel') then
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.integral_length_scale", &
                             integral_length_scale) )
-            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.kolmogorov_length_scale", &
-                            kolmogorov_length_scale) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "TURBULENCE_LEM.dissipation_rate", &
                             dissipation_rate) )
+            ! Derived turbulence scales (not namelist inputs). smallest_eddy_scale
+            ! governs; actual_kolmogorov_scale is reported for reference only.
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.actual_kolmogorov_scale", &
+                            actual_kolmogorov_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.grid_eddy_scale", &
+                            grid_eddy_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.diffusivity_length_scale", &
+                            diffusivity_length_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.smallest_eddy_scale", &
+                            smallest_eddy_scale) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.smallest_eddy_gridpoints", &
+                            smallest_eddy_gridpoints) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "LEM.diffusivity_enhancement", &
+                            diffusivity_enhancement) )
         end if
 
         ! MICROPHYSICS — shared

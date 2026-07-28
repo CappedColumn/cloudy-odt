@@ -11,7 +11,8 @@ module initialize
                    odt_diffuse_step, odt_turbulence_step, odt_sync_after_physics, &
                    C2, ZC2, Tdiff
     use LEM, only: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics, &
-                   integral_length_scale, kolmogorov_length_scale, dissipation_rate, reynolds_number
+                   integral_length_scale, dissipation_rate, reynolds_number, &
+                   smallest_eddy_scale
     use special_effects, only: initialize_special_effects
     use writeout, only: initialize_buffers, deallocate_buffers, create_netcdf, &
                 initialize_eddy_file, write_eddy_header_fields, &
@@ -64,7 +65,7 @@ contains
                 call write_eddy_header_fields([C2, ZC2, Tdiff, Tref])
             else if (simulation_mode == 'parcel') then
                 call write_eddy_header_fields([integral_length_scale, &
-                                               kolmogorov_length_scale, dissipation_rate])
+                                               smallest_eddy_scale, dissipation_rate])
             end if
         end if
         call add_to_profile_buffer(time, T, WV, Tv, SS)
@@ -328,7 +329,7 @@ contains
             write(*,'(a,f0.2)')  ' pres (mb):      ', pres / Pa_per_mb
             write(*,'(a,f0.4)')  ' initial_RH:     ', initial_RH
             write(*,'(a,es9.2)') ' L_int (m):      ', integral_length_scale
-            write(*,'(a,es9.2)') ' L_kolm (m):     ', kolmogorov_length_scale
+            write(*,'(a,es9.2)') ' L_small (m):    ', smallest_eddy_scale
             write(*,'(a,es9.2)') ' epsilon (m2/s3):', dissipation_rate
         end if
 

@@ -268,6 +268,13 @@ module globals
         module procedure triplet_map_real, triplet_map_int
     end interface triplet_map
 
+    ! Smallest eddy the triplet map can represent, in gridpoints. The map splits
+    ! an eddy into three segments of eddy_length/3 cells; below 6 gridpoints a
+    ! segment is a single cell and the map degenerates into a relabelling that
+    ! carries no sub-eddy structure. Both backends must respect this floor: it
+    ! sets the effective Kolmogorov scale of the model, 6*dz_length.
+    integer(i4), parameter :: min_eddy_gridpoints = 6
+
     ! Cell-label tracer backing the eddy-sequence API below. Shared by ODT (one
     ! eddy per turbulence step) and LEM (several), so both move droplets through
     ! exactly the same code.

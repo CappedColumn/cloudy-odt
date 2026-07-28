@@ -208,6 +208,12 @@ trap, or a code defect; move it once you know.
   at the 3-gridpoint floor (`LEM.f90:140`, quantized to multiples of 3). So
   typical `L` is ~3-30 against `N = 6000`: **two to three orders of magnitude**
   more work than the eddy requires.
+  > **Superseded in v3.0.0** (`feature/lem-empm-port`, slice 2):
+  > `kolmogorov_length_scale` no longer exists. The sampler's lower bound is now
+  > `smallest_eddy_scale = max((nu^3/eps)^(1/4), 6*dz)`, so it can never fall
+  > below the grid and the pile-up at the floor is gone. The eddy-size
+  > *distribution* changes; the `O(N + n_particles)`-per-eddy cost described here
+  > was already addressed separately by the unified mover in `a760c51`.
 - **Note on an earlier assumption** — this is why removing the eddy acceptance
   method did not speed runs up appreciably. Neither acceptance sampling nor DGM
   was ever the bottleneck; the cost was always this routine.
@@ -393,3 +399,30 @@ between each droplet and the thermodynamic history of the air around it.
 - **Found in** — `afc798f`, branch `feature/lem-empm-port`; found by reading the
   code, not from a run.
 - **Status** — open question, not yet classified.
+
+### Parcel-mode `reynolds_number` drives `special_effects` sidewall forcing
+
+- **Symptom** — Not yet observed in a run. `LEM::reynolds_number` is public and
+  `initialize.f90:58` passes it to `initialize_special_effects` as the *Rayleigh
+  number* argument in parcel mode. It lands in `special_effects.f90:84-90` as
+  `Ra`, then propagates to `Nuss`, `velocity_bot` and `tau_sw`. An LEM
+  turbulence quantity is therefore driving a chamber-derived sidewall nudging
+  parameterization through an argument named for a different dimensionless
+  group.
+- **Why it matters now** — the slice-2 scale rework changes `Re` substantially
+  (4.98 -> 1.98 on the bundled `input/params.nml`, because the smallest eddy is
+  now derived rather than taken from the removed `kolmogorov_length_scale`). Any
+  parcel run with `do_special_effects = .true.` therefore sees changed sidewall
+  forcing as a side effect of a turbulence-scale change. Inert at defaults:
+  `do_special_effects = .false.`. Chamber mode is unaffected — it passes a real
+  Rayleigh number from `initialize.f90:55`.
+- **Evidence** — code reading only, during the slice-2 diffusivity audit. No run
+  has exercised `do_special_effects = .true.` in parcel mode.
+- **Suspected location** — `initialize.f90:58` (the call site) and
+  `special_effects.f90:78-90` (the consumer). Both verified by reading.
+- **Open question** — whether passing `Re` here was deliberate (as a generic
+  "vigour of convection" proxy) or carried over from the chamber path. If
+  deliberate the dummy argument should be renamed and the choice documented; if
+  not, parcel mode needs its own sidewall closure or should disable it.
+- **Found in** — branch `feature/lem-empm-port`, working tree during slice 2.
+- **Status** — open.

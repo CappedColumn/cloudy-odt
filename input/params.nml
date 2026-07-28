@@ -60,7 +60,6 @@ ZC2 = 1.0e5
 
 &TURBULENCE_LEM
 integral_length_scale = 0.01
-kolmogorov_length_scale = 0.001
 dissipation_rate = 0.01
 /
 

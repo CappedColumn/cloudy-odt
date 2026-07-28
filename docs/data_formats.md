@@ -185,6 +185,15 @@ Profiles and time series. Always written.
 - `code_version` — version from `git describe` at build time (e.g. `v1.0.0`, or `v1.0.0-5-g1a2b3c4-dirty` for dev builds)
 - `git_commit` — short commit hash (`-dirty` if the tree had uncommitted changes)
 - The namelist parameters, namespaced as `PARAMETERS.N`, `MICROPHYSICS.write_trajectories`, etc. (logicals stored as 0/1; mode-specific groups only present for the relevant mode)
+- **Parcel only, derived (not namelist inputs):** `LEM.actual_kolmogorov_scale`,
+  `LEM.grid_eddy_scale`, `LEM.diffusivity_length_scale`, `LEM.smallest_eddy_scale`
+  (all m), `LEM.smallest_eddy_gridpoints` (int, cells), and
+  `LEM.diffusivity_enhancement` (unitless, ≥ 1). Added in v3.0.0; additive, so
+  `CODT_output_v1` is unchanged — detect by attribute presence.
+  `TURBULENCE_LEM.kolmogorov_length_scale` was **removed** in the same release
+  along with the namelist parameter it echoed. `smallest_eddy_scale` is the
+  governing scale; `actual_kolmogorov_scale` is reported for reference and never
+  governs. Consistency check: `smallest_eddy_scale == smallest_eddy_gridpoints · H/N`.
 
 **Dimensions:** `time` (unlimited), `z`, plus `radius`/`radius_edges` when microphysics is on.
 
@@ -338,7 +347,14 @@ Unformatted Fortran **stream** (no record markers). Mode-aware header, then one 
 2. `N` (i4), `H` (f8)
 3. Mode-specific `f8` fields:
    - **Chamber:** `C2`, `ZC2`, `Tdiff`, `Tref` (4 values)
-   - **Parcel:** `integral_length_scale`, `kolmogorov_length_scale`, `dissipation_rate` (3 values)
+   - **Parcel:** `integral_length_scale`, `smallest_eddy_scale`, `dissipation_rate` (3 values)
+
+   > **Changed in v3.0.0:** the second parcel value was
+   > `kolmogorov_length_scale` (a namelist input). It is now
+   > `smallest_eddy_scale`, a *derived* quantity —
+   > `max((ν³/ε)^(1/4), 6·dz)`. Field count and types are unchanged, so
+   > readers will not fail; they will silently read a different quantity.
+   > Distinguish by the file's `code_version`.
 
 **Per-eddy record:** `location` (i4), `length` (i4), `time` (f8)
 

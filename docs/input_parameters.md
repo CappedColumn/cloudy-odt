@@ -90,7 +90,7 @@ Required when `simulation_mode = 'chamber'` and `do_turbulence = .true.` Control
 | Parameter | Type | Units | Default | Description |
 |-----------|------|-------|---------|-------------|
 | `Tdiff` | real | °C | `10.` | Top-to-bottom temperature difference driving convection (ΔT). |
-| `Lmin` | integer | grid cells | `6` | Minimum eddy size. |
+| `Lmin` | integer | grid cells | `6` | Minimum eddy size. **Validated at startup (v3.0.0):** must be ≥ 6 and a multiple of 3, or the run aborts. Below 6 each of the triplet map's three segments is a single cell and the eddy carries no sub-eddy structure; the floor is `globals::min_eddy_gridpoints`, the same constant that sets parcel mode's `grid_eddy_scale`. |
 | `Lprob` | integer | grid cells | `18` | Eddy-length PDF shape parameter; the length distribution decays as `exp(−2·Lprob/L)`, so larger values favor larger eddies. |
 | `max_accept_prob` | real | — | `0.1` | Maximum eddy acceptance probability (caps the eddy event rate). |
 | `C2` | real | — | `1.5e3` | Eddy-rate coefficient scaling the buoyant energy available to eddies. |
@@ -105,8 +105,100 @@ Required when `simulation_mode = 'parcel'` and `do_turbulence = .true.` Sets the
 | Parameter | Type | Units | Default | Description |
 |-----------|------|-------|---------|-------------|
 | `integral_length_scale` | real | m | `0.01` | Integral (largest eddy) length scale. |
-| `kolmogorov_length_scale` | real | m | `0.001` | Kolmogorov (smallest eddy) length scale. |
 | `dissipation_rate` | real | m²/s³ | `0.01` | Turbulent kinetic energy dissipation rate. |
+
+### Removed: `kolmogorov_length_scale` (breaking, v3.0.0)
+
+`kolmogorov_length_scale` was **removed** from `&TURBULENCE_LEM`. A namelist that
+still declares it is a **fatal read error** — delete the line from existing
+`.nml` files.
+
+The smallest turbulence scale is now derived rather than supplied, because a
+user-supplied value could contradict the grid. Four scales are computed and
+reported in the run log:
+
+| derived quantity | formula | meaning |
+|---|---|---|
+| `actual_kolmogorov_scale` | `(ν³/ε)^(1/4)` | the physical dissipation scale — **diagnostic only** |
+| `grid_eddy_scale` | `6·dz` | the smallest eddy the triplet map can represent at all |
+| `diffusivity_length_scale` | `(max(kT,Dv) / (0.1·ε^(1/3)))^(3/4)` | where turbulent diffusivity falls to molecular |
+| `smallest_eddy_scale` | `max` of the latter two, rounded **up** to a multiple of 3 cells | **the governing scale** |
+
+`smallest_eddy_scale` sets the eddy-sampler lower bound, the sampler's gridpoint
+floor, the Reynolds number `(L/smallest_eddy_scale)^(4/3)`, and the LEM
+diffusivity enhancement — so those cannot drift apart. It is also reported in
+cells as `smallest_eddy_gridpoints` (always a multiple of 3, always ≥ 6).
+
+Why `actual_kolmogorov_scale` is diagnostic: `0.1·ε^(1/3)·η^(4/3)` reduces to
+`0.1·ν` identically (ε cancels), so `diffusivity_length_scale / η = (10·D/ν)^(3/4)
+≈ 7.7` for both `kT` and `Dv`. The physical η is always ~8× below the scale at
+which this closure's turbulence actually hands off to molecular transport, so it
+can never win the `max`. It is reported for reference.
+
+### The LEM diffusivity enhancement
+
+```
+diffusivity_enhancement = (smallest_eddy_scale / diffusivity_length_scale)^(4/3)   ≥ 1
+```
+
+Two regimes, one formula:
+
+- **`6·dz > diffusivity_length_scale`** (grid-limited) — the grid is coarser than
+  the handoff, so eddies between the two are real but unrepresentable. Their
+  stirring is absorbed by scaling both LEM diffusivities up by this factor. Here
+  `6·dz` is exactly two 3-cell quanta, so the rounding never overshoots:
+  `smallest_eddy_gridpoints = 6` and `f = (6·dz / l_D)^(4/3)` exactly. `f` grows
+  without bound as the grid coarsens, which is the intent.
+- **`6·dz < diffusivity_length_scale`** (diffusivity-limited) — the grid is finer
+  than the handoff, so eddies below it are meaningless. The smallest eddy is
+  raised to the handoff instead.
+
+Rounding **up** to a multiple of 3 cells is what guarantees the factor is never
+below 1, so **LEM diffusion is never slower than molecular**:
+
+| | applies to | value |
+|---|---|---|
+| `thermal_diffusivity` | LEM diffusion of `T` and the diffusion stability step | `kT · f` |
+| `vapor_diffusivity` | LEM diffusion of `WV` and the diffusion stability step | `Dv · f` |
+
+Both are scaled by the *same* `f`, so `Pr` and `Sc` are preserved exactly.
+
+**`f` is a step function of the grid, not a smooth one.** In the
+diffusivity-limited regime the quantum `3·dz` can be a large fraction of `l_D` —
+up to `l_D/2` right at the crossover — so rounding up can overshoot by as much as
+50%, giving `f` up to `(3/2)^(4/3) = 1.717`. It approaches 1 only as the grid
+refines. Two nearby values of `N` can therefore give noticeably different
+diffusivities: at `ε = 0.01, H = 1`, `N = 1025` gives `f = 1.001` while
+`N = 1045` gives `f = 1.675`. This is self-consistent — the model's smallest eddy
+really is 9 cells rather than 6 in the second case, and the diffusivity matches
+that scale — but it means **`f` should be read from the run log or the
+`LEM.diffusivity_enhancement` attribute rather than assumed to be ≈1** whenever
+`6·dz` is close to `l_D`.
+
+**Droplet growth is never enhanced.** The DGM computes its own temperature- and
+pressure-dependent thermal conductivity and vapor diffusivity internally
+(`src/DGM.f90:204-205`, Rogers & Yau Table 7.1) and does not read these values.
+Chamber mode is likewise unaffected — ODT diffuses via `Pr`/`Sc` built from the
+unmodified `kT`/`Dv` globals.
+
+### Validation
+
+Fatal at startup:
+
+- `smallest_eddy_gridpoints > N` — the domain cannot contain the smallest eddy.
+- `smallest_eddy_scale ≥ integral_length_scale` — no inertial range. The −5/3
+  sampler would otherwise raise a negative quantity to a fractional power and
+  produce silent `NaN`.
+
+Warning (non-fatal): `integral_length_scale / smallest_eddy_scale < 3` (`Re < 4.3`)
+— the inertial range is nearly absent and `maps_per_event` will be small. **This
+fires on the bundled `input/params.nml`**, where `L = 0.01` and the derived
+smallest eddy is 6 mm.
+
+**Consequence for existing runs:** results change, and `maps_per_event` can change
+by orders of magnitude where the old input η was far below `6·dz`. To influence
+the model's smallest eddy, change `N`/`H` (which moves `6·dz`) or
+`dissipation_rate` (which moves `diffusivity_length_scale` as `ε^(-1/4)`).
 
 ---
 

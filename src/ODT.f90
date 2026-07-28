@@ -113,6 +113,21 @@ contains
         if (ierr /= 0) call namelist_read_error(nml_unit, 'TURBULENCE_ODT')
         close(nml_unit)
 
+        ! Lmin is namelist-settable, so guard the triplet map's structural floor:
+        ! below min_eddy_gridpoints cells each of the map's three segments is a
+        ! single cell and the eddy carries no sub-eddy structure.
+        if (Lmin < min_eddy_gridpoints) then
+            write(error_unit,'(a,i0,a,i0,a)') &
+                'Error: Lmin = ', Lmin, ' is below the smallest representable eddy (', &
+                min_eddy_gridpoints, ' gridpoints).'
+            call exit(1)
+        end if
+        if (mod(Lmin, 3) /= 0) then
+            write(error_unit,'(a,i0,a)') &
+                'Error: Lmin = ', Lmin, ' must be a multiple of 3 (triplet map segments).'
+            call exit(1)
+        end if
+
     end subroutine read_odt_params
 
     subroutine diffusion(ldelta_time)

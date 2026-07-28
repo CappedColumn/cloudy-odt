@@ -6,23 +6,35 @@ module LEM
 
     private
     public :: initialize_LEM, lem_diffuse_step, lem_turbulence_step, lem_sync_after_physics
-    public :: integral_length_scale, kolmogorov_length_scale, dissipation_rate
+    public :: integral_length_scale, dissipation_rate
     public :: reynolds_number
+    public :: actual_kolmogorov_scale, grid_eddy_scale, diffusivity_length_scale
+    public :: smallest_eddy_scale, smallest_eddy_gridpoints, diffusivity_enhancement
+    ! Exposed for the unit tests, which drive the derivation without a namelist.
+    public :: derive_turbulence_scales, thermal_diffusivity, vapor_diffusivity
 
     ! LEM namelist parameters
-    real(dp) :: integral_length_scale = 0.01
-    real(dp) :: kolmogorov_length_scale = 0.001
-    real(dp) :: dissipation_rate = 0.01
+    real(dp) :: integral_length_scale = 1 ! m
+    real(dp) :: dissipation_rate = 0.01   ! m^2/s^3
 
     ! Derived LEM parameters (set in initialize_LEM)
     integer(i4) :: maps_per_event        ! Triplet maps per eddy event
     integer(i4) :: steps_between_events  ! Diffusion steps between eddy events
     integer(i4) :: iteration_count       ! Running iteration counter
 
-    real(dp) :: turbulent_diffusivity    ! 0.1 * L_int^(4/3) * epsilon^(1/3) (m^2/s)
-    real(dp) :: reynolds_number          ! (L_int / eta)^(4/3)
-    real(dp) :: vapor_diffusivity        ! Molecular diffusivity for water vapor (m^2/s)
-    real(dp) :: thermal_diffusivity      ! Molecular diffusivity for temperature (m^2/s)
+    ! Turbulence scales and diffusivities (all set in initialize_LEM; see the
+    ! naming table and derivation there before touching any of these).
+    real(dp) :: integral_scale_diffusivity  ! 0.1*L_int^(4/3)*eps^(1/3) (m^2/s)
+    real(dp) :: reynolds_number             ! (L_int / smallest_eddy_scale)^(4/3)
+    real(dp) :: vapor_diffusivity           ! LEM diffusivity for water vapor (m^2/s)
+    real(dp) :: thermal_diffusivity         ! LEM diffusivity for temperature (m^2/s)
+
+    real(dp)    :: actual_kolmogorov_scale    ! (nu^3/eps)^(1/4), DIAGNOSTIC ONLY (m)
+    real(dp)    :: grid_eddy_scale            ! min_eddy_gridpoints * dz_length (m)
+    real(dp)    :: diffusivity_length_scale   ! where turbulent D == molecular (m)
+    real(dp)    :: smallest_eddy_scale        ! smallest_eddy_gridpoints * dz (m) -- governs all
+    integer(i4) :: smallest_eddy_gridpoints   ! multiple of 3, >= min_eddy_gridpoints
+    real(dp)    :: diffusivity_enhancement    ! unitless, >= 1; scales kT and Dv alike
 
     ! The cell-label tracers used to compose the per-event triplet maps now live
     ! in globals alongside triplet_map, so ODT and LEM share one implementation.
@@ -40,13 +52,78 @@ contains
 
         call read_lem_params()
 
-        reynolds_number = (integral_length_scale / kolmogorov_length_scale) ** (4./3.)
+        ! -------------------------------------------------------------------
+        ! Turbulence scale naming -- FOUR length scales, three of them
+        ! "Kolmogorov"-ish. Conflating them is the easy mistake here, so none is
+        ! called plain `eta`.
+        !
+        !   actual_kolmogorov_scale   (nu^3/eps)^(1/4). The physical dissipation
+        !                             scale. DIAGNOSTIC ONLY -- see below, it can
+        !                             never govern.
+        !   grid_eddy_scale           min_eddy_gridpoints * dz_length = 6*dz. The
+        !                             smallest eddy the triplet map can represent
+        !                             at all (below 6 cells each of the map's
+        !                             three segments is one cell, so the map
+        !                             carries no sub-eddy structure).
+        !   diffusivity_length_scale  where the turbulent diffusivity falls to
+        !                             the molecular one, i.e. the bottom of the
+        !                             cascade as this closure sees it. Solving
+        !                             0.1*eps^(1/3)*l^(4/3) = D gives
+        !                             l_D = (D / (0.1*eps^(1/3)))^(3/4).
+        !   smallest_eddy_scale       quantized max(grid, diffusivity). THE
+        !                             GOVERNING SCALE: it sets the eddy sampler
+        !                             bound, the Reynolds number, and the
+        !                             diffusivity enhancement, so those three
+        !                             cannot drift apart.
+        !
+        ! Why actual_kolmogorov_scale never wins: 0.1*eps^(1/3)*eta^(4/3) reduces
+        ! to 0.1*nu identically (eps cancels), so
+        ! diffusivity_length_scale/eta = (10*D/nu)^(3/4) ~ 7.7 for both kT and
+        ! Dv. The physical eta is always ~8x below the scale at which this
+        ! closure's turbulence actually hands off to molecular transport. It is
+        ! reported for reference, not used.
+        !
+        ! THE TWO REGIMES, one formula. Let l_D = diffusivity_length_scale.
+        !
+        !   6*dz > l_D  the grid is coarser than the handoff, so eddies between
+        !               l_D and 6*dz are real but unrepresentable. Their stirring
+        !               is absorbed by scaling BOTH LEM diffusivities up by one
+        !               common factor -- which preserves Pr and Sc exactly.
+        !   6*dz < l_D  the grid is finer than the handoff, so eddies between
+        !               6*dz and l_D sit below the diffusive cutoff and are
+        !               meaningless. Raise the smallest eddy to l_D instead; the
+        !               factor then comes out to 1 and the diffusivities stay
+        !               molecular.
+        !
+        ! Both collapse into the branchless derivation below, because
+        ! diffusivity_enhancement is 1 exactly when smallest_eddy_scale == l_D.
+        !
+        ! INVARIANT, the whole point of the scheme: diffusivity_enhancement >= 1,
+        ! so thermal_diffusivity >= kT and vapor_diffusivity >= Dv always. LEM
+        ! diffusion is never slower than molecular. `ceiling` (not `nint`) is
+        ! what guarantees it -- rounding to nearest can land below l_D and drive
+        ! the factor under 1.
+        !
+        ! SCOPE: these two diffusivities are private to LEM and reach only the
+        ! diffusion stability step and diffuse_scalar_periodic. Droplet growth
+        ! uses its own T- and p-dependent values (DGM.f90:204-205) and is
+        ! deliberately untouched; the globals kT/Dv are not modified either,
+        ! since Pr/Sc built from them drive chamber-mode ODT.
+        !
+        ! ORDERING IS LOAD-BEARING. Everything below -- the diffusivities,
+        ! Reynolds number, both timesteps, dt, maps_per_event and
+        ! steps_between_events -- derives from smallest_eddy_scale. Do not
+        ! reorder.
+        !
+        ! Why the grid enters at all: in Krueger, eta IS the smallest rearranged
+        ! segment, and EMPM enforces that by choosing its grid as
+        ! ngrid = NINT(BL_inte/(eta/6))*(BL/BL_inte), i.e. 6*dx = eta exactly, so
+        ! it can never reach either regime. CODT sets N independently of eta, so
+        ! the scale has to be formed from the grid and reconciled against the
+        ! diffusivities.
+        ! -------------------------------------------------------------------
 
-        turbulent_diffusivity = 0.1 * integral_length_scale**(4./3.) &
-                                * dissipation_rate**(1./3.)
-
-        thermal_diffusivity = kT
-        vapor_diffusivity   = Dv
+        call derive_turbulence_scales()
 
         ! -------------------------------------------------------------------
         ! Timestep naming -- four similar names, different quantities. Note in
@@ -82,7 +159,7 @@ contains
         diffusion_timestep = 0.2 * dz_length**2 / max(vapor_diffusivity, thermal_diffusivity)
 
         ! Turbulent convection timestep (Krueger 1993)
-        large_eddy_turnover_time = integral_length_scale**2 / turbulent_diffusivity
+        large_eddy_turnover_time = integral_length_scale**2 / integral_scale_diffusivity
         eddy_rate_per_length = (54./5. * reynolds_number**1.25) &
                                / (integral_length_scale * large_eddy_turnover_time)
         convection_timestep = 1. / (domain_height * eddy_rate_per_length)
@@ -104,8 +181,24 @@ contains
         call begin_eddy_sequence()   ! allocates the shared tracers once
 
         write(*,*) '--- LEM Configuration ---'
+        write(*,'(a)')          ' Turbulence length scales (m):'
+        write(*,'(a,es12.4,a)') '   actual eta (nu^3/eps)^1/4  : ', actual_kolmogorov_scale, &
+            '   (diagnostic only)'
+        write(*,'(a,es12.4)')   '   grid eddy scale (6*dz)     : ', grid_eddy_scale
+        write(*,'(a,es12.4)')   '   diffusivity length scale   : ', diffusivity_length_scale
+        write(*,'(a,es12.4,a,i0,a,a)') '   smallest eddy scale        : ', smallest_eddy_scale, &
+            '   (', smallest_eddy_gridpoints, ' cells)', &
+            merge('   <- grid-limited       ', '   <- diffusivity-limited', &
+                  grid_eddy_scale > diffusivity_length_scale)
+
+        write(*,'(a)') ' Diffusivities (m^2/s):'
+        write(*,'(a,es12.4)')   '   integral scale (DT)        : ', integral_scale_diffusivity
+        write(*,'(a,f0.4,a)')   '   LEM enhancement factor     : ', diffusivity_enhancement, &
+            '   (1 = molecular; DGM is never enhanced)'
+        write(*,'(a,es12.4,a,es12.4)') '     heat  kT ', kT, '  ->', thermal_diffusivity
+        write(*,'(a,es12.4,a,es12.4)') '     vapor Dv ', Dv, '  ->', vapor_diffusivity
+
         write(*,*) 'Re:                  ', reynolds_number
-        write(*,*) 'turbulent_diffusivity:', turbulent_diffusivity
         write(*,*) 'dt (s):              ', dt
         write(*,*) 'maps_per_event:      ', maps_per_event
         write(*,*) 'steps_between_events:', steps_between_events
@@ -165,17 +258,28 @@ contains
         if (do_microphysics) call begin_eddy_sequence()
 
         do j = 1, maps_per_event
-            ! Sample eddy size from -5/3 inertial-subrange spectrum
+            ! Sample eddy size from the -5/3 inertial-subrange spectrum, over
+            ! [smallest_eddy_scale, integral_length_scale].
+            !
+            ! Sampling below smallest_eddy_scale would double-count: those
+            ! eddies would be floored back up here while the diffusivity
+            ! enhancement set in initialize_LEM already stands in for them.
             call random_number(rand_size)
             sampled_eddy_size = (rand_size &
                 * (integral_length_scale**(-5./3.) &
-                   - kolmogorov_length_scale**(-5./3.)) &
-                + kolmogorov_length_scale**(-5./3.)) ** (-3./5.)
+                   - smallest_eddy_scale**(-5./3.)) &
+                + smallest_eddy_scale**(-5./3.)) ** (-3./5.)
 
             ! Convert to gridpoints, quantize to nearest multiple of 3
             gridpoints_raw = int(sampled_eddy_size / dz_length)
             eddy_gridpoints = nint(real(gridpoints_raw, dp) / 3.) * 3
-            eddy_gridpoints = max(3, min(eddy_gridpoints, N))
+            ! Floor at the DERIVED smallest_eddy_gridpoints, not the structural
+            ! constant min_eddy_gridpoints. Flooring at 6 would let eddies land
+            ! below the scale diffusivity_enhancement was computed for, so the
+            ! enhancement and the sampled eddies would both be representing the
+            ! same sub-scale stirring. smallest_eddy_gridpoints is already >= 6
+            ! and a multiple of 3 (see initialize_LEM).
+            eddy_gridpoints = max(smallest_eddy_gridpoints, min(eddy_gridpoints, N))
 
             ! Random starting position (periodic wrapping handles boundary)
             call random_number(rand_position)
@@ -210,7 +314,7 @@ contains
     ! LEM-specific physics routines
     ! -----------------------------------------------
 
-    subroutine diffuse_scalar_periodic(field, molecular_diffusivity, elapsed_time)
+    subroutine diffuse_scalar_periodic(field, diffusivity, elapsed_time)
         ! One Crank-Nicolson diffusion step on a periodic field (parcel mode).
         ! Periodicity makes the implicit matrix *cyclic* tridiagonal (nonzero
         ! corners at (1,N) and (N,1)), which the plain Thomas algorithm cannot
@@ -219,11 +323,13 @@ contains
         ! tridiagonal systems against A', and combines them, recovering O(N).
         ! Reference: Press et al., Numerical Recipes, "Cyclic Tridiagonal Systems".
         !
-        !   field                - scalar to diffuse in place (e.g. T or WV)
-        !   molecular_diffusivity - diffusivity for this field (m^2/s)
-        !   elapsed_time          - time step (s)
+        !   field        - scalar to diffuse in place (e.g. T or WV)
+        !   diffusivity  - diffusivity for this field (m^2/s). Molecular only
+        !                  when the grid resolves the dissipation range; see
+        !                  the scale test in initialize_LEM.
+        !   elapsed_time - time step (s)
         real(dp), intent(inout) :: field(:)
-        real(dp), intent(in) :: molecular_diffusivity, elapsed_time
+        real(dp), intent(in) :: diffusivity, elapsed_time
         real(dp) :: De, gamma, correction
         real(dp) :: diag_val, off_diag
         real(dp) :: y_soln(N), q_soln(N)   ! solutions of the two A' systems
@@ -233,7 +339,7 @@ contains
         integer(i4) :: k
 
         ! CN diffusion number; diag_val/off_diag are the implicit-matrix entries
-        De = (elapsed_time * molecular_diffusivity) / (2.0 * dz_length**2)
+        De = (elapsed_time * diffusivity) / (2.0 * dz_length**2)
         diag_val = 1.0 + 2.0 * De
         off_diag = -De
 
@@ -318,7 +424,7 @@ contains
         integer :: ierr, nml_unit
         character(256) :: nml_line, io_emsg
 
-        namelist /TURBULENCE_LEM/ integral_length_scale, kolmogorov_length_scale, dissipation_rate
+        namelist /TURBULENCE_LEM/ integral_length_scale, dissipation_rate
 
         open(newunit=nml_unit, file=namelist_path, iostat=ierr, iomsg=io_emsg, action='read', status='old')
         if (ierr /= 0) then
@@ -329,5 +435,103 @@ contains
         close(nml_unit)
 
     end subroutine read_lem_params
+
+
+    subroutine derive_turbulence_scales()
+        ! Derives every turbulence scale and both LEM diffusivities from
+        ! dz_length, dissipation_rate and integral_length_scale. Separated from
+        ! initialize_LEM so it can be exercised directly by the unit tests
+        ! without a namelist or the eddy-tracer allocation; initialize_LEM calls
+        ! it once, before anything that consumes its results.
+        !
+        ! See the naming table in initialize_LEM for what each scale means and
+        ! why the ordering here is load-bearing.
+
+        integral_scale_diffusivity = 0.1 * integral_length_scale**(4./3.) &
+                                     * dissipation_rate**(1./3.)
+
+        actual_kolmogorov_scale = (nu**3 / dissipation_rate) ** 0.25
+        grid_eddy_scale         = min_eddy_gridpoints * dz_length
+
+        ! max(kT, Dv) is the stricter reference: deriving from the larger
+        ! molecular diffusivity guarantees BOTH fields end up at or above their
+        ! own molecular value.
+        diffusivity_length_scale = (max(kT, Dv) &
+            / (0.1 * dissipation_rate**(1./3.))) ** 0.75
+
+        ! Quantize up to a multiple of 3 cells (the triplet map's segment count)
+        ! and never below the structural floor. `ceiling`, not `nint`: rounding
+        ! to nearest can land below diffusivity_length_scale and drive the
+        ! enhancement factor under 1.
+        smallest_eddy_gridpoints = 3 * ceiling(max(grid_eddy_scale, diffusivity_length_scale) &
+                                               / (3. * dz_length))
+        smallest_eddy_gridpoints = max(min_eddy_gridpoints, smallest_eddy_gridpoints)
+        smallest_eddy_scale      = smallest_eddy_gridpoints * dz_length
+
+        ! >= 1 by construction (smallest_eddy_scale >= diffusivity_length_scale).
+        ! Both fields take the SAME factor, so Pr and Sc are preserved exactly.
+        diffusivity_enhancement = (smallest_eddy_scale / diffusivity_length_scale) ** (4./3.)
+        thermal_diffusivity     = kT * diffusivity_enhancement
+        vapor_diffusivity       = Dv * diffusivity_enhancement
+
+        ! Reynolds number spans the integral scale down to the smallest eddy the
+        ! model actually has, not the namelist input.
+        reynolds_number = (integral_length_scale / smallest_eddy_scale) ** (4./3.)
+
+        ! Fatal on configurations the eddy sampler cannot represent; must run
+        ! before the timesteps in initialize_LEM consume reynolds_number.
+        call validate_turbulence_scales()
+
+    end subroutine derive_turbulence_scales
+
+
+    subroutine validate_turbulence_scales()
+        ! Guards the derived smallest_eddy_scale against configurations the eddy
+        ! sampler cannot represent. Called from initialize_LEM immediately after
+        ! smallest_eddy_scale is set and before anything derives from it.
+        real(dp) :: scale_separation
+
+        if (smallest_eddy_gridpoints > N) then
+            write(error_unit,'(a)') 'Error: the domain cannot contain the smallest eddy.'
+            write(error_unit,'(a,i0,a,i0,a)') &
+                '  smallest eddy = ', smallest_eddy_gridpoints, ' cells, but N = ', N, '.'
+            write(error_unit,'(a,es12.4,a)') &
+                '  Required scale: ', smallest_eddy_scale, ' m (set by the larger of'
+            write(error_unit,'(a)') &
+                '  6*dz and the diffusivity length scale). Increase H, or increase N'
+            write(error_unit,'(a)') &
+                '  so 6*dz falls below it, or raise dissipation_rate.'
+            call exit(1)
+        end if
+
+        ! The -5/3 sampler in lem_turbulence_step forms
+        ! (L^(-5/3) - l_small^(-5/3)); if l_small >= L that bracket is <= 0 and
+        ! raising it to -3/5 yields NaN silently.
+        if (smallest_eddy_scale >= integral_length_scale) then
+            write(error_unit,'(a)') 'Error: no inertial range -- the smallest eddy is not'
+            write(error_unit,'(a)') '  smaller than the integral length scale.'
+            write(error_unit,'(a,es12.4,a,es12.4,a)') &
+                '  smallest_eddy_scale = ', smallest_eddy_scale, &
+                ' m >= integral_length_scale = ', integral_length_scale, ' m.'
+            write(error_unit,'(a)') &
+                '  Increase integral_length_scale, or increase N to refine the grid.'
+            call exit(1)
+        end if
+
+        scale_separation = integral_length_scale / smallest_eddy_scale
+        if (scale_separation < 3.) then
+            write(error_unit,'(a)') 'Warning: the inertial range is nearly absent.'
+            write(error_unit,'(a,f0.2,a,f0.3,a)') &
+                '  integral_length_scale / smallest_eddy_scale = ', scale_separation, &
+                ' (Re = ', reynolds_number, ').'
+            write(error_unit,'(a)') &
+                '  Eddy statistics are drawn from a very narrow band; maps_per_event'
+            write(error_unit,'(a)') &
+                '  will be small and the turbulence poorly resolved. Consider a larger'
+            write(error_unit,'(a)') &
+                '  integral_length_scale or a finer grid.'
+        end if
+
+    end subroutine validate_turbulence_scales
 
 end module LEM

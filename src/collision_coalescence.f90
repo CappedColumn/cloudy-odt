@@ -33,6 +33,12 @@ module collision_coalescence
     ! Cross-sectional area of the statistical volume (set once at init)
     real(dp) :: grid_area = 0.0
 
+    ! Absolute simulation time at the start of the current CC window (s).
+    ! The event scheduler works in window-local time (0 -> ldt), so this offset
+    ! is what turns an event's heap key into absolute simulation time for the
+    ! collision binary. Set once per call to collision_coalescence_step.
+    real(dp) :: t_window_start = 0.0
+
     public :: collision_coalescence_step, initialize_collision_file, close_collision_file
 
     ! Event types
@@ -48,13 +54,19 @@ module collision_coalescence
 
 contains
 
-    subroutine collision_coalescence_step(lparticles, n_particles, ldt)
+    subroutine collision_coalescence_step(lparticles, n_particles, ldt, ltime)
         ! Advance collision-coalescence for one time window ldt.
         ! Modifies particle radii and removes coalesced particles in-place.
         ! Positions are NOT written back — CODT settling is authoritative.
+        !
+        ! ltime is the absolute simulation time at the END of the window: the
+        ! main loop advances time = time + dt before any physics runs
+        ! (CODT.f90:69), so the window this call covers is [ltime-ldt, ltime].
+        ! Only the collision binary needs it, to stamp events with absolute
+        ! rather than window-local time.
         type(particle), intent(inout) :: lparticles(:)
         integer(i4), intent(inout) :: n_particles
-        real(dp), intent(in) :: ldt
+        real(dp), intent(in) :: ldt, ltime
 
         integer :: i, n_active, head
         real(dp) :: current_time
@@ -70,6 +82,15 @@ contains
         collisions_this_step = 0
         coalescences_this_step = 0
         fall_events_this_step = 0
+
+        ! Absolute time at the window start, for stamping collision events.
+        ! Caveat: when the diffusion backstop and an eddy both fire in one
+        ! iteration, delta_time is not recomputed between them (CODT.f90:73 vs
+        ! :88), so both CC calls receive the same ltime and ldt and the second
+        ! call's events are backdated by up to one delta_time. See
+        ! docs/known_issues.md, "Physics chain may run twice per iteration when
+        ! an eddy is accepted". Rare in practice; accepted for now.
+        t_window_start = ltime - ldt
 
         ! Periodic boundary: parcel mode wraps via modulo(z, H); no fallout.
         is_periodic = (trim(simulation_mode) == 'parcel')
@@ -210,7 +231,8 @@ contains
             if (.not. do_coalescence) then
                 if (write_collisions) call write_collision( &
                     lparticles(i)%particle_id, lparticles(j)%particle_id, &
-                    lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), current_time, .false.)
+                    lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), &
+                    t_window_start + current_time, .false.)
             else
                 coal_efficiency = collection_efficiency_E(lparticles(i)%radius, lparticles(j)%radius)
 
@@ -289,7 +311,8 @@ contains
 
                     if (write_collisions) call write_collision( &
                         lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), current_time, .true.)
+                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), &
+                        t_window_start + current_time, .true.)
 
                     ! Remove killed particle from linked list
                     call unlink_particle(kill, alive, prev, next, head)
@@ -309,7 +332,8 @@ contains
                 else
                     if (write_collisions) call write_collision( &
                         lparticles(i)%particle_id, lparticles(j)%particle_id, &
-                        lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), current_time, .false.)
+                        lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), &
+                        t_window_start + current_time, .false.)
                 end if
             end if
         end if
@@ -731,6 +755,11 @@ contains
 
 
     subroutine write_collision(id_i, id_j, r_i_m, r_j_m, r_after_m, position_m, time_s, coalesced)
+        ! Append one collision event to the binary stream. time_s is ABSOLUTE
+        ! simulation time (s), not time within the CC window; callers add
+        ! t_window_start. Field width is unchanged (real(dp)), so the file
+        ! layout is identical to earlier versions -- only the meaning of this
+        ! field changed. See docs/data_formats.md.
         integer(i4), intent(in) :: id_i, id_j
         real(dp), intent(in) :: r_i_m, r_j_m, r_after_m, position_m, time_s
         logical, intent(in) :: coalesced

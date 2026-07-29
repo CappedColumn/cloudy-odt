@@ -368,6 +368,10 @@ Unformatted Fortran **stream**, written when `write_collisions = .true.`
 
 `flag` is `1` if the event was a coalescence (droplets merged; `r_after` is the merged radius) and `0` if it was a collision without coalescence (`r_after = 0`).
 
+`time` is **absolute simulation time in seconds**, on the same axis as the `time` coordinate of the main netCDF.
+
+> **Files written by CODT 3.0.0 and earlier are different.** In those versions this field held the event's time *within* the current collision-coalescence window (0 → `delta_time`), not absolute time, so values were small (order 1e-8 – 1e-2 s) and reset every window, making the stream non-monotonic. The record layout is **unchanged** — the field was already `f8`, so only its meaning differs and old readers still parse new files correctly. To tell them apart, check the `git_commit` / `code_version` global attribute on the run's netCDF, or simply test whether `time` in the binary ever exceeds one `delta_time`. For recovering absolute time from a pre-3.0.1 file, see `docs/known_issues.md`.
+
 ## Log (`{sim_name}.log`)
 
 Plain text — CODT's stdout (all initialization and runtime messages) is redirected here.

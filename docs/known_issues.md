@@ -34,6 +34,55 @@ trap, or a code defect; move it once you know.
 
 ## Physics
 
+### `n_blob` scales the entrained volume per event, not the blob subdivision
+
+- **Symptom** — `psigma` is the volume of **one** blob, so an entrainment event
+  replaces `n_blob * psigma` of the domain, and the interval between events
+  scales with `n_blob` to compensate. Sweeping `n_blob` at fixed `psigma`
+  therefore does **not** subdivide a fixed entrained volume into smaller
+  blobs, which is the natural reading of the parameter name and the reading
+  under which such a sweep would vary homogeneous vs inhomogeneous mixing.
+  Blob *size* is `psigma` alone and is untouched by `n_blob`.
+- **Evidence** — `entrainment.f90 place_blobs`: `blob_size = int(psigma * N)`,
+  with no `n_blob` term, then `n_blob` such blobs are placed. The validation
+  `psigma * n_blob < 1` (`entrainment.f90:144`) only makes sense if the total
+  is `n_blob * psigma`. `compute_dt_entm` gives
+  `dt = (n_blob / ent_rate) * (psigma / (1 - psigma)) / |vel|`, so the
+  entrained fraction per unit height is `ent_rate * (1 - psigma)` and is
+  independent of `n_blob`.
+- **Not a port error** — EMPM does the same thing, and CODT matches it
+  exactly. `EMPM.f90:1594-1595` is explicit:
+  `volume_entm = psigma*volume ! volume of ONE entrained blob` followed by
+  `volume_entm = volume_entm * n_blob ! fix for n_blob > 1`. `domain.f90:51`
+  sizes each blob `psigma*ngrid` with no `n_blob` term, and `fdtime.f90:36`
+  has the identical `delta_z = (n_blob/ent_rate)*(psigma/(1.0-psigma))`.
+  Logged as a configuration hazard, not a code defect.
+- **Consequence** — At `psigma = 0.1`, `n_blob = 5` replaces **50% of the
+  domain in a single event**. Combined with a low entrainment rate the event
+  spacing can exceed the whole ascent: in EXP001_sf01_seeding at
+  `ent_rate = 0.087` /km, `dz` between events is 1274 m (`n_blob=1`), 2549 m
+  (`n_blob=2`) and **6372 m (`n_blob=5`) against a ~4070 m ascent** — so those
+  members see zero or one entrainment event, and if one fires it is a
+  half-domain shock rather than gradual dilution. Realizations intended as
+  equivalent stochastic replicates are then qualitatively different
+  experiments at the low-entrainment corner of a sweep.
+- **Observed impact** — In EXP001_sf01_seeding, all 7 unseeded runs that
+  depleted below 100 cm-3 while under 6000 m carried `n_blob >= 2`, and none
+  of the `n_blob = 1` members did. Interacts directly with
+  [Runaway collision-coalescence collapse](#runaway-collision-coalescence-collapse-in-parcel-mode).
+- **Fix / workaround** — To hold both the entrainment rate *and* the per-event
+  volume fixed while varying blob size, scale `psigma` inversely with
+  `n_blob` (e.g. `psigma = 0.5 / n_blob`). That also turns `n_blob` into a
+  genuine homogeneous/inhomogeneous mixing axis, which the present
+  parameterization does not provide. Re-running the affected ensembles under
+  that convention is likely needed before the realization spread can be read
+  as stochastic.
+- **Found in** — `e1c03be` (`v3.0.0`), from the EXP001_sf01_seeding
+  configuration; behaviour traced in the source and confirmed against the
+  run output attributes.
+- **Status** — open; parameterization understood, configuration convention
+  undecided.
+
 ### Runaway collision-coalescence collapse in parcel mode
 
 - **Symptom** — With collisions and coalescence on and low or no entrainment,
@@ -127,6 +176,67 @@ trap, or a code defect; move it once you know.
 
 ## Coding
 
+### `collisions.bin` `time` is not simulation time
+
+- **Symptom** — The per-event `time` field spans only `7.6e-08 -> 1.20e-02` s in
+  a run whose simulation time covers `0.0 -> 1954.3` s, and it is **not
+  monotonic** across the event stream (first five events: 2.95e-4, 3.64e-3,
+  1.17e-3, 1.04e-2, 2.22e-3). The magnitudes look like a time *within* the
+  current timestep; no step index or absolute time is written alongside it.
+- **Consequence** — Per-event absolute time is unrecoverable from the binary,
+  and with it per-event parcel altitude. Any analysis that wants "when did
+  collision-coalescence start" or "at what height did this collision happen"
+  cannot use this field. Silent: the values are plausible small floats, so a
+  naive onset-time or time-height plot produces a figure rather than an error.
+- **Workaround** — Use `N_collisions(time)` / `N_coalescences(time)` from the
+  main netCDF; they are per write interval, correctly timed, and their totals
+  match the binary exactly (25025 / 3253 on the run checked). Map to altitude
+  through `parcel_height_env` as usual. The binary remains authoritative for
+  per-event *sizes* (`r_keep`, `r_kill`, `r_after`, `flag`), which check out:
+  `r_after = 0` for every non-coalescence, and `r_after^3 = r_keep^3 + r_kill^3`
+  to 2e-15 relative error for every coalescence.
+- **Recovering per-event time anyway** — the binary is a Fortran stream written
+  in event order, so the events partition into write intervals by the
+  cumulative `N_collisions`: the k-th block of `N_collisions[k]` events belongs
+  to interval k. That restores per-event time, altitude and parcel state
+  without the `time` field. Validated on the 250-run EXP001_sf01_seeding
+  ensemble: under this mapping **zero** of 32043 events carry a collector
+  radius exceeding the largest drop present in the DSD at the assigned time,
+  versus ~37-41% for a shuffled control, and mean collector radius rises
+  monotonically with interval (r = 0.92). Used by
+  `projects/SF01_Seeding/analyze.py`. Note this assumes the writer never
+  buffers events out of order across intervals.
+- **Cause** — confirmed by source read. `current_time` is a *local* in
+  `collision_coalescence_step`, reset to `0.0` on every call and thereafter only
+  assigned from the event heap key, which is an event time *within* the window
+  `[0, ldt]`. It was passed straight to `write_collision` as `time_s`. The module
+  never imported the global `time`, so the accumulated clock was simply
+  unavailable to the writer — the second of the two options above. The magnitudes
+  are bounded by `ldt`; the non-monotonicity is the per-step clock resetting, so
+  the stream is a sawtooth of within-window times.
+- **Fix** — `collision_coalescence_step` now takes `ltime` (absolute time at the
+  window END; the main loop advances `time` before physics, `CODT.f90:69`) and
+  stamps events with `ltime - ldt + current_time`. The field was already
+  `real(dp)`, so **the binary layout is unchanged** and old readers parse new
+  files — only the meaning of the field changed. Validated on a 100 s parcel
+  ascent with large aerosol: 499 events spanning `0.0100 -> 76.54` s, strictly
+  monotonic (0 backward steps), totals still matching `N_collisions`, volume
+  conservation unchanged at 2.2e-15.
+- **Residual error** — accuracy is capped by the separate "Physics chain may run
+  twice per iteration when an eddy is accepted" issue: `delta_time` is not
+  recomputed between the backstop and eddy branches (`CODT.f90:73` vs `:88`), so
+  both CC calls receive the same `ltime`/`ldt` and the second call's events are
+  backdated by up to one `delta_time`. On the validation run this showed up as 4
+  of 101 write intervals having events swapped with an adjacent interval (totals
+  preserved). Judged rare enough to accept; the interval-block reconstruction
+  below is unaffected and remains exact.
+- **Found in** — `e1c03be` (`v3.0.0`), from the `git_commit` attribute of the
+  EXP001_sf01_seeding runs.
+- **Status** — **fixed** (offset added). Pre-fix files still need the
+  interval-block reconstruction above; detect them from the run's
+  `git_commit` / `code_version` attribute, or by testing whether any `time`
+  in the binary exceeds one `delta_time`.
+
 ### `parcel_height_env` is 0 in the first output record
 
 - **Symptom** — `parcel_height_env` (environment height at the parcel pressure)
@@ -159,8 +269,17 @@ trap, or a code defect; move it once you know.
   grid now requires.
 - **Consequence** — Latent in all versions since the ghost-point change. Will
   not necessarily crash; expect subtly wrong diffusion at the domain edge.
-- **Suspected location** — tridiagonal solver routine — *exact file/line
-  unverified; needs to be pinned down before fixing.*
+  Confirmed to be an out-of-bounds **write**, not just a short read, so in a
+  release build it corrupts whatever follows `rdx` on the stack.
+- **Location** — *pinned* (`e1c03be`): `src/ODT.f90:556` declares
+  `real(dp) :: b, rdx(N)` while the loop at `:561-562` runs `do k = 2, N+1` and
+  assigns `rdx(k)`. Reproduced under the `debug` profile from a chamber run on
+  the bundled `input/params.nml`:
+  `Index '2001' of dimension 1 of array 'rdx' above upper bound of 2000`,
+  via `tridiagonal` (`:562`) <- `diffuse_scalar` (`:544`) <- `diffusion` (`:142`)
+  <- `odt_diffuse_step` (`:588`) <- `run_simulation` (`CODT.f90:83`). Because it
+  aborts on the first diffusion call, **any chamber run under `debug` currently
+  dies immediately** — which is why this is easy to miss under `release`.
 - **Found in** — reported from an earlier debugging session on `main`; the
   originating commit/worktree was not recorded. The defect was introduced by the
   ghost-point work, `9a454ff` ("Added ghost points 0:N+1 to nondimensional

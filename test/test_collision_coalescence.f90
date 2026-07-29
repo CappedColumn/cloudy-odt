@@ -75,7 +75,8 @@ contains
         r_expected = v_pre**(1.0_dp/3.0_dp)
 
         np = 2
-        call collision_coalescence_step(p, np, 0.5_dp)
+        ! ltime is the window END, so a first window of 0.5 s ends at 0.5 s.
+        call collision_coalescence_step(p, np, 0.5_dp, 0.5_dp)
 
         call check_int("two-drop: exactly one coalescence", coalescences_this_step, 1)
         call check_int("two-drop: one collision recorded", collisions_this_step, 1)
@@ -117,7 +118,7 @@ contains
         r2_pre = p(2)%radius
 
         np = 2_i4
-        call collision_coalescence_step(p, np, 0.5_dp)
+        call collision_coalescence_step(p, np, 0.5_dp, 0.5_dp)
 
         call check_true("no-coal: at least one collision counted", collisions_this_step >= 1)
         call check_int("no-coal: zero coalescences", coalescences_this_step, 0)
@@ -172,7 +173,7 @@ contains
 
         do step = 1, n_steps
             if (np <= 1) exit
-            call collision_coalescence_step(p, np, dt)
+            call collision_coalescence_step(p, np, dt, real(step, dp) * dt)
             call compact_survivors(p, np)
         end do
 

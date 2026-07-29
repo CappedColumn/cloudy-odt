@@ -136,7 +136,7 @@ contains
             ! CC owns settling across the ldt window (writes back final
             ! particle positions). Fallout removal and gridcell updates
             ! match the tail of move_particles_by_gravity.
-            call collision_coalescence_step(particles, current_n_particles, ldt)
+            call collision_coalescence_step(particles, current_n_particles, ldt, ltime)
             collisions_since_write = collisions_since_write + collisions_this_step
             coalescences_since_write = coalescences_since_write + coalescences_this_step
             call verify_particle_fallout(particles, current_n_particles)

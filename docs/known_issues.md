@@ -70,18 +70,41 @@ trap, or a code defect; move it once you know.
   depleted below 100 cm-3 while under 6000 m carried `n_blob >= 2`, and none
   of the `n_blob = 1` members did. Interacts directly with
   [Runaway collision-coalescence collapse](#runaway-collision-coalescence-collapse-in-parcel-mode).
-- **Fix / workaround** — To hold both the entrainment rate *and* the per-event
-  volume fixed while varying blob size, scale `psigma` inversely with
-  `n_blob` (e.g. `psigma = 0.5 / n_blob`). That also turns `n_blob` into a
-  genuine homogeneous/inhomogeneous mixing axis, which the present
-  parameterization does not provide. Re-running the affected ensembles under
-  that convention is likely needed before the realization spread can be read
-  as stochastic.
 - **Found in** — `e1c03be` (`v3.0.0`), from the EXP001_sf01_seeding
   configuration; behaviour traced in the source and confirmed against the
   run output attributes.
-- **Status** — open; parameterization understood, configuration convention
-  undecided.
+- **Resolution** — **fixed in 3.1.0 by redefining the parameters** (breaking).
+  `psigma` is now the *total* fraction replaced per event and `n_blob` only
+  subdivides that fixed volume into evenly sized chunks:
+  `place_blobs` sizes chunks as `int(psigma*N)` split `n_blob` ways (the integer
+  remainder spread one cell at a time, so the total does not drift with
+  `n_blob`), and `compute_dt_entm` no longer carries the `n_blob` factor, so
+  event timing depends on `psigma` alone. `n_blob` is now a genuine
+  homogeneous/inhomogeneous mixing axis. The old `psigma * n_blob < 1` check is
+  replaced by `int(psigma*N) >= n_blob` (every chunk needs a cell).
+
+  This deliberately **departs from EMPM**, which keeps the per-blob reading
+  (`EMPM.f90:1594-1595`). The departure is intentional: the CODT parameter names
+  are now self-consistent, and holding entrained volume fixed while varying
+  blob count is the sweep the science needs.
+
+  Validated with two runs identical but for `n_blob` (1 vs 5; 10 m domain,
+  3000 droplets, `ent_rate = 10` /km, 150 m ascent): both fired **13** events at
+  **identical heights** (11.08 m spacing vs 11.1 m predicted) and entrained
+  **exactly 300 particles per event** in both, confirming an identical replaced
+  cell count. Detrained particle totals differ slightly (3765 vs 3825) because
+  five scattered chunks intersect a different set of droplets than one large
+  blob — the intended effect; that difference is far smaller than the
+  event-to-event spread within either run (239-354).
+- **Impact on existing results** — `n_blob = 1` runs are bit-identical.
+  `n_blob > 1` runs are **not comparable** across the change (an old
+  `n_blob = 5, psigma = 0.1` event replaced 50% of the domain; a new one
+  replaces 10%). The affected ensembles, including EXP001_sf01_seeding, need
+  re-running before their realization spread can be read as stochastic. To
+  reproduce old behaviour exactly, set `psigma` to the old `n_blob * psigma`
+  with `n_blob = 1`. Output carries the same variable/attribute names with the
+  new meaning, so distinguish by `code_version`.
+- **Status** — **fixed** in 3.1.0 (breaking parameter redefinition).
 
 ### Runaway collision-coalescence collapse in parcel mode
 

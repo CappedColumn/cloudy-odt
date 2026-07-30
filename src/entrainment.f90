@@ -28,8 +28,8 @@ module entrainment
     ! it is converted to 1/m immediately after the namelist read, and the module
     ! variable below always holds 1/m for the physics.
     real(dp) :: ent_rate = 2.0       ! fractional entrainment rate [namelist: 1/km; internal: 1/m]
-    integer(i4) :: n_blob = 1        ! number of blobs per entrainment event
-    real(dp) :: psigma = 0.1         ! blob fraction of domain per blob [dimensionless]
+    integer(i4) :: n_blob = 1        ! chunks the event's psigma volume is split into
+    real(dp) :: psigma = 0.1         ! total domain fraction replaced per event [dimensionless]
     logical  :: random_entrainment = .true. ! Poisson-randomize entrainment timing
 
     ! --- Entrainment timing ---
@@ -140,8 +140,13 @@ contains
             write(error_unit,*) 'Error: psigma must be in (0, 1), got: ', ps
             call exit(1)
         end if
-        if (ps * nb >= 1.0) then
-            write(error_unit,*) 'Error: psigma * n_blob must be < 1, got psigma, n_blob: ', ps, nb
+        ! psigma is the whole event's replaced fraction, so it alone must stay
+        ! below 1 (checked above); n_blob only subdivides it. What n_blob must
+        ! satisfy instead is that every chunk gets at least one gridcell.
+        if (int(ps * N) < nb) then
+            write(error_unit,*) 'Error: n_blob exceeds the number of gridcells psigma covers; ' // &
+                                'each blob needs >= 1 cell. Got psigma, n_blob, int(psigma*N): ', &
+                                ps, nb, int(ps * N)
             call exit(1)
         end if
         if (er <= 0.0) then
@@ -248,16 +253,22 @@ contains
 
     ! Compute the time interval until the next entrainment event [s].
     !
-    ! Deterministic interval: dt = (n_blob / ent_rate) * (psigma / (1 - psigma)) / |vel|
+    ! Deterministic interval: dt = (1 / ent_rate) * (psigma / (1 - psigma)) / |vel|
     ! With random_entrainment, the interval is drawn from an exponential distribution
     ! (Poisson process) by multiplying by -ln(1 - U), U ~ Uniform(0,1).
     ! See Krueger et al. (1997), eq. (3).
+    !
+    ! Deliberately independent of n_blob: psigma is the whole event's replaced
+    ! fraction, so the spacing needed to realize ent_rate depends only on psigma.
+    ! n_blob subdivides that volume spatially (see place_blobs) and must not
+    ! change event timing, or a sweep over n_blob would also sweep the effective
+    ! entrainment rate.
     function compute_dt_entm(vel) result(dt_entm)
         real(dp), intent(in) :: vel  ! parcel/eddy velocity [m/s]
         real(dp) :: dt_entm, u
 
-        dt_entm = (real(n_blob, dp) / ent_rate) * (psigma / (1.0 - psigma)) &
-                  / abs(vel)
+        ! ent_rate is internally 1/m here, not the 1/km namelist value.
+        dt_entm = (psigma / (1.0 - psigma)) / (ent_rate * abs(vel))  ! [-]/([1/m]*[m/s]) = [s]
 
         if (random_entrainment) then
             call random_number(u)
@@ -268,23 +279,39 @@ contains
 
     ! Randomly place n_blob contiguous blobs on the periodic 1-D domain.
     !
-    ! Each blob spans blob_size = psigma * N gridcells. Blobs that wrap past
-    ! cell N are split into two contiguous segments (e.g., [s, N] and [1, remainder]),
-    ! so n_final may exceed n_blob. The starts/ends arrays use gridcell indices [1, N].
+    ! psigma is the fraction of the domain replaced by the event as a WHOLE;
+    ! n_blob only subdivides that fixed volume into evenly sized chunks. Sweeping
+    ! n_blob at fixed psigma therefore varies how the entrained air is
+    ! distributed in space -- one big blob (inhomogeneous mixing) through many
+    ! small ones (approaching homogeneous) -- without changing how much air is
+    ! entrained or how often events fire.
+    !
+    ! The total is int(psigma*N) cells for every n_blob: the integer remainder is
+    ! spread one cell at a time across the first `remainder` blobs rather than
+    ! truncated, so the entrained volume does not drift as n_blob changes.
+    !
+    ! Blobs that wrap past cell N are split into two contiguous segments (e.g.,
+    ! [s, N] and [1, remainder]), so n_final may exceed n_blob. The starts/ends
+    ! arrays use gridcell indices [1, N].
     subroutine place_blobs(starts, ends, n_final)
         integer, intent(out) :: starts(:), ends(:), n_final
-        integer :: xn, blob_size, s, i
+        integer :: xn, total_cells, base_size, remainder, blob_size, gap, s, i
         real(dp) :: u
 
-        blob_size = int(psigma * N)
-        xn = N - blob_size * n_blob  ! free cells available for random offset
+        total_cells = int(psigma * N)     ! cells replaced by the whole event
+        base_size = total_cells / n_blob  ! evenly divided chunk
+        remainder = mod(total_cells, n_blob)
+        xn = N - total_cells              ! free cells available for random offset
 
         call random_number(u)
         s = int(u * xn) + 1
+        gap = int(real(xn, dp) / n_blob)
 
         n_final = 0
         do i = 1, n_blob
-            if (i > 1) s = ends(n_final) + int(real(xn, dp) / n_blob) + 1
+            blob_size = base_size
+            if (i <= remainder) blob_size = blob_size + 1   ! spread the remainder
+            if (i > 1) s = ends(n_final) + gap + 1
 
             ! Blob wraps around the periodic boundary — split into two segments
             if (s <= N .and. s + blob_size - 1 > N) then

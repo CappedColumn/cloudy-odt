@@ -113,13 +113,19 @@ contains
     ! Verify t_next_entrain equals the deterministic interval for leg `leg`'s
     ! parameters, anchored at the current simulation time (random_entrainment
     ! is off).
+    !
+    ! Deliberately independent of n_blob: psigma is the total fraction replaced
+    ! per event, so event spacing depends on psigma alone and n_blob only
+    ! subdivides that volume spatially. Leg 2 (n_blob = 2) is the case that
+    ! distinguishes this from the pre-3.1.0 formula, which carried an n_blob
+    ! factor here and so doubled leg 2's interval.
     subroutine check_t_next(label, leg)
         character(*), intent(in) :: label
         integer, intent(in) :: leg
         real(dp) :: expected
 
-        expected = time + (real(leg_n_blob(leg), dp) / leg_ent_rate(leg)) &
-                   * (leg_psigma(leg) / (1.0 - leg_psigma(leg))) / abs(vel)
+        expected = time + (leg_psigma(leg) / (1.0 - leg_psigma(leg))) &
+                   / (leg_ent_rate(leg) * abs(vel))
         if (abs(t_next_entrain - expected) < 1.0e-9) then
             n_passed = n_passed + 1
         else

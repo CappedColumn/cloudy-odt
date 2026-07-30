@@ -555,7 +555,7 @@ contains
                             varid_n_blob, deflate_level=1, shuffle=.true.), &
                             "nf90_def_var: n_blob" )
             call nc_verify( nf90_put_att(lncid, varid_n_blob, "long_name", &
-                            "Number of Blobs per Entrainment Event"), "nf90_put_att: n_blob, name" )
+                            "Chunks the Entrained Volume is Split Into"), "nf90_put_att: n_blob, name" )
             call nc_verify( nf90_put_att(lncid, varid_n_blob, "units", "1"), &
                             "nf90_put_att: n_blob, units" )
 
@@ -563,7 +563,8 @@ contains
                             varid_psigma, deflate_level=1, shuffle=.true.), &
                             "nf90_def_var: psigma" )
             call nc_verify( nf90_put_att(lncid, varid_psigma, "long_name", &
-                            "Blob Fraction of Domain"), "nf90_put_att: psigma, name" )
+                            "Total Domain Fraction Replaced per Entrainment Event"), &
+                            "nf90_put_att: psigma, name" )
             call nc_verify( nf90_put_att(lncid, varid_psigma, "units", "1"), &
                             "nf90_put_att: psigma, units" )
         end if

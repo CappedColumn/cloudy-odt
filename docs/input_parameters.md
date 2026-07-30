@@ -224,11 +224,15 @@ Required when `simulation_mode = 'parcel'` and `do_entrainment = .true.` Mixes e
 | Parameter | Type | Units | Default | Description |
 |-----------|------|-------|---------|-------------|
 | `ent_rate` | real | **km⁻¹** | `2.0` | Fractional entrainment rate (converted to 1/m internally). |
-| `n_blob` | integer | — | `1` | Number of blobs per entrainment event. |
-| `psigma` | real | fraction | `0.1` | Blob size as a fraction of the domain (per blob). |
+| `n_blob` | integer | — | `1` | Number of chunks the event's entrained volume is split into. Does **not** change how much air is entrained. Must satisfy `int(psigma*N) >= n_blob` so each chunk gets at least one gridcell; capped at 10. |
+| `psigma` | real | fraction | `0.1` | **Total** fraction of the domain replaced per entrainment event, across all blobs. Must be in (0, 1). |
 | `random_entrainment` | logical | — | `.true.` | Poisson-randomize entrainment event timing (vs. regular intervals). |
 
 > **Unit change:** `ent_rate` was in 1/m before v3; it is now specified in **1/km** everywhere at the interface (namelist, v3 parcel file, output).
+
+> **Meaning change (`psigma`/`n_blob`), CODT 3.1.0.** Through 3.0.1, `psigma` was the size of **one** blob, so an event replaced `n_blob * psigma` of the domain and the interval between events scaled with `n_blob` to compensate. `psigma` is now the **total** replaced fraction and `n_blob` only subdivides it, so event timing and entrained volume depend on `psigma` alone. `n_blob` is therefore a pure homogeneous/inhomogeneous mixing axis: sweeping it holds the entrainment rate and per-event volume fixed and varies only the spatial distribution.
+>
+> Runs with `n_blob = 1` are unaffected (bit-identical). Runs with `n_blob > 1` are **not comparable** across the change: an old `n_blob = 5, psigma = 0.1` run replaced 50% of the domain per event, a new one replaces 10%. To reproduce old behaviour, set `psigma` to the old `n_blob * psigma` and `n_blob = 1`. Distinguish output by the `code_version` attribute.
 
 `ent_rate`, `n_blob`, and `psigma` can instead be made **per-leg** by providing per-segment arrays in the `parcel_file` (one value per trajectory leg). When present, those arrays override the constant values here; `random_entrainment` always comes from this namelist. See [Data Formats](data_formats.md#parcel-input--codt_parcel_input_v3).
 

@@ -13,14 +13,21 @@
 
 set -e
 
-# build.sh produces a production (release) binary. Override the compiler or
-# profile via environment variables if needed:
+# build.sh produces a production (release) binary. Override the compiler,
+# arch, or profile via environment variables if needed:
 #   CODT_COMPILER=nvfortran ./build.sh      # build with nvfortran
 #   CODT_PROFILE=debug      ./build.sh      # debug build (usually use fpm directly)
+#   CODT_ARCH=<arch> CODT_PROFILE=<matching profile> ./build.sh   # an arch-tuned build you've set up locally
+# CODT_ARCH and CODT_PROFILE are independent -- fpm has no notion of "arch",
+# so pairing them correctly is on the caller. Arch-tuned builds (names,
+# compiler modules, profiles) are local/site-specific -- see the "Optional:
+# architecture-tuned build" comment in fpm.toml.template and fpm_env.template
+# for how to set one up, and fpm_env for the (compiler, arch) -> module table.
 COMPILER="${CODT_COMPILER:-gfortran}"
+ARCH="${CODT_ARCH:-baseline}"
 PROFILE="${CODT_PROFILE:-release}"
 
-source fpm_env "$COMPILER"
+source fpm_env "$COMPILER" "$ARCH"
 
 VERSION_FILE="src/version.f90"
 if git rev-parse --git-dir >/dev/null 2>&1; then

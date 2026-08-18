@@ -49,6 +49,58 @@ load, so they're a cheap way to confirm the binary is healthy.
 > the matching netcdf module, or set `LD_LIBRARY_PATH` — in the same shell/job that
 > runs CODT.
 
+### 1a. Building for a specific target architecture (CHPC)
+
+CODT's default `release`/`debug`/`profiled`/`vec` profiles target a portable
+x86-64 baseline (`sandybridge`), safe to run on any CHPC node. Building for a
+*specific* microarchitecture (e.g. `-march=znver2` for AMD Rome nodes on
+notchpeak, used by the `notchpeak-rome` profile) can unlock real speedups —
+e.g. FMA3 fused multiply-add, which the sandybridge baseline predates — but
+the netCDF the compiler links against must match the compiler *and* the
+target CPU family, and CHPC doesn't build that combination for every
+compiler version.
+
+**CHPC keeps several parallel generations of Spack-built software**, not one
+rolling tree. As of 2026-08, under `/uufs/chpc.utah.edu/sys/spack/`:
+
+| Root | Last modified | Notes |
+|------|---------------|-------|
+| top-level `spack/` | 2026-05-28 | oldest netCDF-Fortran (4.5.3) but broadest compiler coverage (gcc/intel/nvhpc) |
+| `v020/` | 2023-07-02 | effectively retired |
+| `v019/` | 2025-06-23 | has the only working **gcc-11.2.0 + zen2** netCDF-Fortran build (what `notchpeak-rome` uses) |
+| `v11/` | 2026-05-28 | newer generation; only nehalem/gcc-8.5.0 has netCDF-Fortran so far |
+| `v10/` | 2026-08-11 (newest) | has gcc-13.4.0/15.1.0 and more arches, but **no netCDF-Fortran build at all yet** — netCDF-C only |
+
+**The newest generation is not necessarily the most complete one.** A newer
+root can have a compiler or arch tree with no matching netCDF-Fortran build
+yet — check before assuming "newest = best available." As found in 2026-08,
+netCDF-Fortran only exists for these arch/compiler pairs, system-wide:
+
+| Arch target | Compiler | Root |
+|---|---|---|
+| nehalem (portable) | gcc/8.5.0 | `spack/`, `v019/`, `v11/` |
+| nehalem (portable) | gcc/11.2.0 | `v019/` |
+| nehalem (portable) | intel/18.0.5, 2021.4.0, 2021.7.1 | `spack/`, `v019/` |
+| nehalem (portable) | nvhpc/21.5, 21.7 | `spack/` |
+| sandybridge | gcc/8.5.0, nvhpc/21.5 | `spack/`, `v019/` |
+| **zen2 (AMD Rome match)** | **gcc/11.2.0** | **`v019/`** |
+
+Everything else — gcc 13.x/15.x, nvhpc 20.x/23.x/24.x/25.x, Intel oneAPI
+2022+/2025, skylake/cascade-lake-specific builds — exists as a compiler or
+netCDF-C-only tree, but has no matching netCDF-Fortran anywhere, and would
+need to be built from source (or via user-space Spack against CHPC's
+upstream — see `chpc.utah.edu/documentation/software/spack.php`) before it's
+usable by CODT.
+
+**Adding a new arch-specific fpm profile:** find the matching
+arch/compiler/netCDF-Fortran triple (searching all spack roots, not just the
+newest), add a `(compiler, arch)` case to `fpm_env`, and a matching
+`[features.optimized-<arch>.*]` / `[features.netcdf-<arch>.*]` pair plus
+profile in `fpm.toml`. If `fpm.toml`'s global `link = ["netcdf", "netcdff"]`
+is in play, remember netCDF-C and netCDF-Fortran are sometimes **separate**
+spack packages (as in the `v019`/zen2 build) — both lib directories need
+`-L`/`-rpath`, or `-lnetcdf` silently falls back to a stale system library.
+
 ---
 
 ## 2. The executable contract

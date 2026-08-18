@@ -81,10 +81,40 @@ link-time-flags = "-pg"
 flags = "-Mprof=ccff"
 link-time-flags = "-Mprof=ccff"
 
+# --- Optional: architecture-tuned build -------------------------------------
+# The `optimized`/`netcdf-local` pair above targets a portable baseline. If
+# your cluster has more than one CPU microarchitecture (e.g. Intel + AMD
+# nodes in the same partition), or you just want -march tuned to your own
+# hardware, add a SEPARATE feature pair + profile per architecture rather
+# than editing the baseline in place -- that way the baseline stays safe to
+# run anywhere, and an arch-tuned binary is opt-in.
+#
+# INVARIANT: always keep an arch-tuned `optimized-<tag>` feature and its
+# matching `netcdf-<tag>` feature in the same profile, both built against the
+# SAME target architecture. Some tooling (e.g. a job launcher) may infer a
+# binary's target architecture from which netCDF build its rpath points at
+# -- if you mix an arch-tuned -march with a differently-targeted netCDF, that
+# inference silently lies, even though the binary still links and runs fine.
+#
+# The arch-tuning flag itself is compiler-specific -- look up what your
+# compiler calls it (site/cluster docs, `man`, or `--help`) and fill in the
+# flag AND its value yourself; there's no one true spelling across compilers.
+# Site-specific netCDF paths and available builds are likewise something to
+# confirm locally. A worked example (CHPC notchpeak, gfortran, AMD Rome) is
+# in docs/running_codt.md#1a-building-for-a-specific-target-architecture-chpc.
+#
+# [features.netcdf-arch.YOUR_COMPILER]
+# flags = "-I/PATH/TO/ARCH/netcdf/include"
+# link-time-flags = "-L/PATH/TO/ARCH/netcdf/lib -Wl,-rpath=/PATH/TO/ARCH/netcdf/lib"
+#
+# [features.optimized-arch.YOUR_COMPILER]
+# flags = "-O2 --YOUR SPECIFIC COMPILER OPTIMIZATION FLAGS"
+
 [profiles]
 release  = ["optimized", "netcdf-local"]
 debug    = ["debugging", "netcdf-local"]
 profiled = ["optimized", "profiling", "netcdf-local"]
+# arch   = ["optimized-arch", "netcdf-arch"]   # uncomment once the features above are filled in
 
 [[executable]]
 name = "CODT"

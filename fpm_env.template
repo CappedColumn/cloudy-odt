@@ -19,25 +19,37 @@
 # loading several at once.
 #
 # Usage:
-#   source fpm_env            # gfortran (default)
-#   source fpm_env nvfortran  # if you build with nvfortran
+#   source fpm_env            # gfortran, baseline (default)
+#   source fpm_env nvfortran  # if you build with nvfortran, baseline
 #   ./build.sh                # production (release) build
+#
+# --- Optional: architecture-tuned build --------------------------------
+# If you added an arch-tuned feature/profile pair to your fpm.toml (see the
+# "Optional: architecture-tuned build" comment there), give it a matching
+# arch argument here so `source fpm_env <compiler> <arch>` loads whatever
+# compiler/module that arch-tuned build actually needs (which may differ
+# from your baseline compiler version/module). Keep "baseline" as the
+# default so plain `source fpm_env` never needs an arch to be defined.
 
 COMPILER="${1:-gfortran}"
+ARCH="${2:-baseline}"
 
 # unload all modules first: 0-false, 1-true
 PURGE_MODULES=0
 [ "$PURGE_MODULES" = 1 ] && module purge
 
 # ---------------------------------------------------------------------------
-# USER SETTINGS -- map each compiler to its environment module (adjust names).
-# Delete a branch you do not have; most users only need gfortran.
+# USER SETTINGS -- map each (compiler, arch) pair to its environment module
+# (adjust names). Delete a branch you do not have; most users only need
+# gfortran/baseline. Add an arch branch only once you've added the matching
+# feature/profile pair in fpm.toml.
 # ---------------------------------------------------------------------------
-case "$COMPILER" in
-    gfortran)  module load gcc/X.X.X ;;
-    nvfortran) module load nvhpc/XX.X ;;
+case "${COMPILER}:${ARCH}" in
+    gfortran:baseline)  module load gcc/X.X.X ;;
+    nvfortran:baseline) module load nvhpc/XX.X ;;
+    # gfortran:arch)     module load gcc/YOUR.ARCH.VERSION ;;
     *)
-        echo "Unknown compiler: $COMPILER (use gfortran or nvfortran)"
+        echo "Unknown compiler/arch combo: $COMPILER/$ARCH"
         return 1 2>/dev/null || exit 1
         ;;
 esac

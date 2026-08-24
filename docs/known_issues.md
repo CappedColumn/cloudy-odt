@@ -568,3 +568,33 @@ between each droplet and the thermodynamic history of the air around it.
   not, parcel mode needs its own sidewall closure or should disable it.
 - **Found in** — branch `feature/lem-empm-port`, working tree during slice 2.
 - **Status** — open.
+
+### `collisions.bin` can be short a few records in the final write interval
+
+- **Symptom** — On an EXP002 smoke run (`c529ae9`, v3.1.0, seeded + entraining,
+  `n_blob=5`), `sum(N_collisions)` = 4997 but the binary holds **4994** records
+  with **0** trailing bytes. `N_coalescences` matched the `flag==1` count exactly
+  (159 / 159), so only non-coalescing collisions were short.
+- **Localized to the tail** — the running `nc`-minus-binary difference oscillates
+  between -1 and 0 for the whole ascent (that oscillation is the accepted
+  adjacent-interval swap from the "physics chain twice" issue above — totals
+  preserved), then steps to +3 **only in the last write interval**
+  (t = 1960.9 s of a 1960.9 s run). Zero events follow it. Reads as events
+  counted into `N_collisions` but never flushed to the stream before
+  termination.
+- **Consequence** — small and benign *here*: the interval-block reconstruction
+  in `projects/SF01_Seeding/analyze.py:372` partitions by `cumsum(N_collisions)`
+  positionally, so a deficit at the very end leaves every preceding event's
+  interval assignment untouched, and the existing `np.clip` absorbs the tail. It
+  would matter if the shortfall ever landed mid-stream: every subsequent event
+  would shift by that many positions. Worth a guard that compares
+  `sum(N_collisions)` to the record count and reports where they diverge, rather
+  than assuming the exact match documented above.
+- **Not universal** — an adhoc `c529ae9` run matched exactly (9526 / 9526), as
+  did the pre-fix run in the entry above (25025 / 3253). Intermittent, so
+  probably conditioned on how the run terminates (this one ended on
+  `pressure_limit`) or on activity in the final partial interval.
+- **Evidence** — one run, arithmetic on the file and the netCDF counters only.
+  No source read yet; the writer/flush path has not been inspected.
+- **Found in** — `c529ae9` (`v3.1.0`), EXP002 smoke run.
+- **Status** — open, not investigated.

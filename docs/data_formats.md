@@ -156,7 +156,7 @@ Drives the parcel trajectory when `simulation_mode = 'parcel'` (set by `parcel_f
 | `env_RH` | (level) | — | *Sounding:* relative humidity (0–1) |
 | `ent_rate` | (segment) | **1/km** | *Optional:* fractional entrainment rate per leg (> 0) |
 | `n_blob` | (segment) | — | *Optional:* blobs per event per leg (integer ≥ 1; stored as `int`) |
-| `psigma` | (segment) | — | *Optional:* blob fraction per leg (0–1, `psigma * n_blob < 1`) |
+| `psigma` | (segment) | — | *Optional:* **total** domain fraction replaced per event, per leg (0–1) |
 
 **The sounding is optional**: it is required when `do_entrainment = .true.` or `pressure_mode = 'environment'`; a bare adiabatic hydrostatic parcel runs without it (the `parcel_height_env` diagnostic is then skipped). The four `env_*` variables come as a set.
 
@@ -203,24 +203,31 @@ Profiles and time series. Always written.
 |----------|------|-------|-------------|
 | `z` | (z) | m | Vertical coordinate |
 | `time` | (time) | s | Output times |
-| `T` | (time, z) | K | Temperature |
+| `T` | (time, z) | °C | Temperature |
 | `QV` | (time, z) | kg/kg | Water vapor mixing ratio |
-| `Tv` | (time, z) | K | Virtual temperature |
-| `S` | (time, z) | — | Supersaturation |
+| `Tv` | (time, z) | °C | Virtual temperature |
+| `S` | (time, z) | % | Supersaturation |
+
+> **Output temperatures are °C, not K.** The `units` attributes on the file
+> (`"celsius"`) are authoritative. Note the asymmetry with the namelist echo: the
+> `PARAMETERS.Tref` global attribute is stored in **K** even though `Tref` is
+> supplied in °C. Lengths are likewise mixed — the DSD radii are µm while the
+> per-particle `solute_radius` is m. Read the `units` attribute rather than
+> assuming SI.
 
 **Microphysics variables** (when `do_microphysics`)
 
 | Variable | Dims | Units | Description |
 |----------|------|-------|-------------|
-| `radius` | (radius) | m | DSD bin centers |
-| `radius_edges` | (radius_edges) | m | DSD bin edges |
+| `radius` | (radius) | µm | DSD bin centers |
+| `radius_edges` | (radius_edges) | µm | DSD bin edges |
 | `DSD` | (time, radius) | count | Droplet size distribution |
 | `DSD_1`, `DSD_2` | (time, radius) | count | DSD per aerosol category |
 | `Np` | (time) | count | Total particles |
 | `Nact` | (time) | count | Activated droplets |
 | `Nun` | (time) | count | Unactivated droplets |
-| `Ravg` | (time) | m | Mean radius |
-| `LWC` | (time) | kg/m³ | Liquid water content |
+| `Ravg` | (time) | µm | Mean radius (wet) |
+| `LWC` | (time) | g/m³ | Liquid water content |
 | `N_collisions` | (time) | count | Collisions in interval |
 | `N_coalescences` | (time) | count | Coalescences in interval |
 
@@ -232,13 +239,23 @@ Profiles and time series. Always written.
 
 `budget_detrain_liquid_mass`, `budget_detrain_solute_mass` (kg); `budget_entrain_liquid_mass`, `budget_entrain_solute_mass` (kg); `budget_n_detrained`, `budget_n_entrained` (counts as double).
 
+**Radiation variables** (only when `do_radiation`; both modes)
+
+> ⚠️ **Experimental**, like the radiation code itself.
+
+| Variable | Dims | Units | Description |
+|----------|------|-------|-------------|
+| `rad_F_net` | (time, z) | W/m² | Net radiative flux |
+| `rad_heating_rate` | (time, z) | K/s | Radiative heating rate |
+| `budget_radiation_delta_T` | (time) | K | Domain-sum T change from radiation (double) |
+
 **Varying entrainment series** (only with a parcel input carrying a per-leg entrainment schedule)
 
 | Variable | Dims | Units | Description |
 |----------|------|-------|-------------|
 | `ent_rate` | (time) | 1/km | Active entrainment rate at each output step |
 | `n_blob` | (time) | — | Active blob count (`int`) |
-| `psigma` | (time) | — | Active blob fraction |
+| `psigma` | (time) | — | Active total entrained fraction |
 
 With a constant schedule these are not written; the constant values remain available as the `PARCEL.ent_rate` (1/km)/`PARCEL.n_blob`/`PARCEL.psigma` global attributes.
 
@@ -278,7 +295,7 @@ Per-particle trajectories, written when `write_trajectories = .true.` (over the 
 | `position` | m | Vertical position |
 | `temperature` | °C | Local temperature |
 | `water_vapor` | g/kg | Local water-vapor mixing ratio |
-| `supersaturation` | — | Local supersaturation |
+| `supersaturation` | % | Local supersaturation |
 | `radius` | µm | Droplet radius |
 | `solute_radius` | m | Dry solute radius |
 | `activated` | — | 1 if activated, else 0 |

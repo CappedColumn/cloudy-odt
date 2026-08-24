@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# CODT build script. Copy this template to `build.sh` (which is gitignored) and
+# edit the PROFILE -> MODULE table below for your site.
+#
+#   cp build.sh.template build.sh && chmod +x build.sh
+#
+# Usage:
+#   ./build.sh [profile] [compiler]
+#   ./build.sh                       # release, gfortran
+#   ./build.sh debug                 # debug, gfortran
+#   ./build.sh release nvfortran     # release, nvfortran
+#
+# For anything beyond these two knobs, call fpm directly:
+#   fpm build --profile release --compiler gfortran --verbose
+#
+# It loads the compiler module the chosen profile needs, stamps the git-derived
+# version into src/version.f90, and runs `fpm build`.
+#
+# INVARIANT: every profile in fpm.toml needs an entry in the case block below,
+# naming the compiler module its netCDF was built with -- gfortran .mod files
+# are not portable across gcc major versions.
+#
+# No environment modules? Drop the `module load` line and put the compiler on
+# PATH yourself, or set FPM_FC=/full/path/to/gfortran.
+
+set -e
+
+PROFILE="${1:-release}"
+COMPILER="${2:-gfortran}"
+
+# ---------------------------------------------------------------------------
+# USER SETTINGS -- map each (compiler, profile) pair to its environment module.
+# Delete branches you do not have; most users only need gfortran:release and
+# gfortran:debug. Add an arch-tuned branch only once the matching
+# feature/profile pair exists in fpm.toml.
+# ---------------------------------------------------------------------------
+case "$COMPILER:$PROFILE" in
+    gfortran:release|gfortran:debug|gfortran:profiled)
+        MODULE=gcc/X.X.X ;;
+    nvfortran:release|nvfortran:debug|nvfortran:profiled)
+        MODULE=nvhpc/XX.X ;;
+    # An arch-tuned profile often needs a NEWER compiler than the baseline --
+    # see the "architecture-tuned build" comment in fpm.toml.template.
+    # gfortran:YOUR-ARCH-PROFILE)
+    #     MODULE=gcc/YOUR.ARCH.VERSION ;;
+    *)
+        echo "No compiler module mapped for compiler '$COMPILER' / profile '$PROFILE'." >&2
+        echo "Add it to the case block in build.sh and a matching profile in fpm.toml." >&2
+        exit 1 ;;
+esac
+
+module load "$MODULE"
+echo "CODT build: profile=$PROFILE compiler=$COMPILER module=$MODULE"
+
+# ---------------------------------------------------------------------------
+# Version provenance
+# ---------------------------------------------------------------------------
+# Version comes from git tags, so dev builds self-identify and only a clean
+# checkout of a tagged release commit can claim a bare version:
+#   release   (HEAD on tag v1.0.0, clean) -> "v1.0.0"
+#   dev       (5 commits past, modified)  -> "v1.0.0-5-g1a2b3c4-dirty"
+#   tarball   (no .git)                   -> "<fpm.toml version>-src"
+# Releases (the canonical version) are minted by the maintainer via annotated
+# git tags; contributors building forks always get a dev-marked string. These
+# values land in the global attributes of CODT's netCDF output.
+VERSION_FILE="src/version.f90"
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    # A prior build injected real strings into version.f90, changing its mtime.
+    # The clean filter keeps those out of git, but the stale stat-cache still
+    # trips `--dirty`. Renormalize just this file so its build-injected changes
+    # don't count as dirty -- a real edit to any OTHER source file still does.
+    git add --renormalize "$VERSION_FILE" 2>/dev/null || true
+    VERSION=$(git describe --tags --dirty --always)
+else
+    VERSION="$(grep '^version' fpm.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')-src"
+fi
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+echo "Building CODT ${VERSION} (${COMMIT})"
+
+sed -i "s/code_version = '.*'/code_version = '${VERSION}'/" "$VERSION_FILE"
+sed -i "s/git_commit   = '.*'/git_commit   = '${COMMIT}'/" "$VERSION_FILE"
+
+fpm build --profile "$PROFILE" --compiler "$COMPILER"

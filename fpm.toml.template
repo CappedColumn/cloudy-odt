@@ -24,16 +24,24 @@ library = false
 # ---------------------------------------------------------------------------
 # Build features and profiles
 # ---------------------------------------------------------------------------
-# Build flags live here, not in fpm_env. Select a profile at build time:
+# All build flags live here. Select a profile at build time:
 #
-#   fpm build --profile release  --compiler gfortran   # production (-O2)
-#   fpm build --profile debug    --compiler gfortran   # bounds/leak checks
-#   fpm build --profile profiled --compiler gfortran   # release + gprof (-pg)
+#   ./build.sh                                         # production (-O2)
+#   ./build.sh debug                                   # bounds/leak checks
+#   ./build.sh profiled                                # release + gprof (-pg)
 #
-# fpm_env only loads the compiler module and sets FPM_FC; ./build.sh defaults
-# to --profile release (a production binary). Each profile is a list of the
-# features below, and every feature has per-compiler flag sets, so gfortran and
-# nvfortran each get their own release/debug/profiled flags.
+# or equivalently, with the compiler module already loaded:
+#
+#   fpm build --profile release  --compiler gfortran
+#
+# Each profile is a list of the features below, and every feature has
+# per-compiler flag sets, so gfortran and nvfortran each get their own
+# release/debug/profiled flags.
+#
+# INVARIANT: every profile defined here needs a matching (compiler, profile)
+# case in build.sh naming the compiler module to load, because gfortran .mod
+# files are not portable across gcc major versions. Add profiles to both files
+# or to neither.
 #
 # NOTE: fpm's own built-in `release`/`debug` (which force -O3 / -O0) are
 # overridden by the definitions here. Use -O2 for production: -O3/-flto cause
@@ -89,19 +97,17 @@ link-time-flags = "-Mprof=ccff"
 # than editing the baseline in place -- that way the baseline stays safe to
 # run anywhere, and an arch-tuned binary is opt-in.
 #
-# INVARIANT: always keep an arch-tuned `optimized-<tag>` feature and its
-# matching `netcdf-<tag>` feature in the same profile, both built against the
-# SAME target architecture. Some tooling (e.g. a job launcher) may infer a
-# binary's target architecture from which netCDF build its rpath points at
-# -- if you mix an arch-tuned -march with a differently-targeted netCDF, that
-# inference silently lies, even though the binary still links and runs fine.
+# Only CODT's own objects need the -march flag -- point `netcdf-<tag>` at a
+# portable netCDF build so nothing on the link line limits where the binary
+# runs. The one hard requirement is that it was built with the same compiler
+# version you build the profile under: gfortran .mod files are not readable
+# across gcc major versions.
 #
 # The arch-tuning flag itself is compiler-specific -- look up what your
 # compiler calls it (site/cluster docs, `man`, or `--help`) and fill in the
 # flag AND its value yourself; there's no one true spelling across compilers.
 # Site-specific netCDF paths and available builds are likewise something to
-# confirm locally. A worked example (CHPC notchpeak, gfortran, AMD Rome) is
-# in docs/running_codt.md#1a-building-for-a-specific-target-architecture-chpc.
+# confirm locally. See docs/running_codt.md section 1a.
 #
 # [features.netcdf-arch.YOUR_COMPILER]
 # flags = "-I/PATH/TO/ARCH/netcdf/include"

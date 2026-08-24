@@ -31,23 +31,32 @@ Build flags live in the fpm manifest (`fpm.toml`) as **profiles**, selected with
 | `debug`    | no optimization, runtime checks | `-g -O0 -fcheck=all -fbacktrace` |
 | `profiled` | release plus gprof instrumentation | `-O2 … -pg` |
 
-Two files hold the machine-specific settings; copy each template and edit it for your site:
+Two files hold the machine-specific settings; copy each template and edit it for your site. Both copies are gitignored, so your local paths and module names never get committed:
 
 - **`fpm.toml`** (from `fpm.toml.template`) — put your netCDF include/lib paths in the `netcdf-local` feature. All optimization/debug/profiling flags are already generic and need no editing.
-- **`fpm_env`** (from `fpm_env.template`) — loads your compiler module. Source it once per shell, choosing the compiler (Lmod compiler modules are mutually exclusive, so pick one and re-source to switch):
+- **`build.sh`** (from `build.sh.template`) — maps each `fpm.toml` profile to the compiler module it needs, then builds. Edit the `case` block near the top.
 
 ```bash
-source fpm_env                                     # gfortran (default)
-# source fpm_env nvfortran                         # or nvfortran
+cp fpm.toml.template fpm.toml        # then edit the netcdf-local paths
+cp build.sh.template build.sh        # then edit the profile -> module case block
+chmod +x build.sh
 
-./build.sh                                         # production build (release), version-stamped
-fpm build --profile release --compiler gfortran    # equivalent plain build
-fpm build --profile debug   --compiler gfortran    # debug build (bounds/backtrace)
+./build.sh                           # release + gfortran (the default), version-stamped
+./build.sh debug                     # debug build (bounds/backtrace)
+./build.sh release nvfortran         # pick profile and compiler positionally
 ```
 
-> A bare `fpm build` (no `--profile`) is an **unoptimized** debug build. Always pass `--profile release` for production runs, or just use `./build.sh`, which defaults to release.
+`build.sh` takes `[profile] [compiler]`, loads the compiler module that profile needs, stamps the version into `src/version.f90`, and runs `fpm build`. For anything beyond those two knobs, call fpm directly — but pass `--profile`:
 
-`build.sh` derives the version from git tags: a released build (a clean checkout of a tagged commit) reports a bare version such as `v1.0.0`, while development and fork builds self-identify with a commit hash and a `-dirty` suffix. These values are written into the global attributes of CODT's netCDF output for provenance. Override the compiler or profile with `CODT_COMPILER=nvfortran ./build.sh` or `CODT_PROFILE=debug ./build.sh`.
+```bash
+fpm build --profile release --compiler gfortran --verbose
+```
+
+> A bare `fpm build` (no `--profile`) is an **unoptimized** debug build, and also omits the `netcdf-local` feature, so it fails to find `netcdf.mod`. Always pass `--profile`, or just use `./build.sh`.
+
+Every profile in `fpm.toml` needs a matching entry in `build.sh`, and vice versa: gfortran `.mod` files are not portable across gcc major versions, so a profile must be built under the same compiler its netCDF was.
+
+`build.sh` derives the version from git tags: a released build (a clean checkout of a tagged commit) reports a bare version such as `v1.0.0`, while development and fork builds self-identify with a commit hash and a `-dirty` suffix. These values are written into the global attributes of CODT's netCDF output for provenance.
 
 ## Running CODT
 

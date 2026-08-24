@@ -14,20 +14,22 @@ You need a `CODT` executable on your `$PATH` (or an explicit path to one). Two
 common routes:
 
 1. **Build from source** with the Fortran Package Manager. Build flags live in
-   `fpm.toml` profiles (`release`/`debug`/`profiled`); `fpm_env` loads the
-   compiler module and the netCDF paths live in the `netcdf-local` feature of
-   your local `fpm.toml` (see `fpm.toml.template` / `fpm_env.template`):
+   `fpm.toml` profiles (`release`/`debug`/`profiled`), and `build.sh` maps each
+   profile to the compiler module it needs. Both are local copies of tracked
+   templates (`fpm.toml.template` / `build.sh.template`):
 
    ```bash
-   source fpm_env                                              # gfortran (default); `source fpm_env nvfortran` to switch
-   fpm build   --profile release --compiler gfortran           # optimized build
+   ./build.sh                                                  # release + gfortran, version-stamped
+   ./build.sh debug                                            # debug build
    fpm install --profile release --compiler gfortran --prefix <install-dir>   # puts CODT in <install-dir>/bin
    export PATH="<install-dir>/bin:$PATH"
    ```
 
-   A bare `fpm build` (no `--profile`) is unoptimized — always pass
-   `--profile release` for production, or use `./build.sh` (defaults to release
-   and stamps the version into output metadata).
+   A bare `fpm build` (no `--profile`) is unoptimized *and* omits the
+   `netcdf-local` feature, so it fails to find `netcdf.mod` — always pass
+   `--profile`, or use `./build.sh` (defaults to release and stamps the version
+   into output metadata). Note `fpm install` needs the compiler module already
+   loaded, which `./build.sh` does for you as a side effect of a prior build.
 
 2. **Use a pre-built executable** if one has been provided to you (e.g. inside a
    shared conda environment). Activate/locate it, then confirm it resolves:
@@ -49,57 +51,36 @@ load, so they're a cheap way to confirm the binary is healthy.
 > the matching netcdf module, or set `LD_LIBRARY_PATH` — in the same shell/job that
 > runs CODT.
 
-### 1a. Building for a specific target architecture (CHPC)
+### 1a. Building for a specific target architecture
 
-CODT's default `release`/`debug`/`profiled`/`vec` profiles target a portable
-x86-64 baseline (`sandybridge`), safe to run on any CHPC node. Building for a
-*specific* microarchitecture (e.g. `-march=znver2` for AMD Rome nodes on
-notchpeak, used by the `notchpeak-rome` profile) can unlock real speedups —
-e.g. FMA3 fused multiply-add, which the sandybridge baseline predates — but
-the netCDF the compiler links against must match the compiler *and* the
-target CPU family, and CHPC doesn't build that combination for every
-compiler version.
+The default `release`/`debug`/`profiled` profiles target a portable x86-64
+baseline, safe to run on any node. If your cluster's nodes are newer than that
+baseline, an arch-tuned profile can be worth adding — it is optional and
+entirely local. See the commented "architecture-tuned build" block in
+`fpm.toml.template`.
 
-**CHPC keeps several parallel generations of Spack-built software**, not one
-rolling tree. As of 2026-08, under `/uufs/chpc.utah.edu/sys/spack/`:
+Two things are worth knowing before you do:
 
-| Root | Last modified | Notes |
-|------|---------------|-------|
-| top-level `spack/` | 2026-05-28 | oldest netCDF-Fortran (4.5.3) but broadest compiler coverage (gcc/intel/nvhpc) |
-| `v020/` | 2023-07-02 | effectively retired |
-| `v019/` | 2025-06-23 | has the only working **gcc-11.2.0 + zen2** netCDF-Fortran build (what `notchpeak-rome` uses) |
-| `v11/` | 2026-05-28 | newer generation; only nehalem/gcc-8.5.0 has netCDF-Fortran so far |
-| `v10/` | 2026-08-11 (newest) | has gcc-13.4.0/15.1.0 and more arches, but **no netCDF-Fortran build at all yet** — netCDF-C only |
+- **Prefer a microarchitecture level (`-march=x86-64-v3`) to a specific chip
+  (`-march=znver2`).** A level names a feature set that both AMD and Intel
+  parts of that generation implement, so one binary runs across the whole
+  partition instead of needing a scheduler constraint.
+- **Only CODT's own objects need the `-march` flag.** Link the arch-tuned
+  profile against the same portable netCDF the baseline uses. The one hard
+  requirement is that netCDF was built with the same compiler *version* you
+  build the profile under — gfortran `.mod` files are not readable across gcc
+  major versions, which is why `build.sh` maps each profile to a module.
 
-**The newest generation is not necessarily the most complete one.** A newer
-root can have a compiler or arch tree with no matching netCDF-Fortran build
-yet — check before assuming "newest = best available." As found in 2026-08,
-netCDF-Fortran only exists for these arch/compiler pairs, system-wide:
+To add one: add a `[features.netcdf-<tag>.*]` / `[features.opt-<tag>.*]` pair
+and a `<tag>` profile to your local `fpm.toml`, then the matching
+`gfortran:<tag>) MODULE=...` case to your local `build.sh`.
 
-| Arch target | Compiler | Root |
-|---|---|---|
-| nehalem (portable) | gcc/8.5.0 | `spack/`, `v019/`, `v11/` |
-| nehalem (portable) | gcc/11.2.0 | `v019/` |
-| nehalem (portable) | intel/18.0.5, 2021.4.0, 2021.7.1 | `spack/`, `v019/` |
-| nehalem (portable) | nvhpc/21.5, 21.7 | `spack/` |
-| sandybridge | gcc/8.5.0, nvhpc/21.5 | `spack/`, `v019/` |
-| **zen2 (AMD Rome match)** | **gcc/11.2.0** | **`v019/`** |
+> If netCDF-C and netCDF-Fortran are separate packages at your site, both `lib`
+> directories need their own `-L` and `-rpath`, or `-lnetcdf` silently falls
+> back to a stale system library.
 
-Everything else — gcc 13.x/15.x, nvhpc 20.x/23.x/24.x/25.x, Intel oneAPI
-2022+/2025, skylake/cascade-lake-specific builds — exists as a compiler or
-netCDF-C-only tree, but has no matching netCDF-Fortran anywhere, and would
-need to be built from source (or via user-space Spack against CHPC's
-upstream — see `chpc.utah.edu/documentation/software/spack.php`) before it's
-usable by CODT.
-
-**Adding a new arch-specific fpm profile:** find the matching
-arch/compiler/netCDF-Fortran triple (searching all spack roots, not just the
-newest), add a `(compiler, arch)` case to `fpm_env`, and a matching
-`[features.optimized-<arch>.*]` / `[features.netcdf-<arch>.*]` pair plus
-profile in `fpm.toml`. If `fpm.toml`'s global `link = ["netcdf", "netcdff"]`
-is in play, remember netCDF-C and netCDF-Fortran are sometimes **separate**
-spack packages (as in the `v019`/zen2 build) — both lib directories need
-`-L`/`-rpath`, or `-lnetcdf` silently falls back to a stale system library.
+Site-specific notes — exact module names, netCDF paths, what your cluster
+actually provides — belong in an untracked file, not here.
 
 ---
 

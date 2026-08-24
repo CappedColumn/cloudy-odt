@@ -6,6 +6,8 @@ test/data/
 # NetCDF inputs that unit tests write into the working directory at run time
 test_*.nc
 gmon.out
+# -fopt-info-vec-* reports, written into the working directory at build time
+vec_*.log
 fpm.toml
 build.sh
 docs/site/

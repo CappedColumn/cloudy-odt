@@ -28,8 +28,12 @@ common routes:
    A bare `fpm build` (no `--profile`) is unoptimized *and* omits the
    `netcdf-local` feature, so it fails to find `netcdf.mod` — always pass
    `--profile`, or use `./build.sh` (defaults to release and stamps the version
-   into output metadata). Note `fpm install` needs the compiler module already
-   loaded, which `./build.sh` does for you as a side effect of a prior build.
+   into output metadata).
+
+   > `build.sh` loads the compiler module inside its own process, so it does
+   > **not** stay loaded in your shell. `fpm install` and `fpm test` run in your
+   > shell and need it loaded yourself — `build.sh` prints which module the
+   > profile uses, so load that one before calling fpm directly.
 
 2. **Use a pre-built executable** if one has been provided to you (e.g. inside a
    shared conda environment). Activate/locate it, then confirm it resolves:

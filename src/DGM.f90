@@ -207,9 +207,9 @@ pure subroutine growth_rhs(t, y, dydt, ierr)
   es = esat(temp)
 
   ! Kinetic correction: mean free path jump lengths (Fukuta & Walter 1970)
-  jump_thermal = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
-               / (thermal_accom * pres * (cv + R_univ / 2.0))
-  jump_vapor   = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
+  jump_thermal = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+               / (thermal_accom * pres * (cv + Rd / 2.0))
+  jump_vapor   = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
 
   ! Ventilation coefficients (transition regime correction)
   vent_thermal = radius / (radius + jump_thermal)
@@ -316,9 +316,9 @@ pure subroutine growth_jacobian(t, y, jac)
   es = esat(temp)
 
   ! Kinetic jump lengths (Fukuta & Walter 1970)
-  jump_th = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
-          / (thermal_accom * pres * (cv + R_univ / 2.0))
-  jump_vp = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
+  jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+          / (thermal_accom * pres * (cv + Rd / 2.0))
+  jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
 
   ! Ventilation coefficients
   vent_th = r / (r + jump_th)
@@ -394,11 +394,11 @@ pure subroutine growth_jacobian(t, y, jac)
   d_dv_dt = 1.57e-7 * 1.0e5 / pres
 
   ! d(jump lengths)/dT
-  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Ma * R_univ * temp) &
-           + thermal_cond * pi * Ma * R_univ / sqrt(2.0 * pi * Ma * R_univ * temp)) &
-           / (thermal_accom * pres * (cv + R_univ / 2.0))
-  d_jvp_dt = -0.5 * sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
-           + sqrt(2.0 * pi * Mw / (Rv * temp)) * d_dv_dt / condensation_eff
+  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
+           + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
+           / (thermal_accom * pres * (cv + Rd / 2.0))
+  d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+           + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
 
   ! d(ventilation)/dT via jump length dependence
   d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
@@ -527,9 +527,9 @@ pure subroutine growth_rhs_jac(t, y, dydt, jac, ierr)
   vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
   es = esat(temp)
 
-  jump_th = thermal_cond * sqrt(2.0 * pi * Ma * R_univ * temp) &
-          / (thermal_accom * pres * (cv + R_univ / 2.0))
-  jump_vp = sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / condensation_eff
+  jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+          / (thermal_accom * pres * (cv + Rd / 2.0))
+  jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
 
   vent_th = r / (r + jump_th)
   vent_vp = r / (r + jump_vp)
@@ -592,11 +592,11 @@ pure subroutine growth_rhs_jac(t, y, dydt, jac, ierr)
   d_k_dt  = 7.7e-5
   d_dv_dt = 1.57e-7 * 1.0e5 / pres
 
-  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Ma * R_univ * temp) &
-           + thermal_cond * pi * Ma * R_univ / sqrt(2.0 * pi * Ma * R_univ * temp)) &
-           / (thermal_accom * pres * (cv + R_univ / 2.0))
-  d_jvp_dt = -0.5 * sqrt(2.0 * pi * Mw / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
-           + sqrt(2.0 * pi * Mw / (Rv * temp)) * d_dv_dt / condensation_eff
+  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
+           + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
+           / (thermal_accom * pres * (cv + Rd / 2.0))
+  d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+           + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
 
   d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
   d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2

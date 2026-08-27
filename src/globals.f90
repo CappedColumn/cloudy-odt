@@ -69,7 +69,7 @@ module globals
     real(dp), parameter :: Lcond = 2.5e6 !2.5104e6       ! Latent heat of condensation J/kg
     real(dp), parameter :: Rv = 461.5             ! Individual gas constant of water vapor J/kg/K
     real(dp), parameter :: Rd = 287.0             ! Individual gas constant of dry air J/kg/K
-    real(dp), parameter :: R_univ = 8.1344598     ! Universal gas constant
+    real(dp), parameter :: R_univ = 8.3144598     ! Universal gas constant
     real(dp), parameter :: rho_l = 1000.0         ! Density of water kg/m3
 
     real(dp), parameter :: pi = 3.1415926535897931      ! duh

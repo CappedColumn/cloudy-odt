@@ -79,7 +79,8 @@ COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 echo "Building CODT ${VERSION} (${COMMIT})"
 
-sed -i "s/code_version = '.*'/code_version = '${VERSION}'/" "$VERSION_FILE"
-sed -i "s/git_commit   = '.*'/git_commit   = '${COMMIT}'/" "$VERSION_FILE"
+sed -i.bak "s/code_version = '.*'/code_version = '${VERSION}'/" "$VERSION_FILE"
+sed -i.bak "s/git_commit   = '.*'/git_commit   = '${COMMIT}'/" "$VERSION_FILE"
+rm -f "$(VERSION_FILE}.bak"
 
 fpm build --profile "$PROFILE" --compiler "$COMPILER"

@@ -81,6 +81,6 @@ echo "Building CODT ${VERSION} (${COMMIT})"
 
 sed -i.bak "s/code_version = '.*'/code_version = '${VERSION}'/" "$VERSION_FILE"
 sed -i.bak "s/git_commit   = '.*'/git_commit   = '${COMMIT}'/" "$VERSION_FILE"
-rm -f "$(VERSION_FILE}.bak"
+rm -f "${VERSION_FILE}.bak"
 
 fpm build --profile "$PROFILE" --compiler "$COMPILER"

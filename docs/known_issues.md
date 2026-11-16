@@ -199,6 +199,137 @@ trap, or a code defect; move it once you know.
 
 ## Coding
 
+### Collision scheduler queues pairs that are moving apart, so collisions are undercounted
+
+- **Symptom** — The number of collisions depends on the length of the
+  `collision_coalescence_step` window, and is far too low unless the window is
+  very short. Gravity-only box (`test/cluscoll`, smoke case: 5001 droplets,
+  8-24 um, 20 s, 163.2 collisions expected from the gravitational kernel):
+
+  | window (s) | counted | ratio |
+  |---|---|---|
+  | 1.0 | 7 | 0.04 |
+  | 0.1 | 24 | 0.15 |
+  | 0.01 | 89 | 0.55 |
+  | 0.001 | 154 | 0.94 |
+
+- **Cause** — The adjacency list runs bottom to top (`head` is the lowest
+  droplet, `next(i)` is the droplet above `i`), and `w_fall` is a positive
+  downward speed. `push_pair_for_i` schedules pair `(i, j = next(i))` only when
+  `vrel = w_fall(i) - w_fall(j) > 0`, that is, when the **lower** droplet falls
+  faster. That pair is separating. The pair that actually meets, upper droplet
+  faster, is never queued. `handle_pair_event` has the same sign in its guard.
+  The event time `dz / vrel` is therefore the gap divided by the rate at which
+  the gap is growing.
+- **Why short windows hide it** — Positions are advanced correctly and the list
+  is re-sorted at the start of every window. With a short window nearly all
+  true crossings are between adjacent droplets, and the wrongly queued
+  separating pairs have the same statistics of gap and speed difference as the
+  approaching ones, so the count comes out about right for the wrong pairs.
+  With a long window most true crossings need the cascade of rescheduling after
+  each swap, and the wrong sign breaks the cascade (after a swap the new pair
+  fails the test).
+- **Evidence** — Source read, then an A/B run on a scratch export of `8d4d6fb`
+  (`src/` in the repository untouched). Flipping the sign in both places, and
+  making `j` the survivor, removes the window dependence:
+
+  | window (s) | counted | ratio | z |
+  |---|---|---|---|
+  | 1.0 | 170 | 1.04 | 0.5 |
+  | 0.1 | 176 | 1.08 | 1.0 |
+  | 0.01 | 171 | 1.05 | 0.6 |
+  | 0.001 | 178 | 1.09 | 1.2 |
+
+  The four patched runs share one RNG seed, so they are not independent. All
+  four are above 1 but each is within 1.2 sigma; a small residual bias is not
+  ruled out and needs more seeds or a larger case.
+- **Consequence** — In the model the window is the main-loop time step
+  (`droplets.f90:139`), so the collision rate of every run with
+  `do_collisions = .true.` depends on the time step and is biased low. The
+  size of the bias in a production run has not been measured. The wrong pairs
+  also collide: the recorded collisions are between droplets that were not
+  meeting, so pair statistics in `collisions.bin` (who collected whom) are
+  suspect, not only the count. Results that rest on collision rates, including
+  [Runaway collision-coalescence collapse](#runaway-collision-coalescence-collapse-in-parcel-mode),
+  need to be re-examined after a fix.
+- **Related, not yet tested** —
+  - The list is not periodic. In parcel mode a droplet that wraps through the
+    bottom within a window cannot meet the droplets it re-enters above; the
+    `dz < 0 -> dz + H` branch in `push_pair_for_i` cannot fire on a sorted list.
+    Expected to cost a few percent at long windows; not visible in the patched
+    runs above.
+  - The comment in `handle_pair_event` says the survivor `i` is the larger
+    droplet. With the current sign `i` is the faster one of a separating pair;
+    with the sign corrected the faster droplet is `j`, so `keep`/`kill` must
+    change with it.
+- **A sign flip alone is not a fix** — three more places in `handle_pair_event`
+  assume `i` is the larger droplet and must change in the same commit:
+  - `collection_efficiency_E(r_i, r_j)` takes (collector, collectee) and does
+    not order its arguments. Left as is after the flip it is called with
+    (small, large). Measured on the scratch copy: coalescences fell to about a
+    quarter of sum(E) (4 of 16.1-18.9 expected, z = -3.3 to -3.7; 7 of 17.8 at
+    the 0.1 s window). With the arguments swapped: 17/17.1, 15/18.3, 18/18.8,
+    20/19.0, |z| <= 0.85. The runs in the table above had this error; it does
+    not affect the collision count.
+  - `keep = i; kill = j` must become `keep = j; kill = i`, or the smaller
+    droplet's id, category and `n_coalescences` survive.
+  - The two `write_collision` calls for a collision without coalescence pass
+    `i` then `j`. `docs/data_formats.md` names the fields `id_keep`, `id_kill`,
+    `r_keep`, `r_kill`, so `j` must come first to keep "larger droplet first"
+    in every record.
+- **Suspected location** — `src/collision_coalescence.f90:462`
+  (`push_pair_for_i`) and `:216` (`handle_pair_event`). Verified by source read
+  and by the A/B run.
+- **Found in** — `8d4d6fb` (`v3.1.2`), `main`; from the `git_commit` attribute
+  of the `test/cluscoll` output. The line dates from the commit that added the
+  module, `ba68801` (2026-04-08).
+- **Resolution** — fixed in four commits, one per change above: `d62c592`
+  (closing speed in `push_pair_for_i` and `handle_pair_event`), `8a1474f`
+  (survivor is `j`), `8c10a96` (efficiency argument order), `661e47a` (record
+  order for collisions without coalescence). The first three are each wrong
+  without the others; do not cherry-pick one alone.
+
+  Verified with the `test/cluscoll` smoke case, three RNG seeds at four window
+  lengths. Collisions counted / expected from the gravitational kernel:
+
+  | window (s) | seed 12345 | seed 777 | seed 2024 |
+  |---|---|---|---|
+  | 1.0 | 168 / 163.3 | 154 / 161.8 | 154 / 162.0 |
+  | 0.1 | 171 / 163.4 | 160 / 161.8 | 160 / 162.0 |
+  | 0.01 | 173 / 163.4 | 159 / 161.7 | 163 / 161.8 |
+  | 0.001 | 172 / 163.3 | 179 / 161.9 | 154 / 161.9 |
+
+  All twelve pass the kernel check (|z| <= 1.4) and the efficiency check
+  (|z| <= 1.5). Two of the three seeds fall below 1, so the 1.04-1.09 seen with
+  a single seed was noise, not an overcount.
+
+  `test/test_collision_coalescence.f90` had the error built in: its two-droplet
+  case put the large droplet below the small one and expected them to merge.
+  The geometry is corrected, and the old geometry is kept as a new subtest that
+  must produce no collision (25 of 25 checks pass).
+- **Impact on existing results** — Every run with `do_collisions = .true.` made
+  before this fix undercounts collisions by an amount that depends on its time
+  step, and its `collisions.bin` records pairs that were not meeting. Such runs
+  are not comparable with runs after the fix; distinguish by `code_version`.
+  The non-periodic list (first item under "Related") is still open.
+- **Status** — **fixed** in `d62c592`..`661e47a`.
+
+### `test_seeding` fails and then segfaults
+
+- **Symptom** — `fpm test test_seeding` reports `FAIL: n seed bins` (expected 2,
+  got 0) and then dies with SIGSEGV (exit 139). The reader prints "seeding
+  input detected but do_seeding is false; the seed group is ignored" first.
+- **Suspected location** — `test/test_seeding.f90`: it reads its own seeded
+  aerosol file without turning `do_seeding` on, so the seed group is skipped
+  and the later checks index seed arrays that were never filled. *Unverified*
+  beyond the log message; not debugged.
+- **Evidence** — `release` build, gcc 8.5.0, 2026-11-16. Seen while running the
+  unit tests for the collision scheduler fix. The test touches no collision
+  code, so it is taken to predate that fix, but it was not rerun on `main`.
+- **Found in** — branch `fix/cc-pair-scheduling` at `661e47a` (`v3.1.2` plus the
+  collision fix).
+- **Status** — open.
+
 ### `collisions.bin` `time` is not simulation time
 
 - **Symptom** — The per-event `time` field spans only `7.6e-08 -> 1.20e-02` s in

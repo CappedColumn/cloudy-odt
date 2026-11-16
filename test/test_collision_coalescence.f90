@@ -11,8 +11,8 @@ program test_collision_coalescence
     !   - parcel mode           -> no fall events
     !   - tiny grid_area        -> geometric collision probability clamps to 1
     !   - 'unity' kernel        -> collection efficiency E == 1
-    ! so every scheduled adjacent meeting (lower droplet falling faster than the
-    ! upper one) results in a coalescence.
+    ! so every scheduled adjacent meeting (upper droplet falling faster than the
+    ! lower one) results in a coalescence.
     use globals, only: dp, i4, H, N, simulation_mode, volume_scaling, pi_43, rho_l
     use particle_types, only: particle
     use collision_coalescence, only: collision_coalescence_step, &
@@ -38,6 +38,7 @@ program test_collision_coalescence
 
     call test_two_droplet_merge()
     call test_collision_without_coalescence()
+    call test_separating_pair_does_not_collide()
     call test_dsd_box_conservation()
 
     print *
@@ -53,8 +54,8 @@ contains
     ! Subtest 1: a single deterministic two-droplet merge
     ! -----------------------------------------------------------------------
     subroutine test_two_droplet_merge()
-        ! A large (fast) droplet placed just below a small (slow) one. The lower
-        ! droplet catches the upper within the window and they coalesce. Verify
+        ! A large (fast) droplet placed just above a small (slow) one. The upper
+        ! droplet catches the lower within the window and they coalesce. Verify
         ! the survivor conserves water volume, liquid mass and solute mass, and
         ! that the killed droplet is flagged out.
         type(particle) :: p(2)
@@ -65,9 +66,9 @@ contains
         do_collisions = .true.
         do_coalescence = .true.
 
-        ! Lower droplet (index 1, larger -> faster) and upper droplet (index 2).
-        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.10_dp)
-        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.12_dp)
+        ! Upper droplet (index 1, larger -> faster) and lower droplet (index 2).
+        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.12_dp)
+        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.10_dp)
 
         v_pre = p(1)%radius**3 + p(2)%radius**3
         m_pre = p(1)%water_liquid + p(2)%water_liquid
@@ -82,7 +83,8 @@ contains
         call check_int("two-drop: one collision recorded", collisions_this_step, 1)
         call check_int("two-drop: no fall events (parcel)", fall_events_this_step, 0)
 
-        ! handle_pair_event keeps the lower droplet (index 1) and kills the upper.
+        ! handle_pair_event keeps the upper, larger droplet (index 1) and kills
+        ! the lower, smaller one.
         call check_true("two-drop: survivor (1) not flagged coalesced", .not. p(1)%coalesced)
         call check_true("two-drop: killed (2) flagged coalesced", p(2)%coalesced)
 
@@ -112,8 +114,8 @@ contains
         do_collisions = .true.
         do_coalescence = .false.
 
-        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.10_dp)
-        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.12_dp)
+        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.12_dp)
+        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.10_dp)
         r1_pre = p(1)%radius
         r2_pre = p(2)%radius
 
@@ -130,7 +132,35 @@ contains
 
 
     ! -----------------------------------------------------------------------
-    ! Subtest 3: many-droplet box -- DSD evolution under pure coalescence
+    ! Subtest 3: a separating pair must not collide
+    ! -----------------------------------------------------------------------
+    subroutine test_separating_pair_does_not_collide()
+        ! The two-droplet geometry reversed: the large (fast) droplet starts
+        ! below the small (slow) one, so the gap between them grows. Nothing
+        ! may collide within the window. Regression guard for the scheduler
+        ! sign error fixed in d62c592, which queued exactly this pair.
+        type(particle) :: p(2)
+        integer(i4) :: np
+
+        H = 1.0_dp
+        do_collisions = .true.
+        do_coalescence = .true.
+
+        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.10_dp)
+        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.12_dp)
+
+        np = 2_i4
+        call collision_coalescence_step(p, np, 0.5_dp, 0.5_dp)
+
+        call check_int("separating: no collision", collisions_this_step, 0)
+        call check_int("separating: no coalescence", coalescences_this_step, 0)
+        call check_true("separating: droplet 1 survives", .not. p(1)%coalesced)
+        call check_true("separating: droplet 2 survives", .not. p(2)%coalesced)
+    end subroutine test_separating_pair_does_not_collide
+
+
+    ! -----------------------------------------------------------------------
+    ! Subtest 4: many-droplet box -- DSD evolution under pure coalescence
     ! -----------------------------------------------------------------------
     subroutine test_dsd_box_conservation()
         ! A bidisperse population -- large "collector" droplets and small

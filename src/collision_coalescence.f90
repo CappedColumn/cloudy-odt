@@ -238,7 +238,9 @@ contains
                     lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), &
                     t_window_start + current_time, .false.)
             else
-                coal_efficiency = collection_efficiency_E(lparticles(i)%radius, lparticles(j)%radius)
+                ! collection_efficiency_E takes (collector, collectee) and does
+                ! not order its arguments.
+                coal_efficiency = collection_efficiency_E(lparticles(j)%radius, lparticles(i)%radius)
 
                 call random_number(random_draw)
                 if (random_draw <= coal_efficiency) then

@@ -213,7 +213,11 @@ contains
         call update_working_pos(i, current_time, zcur, tstamp, w_fall)
         call update_working_pos(j, current_time, zcur, tstamp, w_fall)
 
-        vrel = w_fall(i) - w_fall(j)
+        ! Closing speed. j = next(i) is the droplet above i and w_fall is a
+        ! positive downward speed, so the pair meets only when the upper
+        ! droplet j falls faster. From here on j is the faster, larger droplet
+        ! (the collector) and i the smaller one (the collectee).
+        vrel = w_fall(j) - w_fall(i)
         if (vrel <= 0.0) return
 
         ! Stage 1: Collision check (geometric kernel)
@@ -459,7 +463,9 @@ contains
         dz = zcur(j) - zcur(i)
         if (dz < 0.0) dz = dz + H
 
-        vrel = w_fall(i) - w_fall(j)
+        ! Closing speed: the gap shrinks only when the upper droplet j falls
+        ! faster than the lower droplet i (w_fall is positive downward).
+        vrel = w_fall(j) - w_fall(i)
         if (vrel <= 0.0) return
 
         te = current_time + dz / vrel

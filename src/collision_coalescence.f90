@@ -244,13 +244,13 @@ contains
                 if (random_draw <= coal_efficiency) then
                     ! Coalescence: merge particles, conserving mass
                     coalescences_this_step = coalescences_this_step + 1
-                    keep = i
-                    kill = j
+                    keep = j
+                    kill = i
 
                     ! Identity (category and material) of the merged droplet.
                     !
-                    ! The survivor is always i, which is the larger droplet: a
-                    ! collision requires vrel > 0 above, so i falls faster than j,
+                    ! The survivor is always j, which is the larger droplet: a
+                    ! collision requires vrel > 0 above, so j falls faster than i,
                     ! and fall speed grows with radius. The merged droplet therefore
                     ! inherits the larger droplet's category by default.
                     !

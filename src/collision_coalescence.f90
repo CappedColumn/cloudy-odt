@@ -232,10 +232,12 @@ contains
             lparticles(i)%n_collisions = lparticles(i)%n_collisions + 1
             lparticles(j)%n_collisions = lparticles(j)%n_collisions + 1
 
+            ! Collision records list the larger droplet (j) first, to match the
+            ! id_keep/r_keep, id_kill/r_kill field order of a coalescence record.
             if (.not. do_coalescence) then
                 if (write_collisions) call write_collision( &
-                    lparticles(i)%particle_id, lparticles(j)%particle_id, &
-                    lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), &
+                    lparticles(j)%particle_id, lparticles(i)%particle_id, &
+                    lparticles(j)%radius, lparticles(i)%radius, 0.0_dp, zcur(i), &
                     t_window_start + current_time, .false.)
             else
                 ! collection_efficiency_E takes (collector, collectee) and does
@@ -337,8 +339,8 @@ contains
                     return
                 else
                     if (write_collisions) call write_collision( &
-                        lparticles(i)%particle_id, lparticles(j)%particle_id, &
-                        lparticles(i)%radius, lparticles(j)%radius, 0.0_dp, zcur(i), &
+                        lparticles(j)%particle_id, lparticles(i)%particle_id, &
+                        lparticles(j)%radius, lparticles(i)%radius, 0.0_dp, zcur(i), &
                         t_window_start + current_time, .false.)
                 end if
             end if

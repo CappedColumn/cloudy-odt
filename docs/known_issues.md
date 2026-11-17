@@ -404,10 +404,13 @@ Fortran). None changes collision counts measurably at realistic settings.
 - **Equal-size droplets in different cells collide** — the same `virt_temp`
   dependence gives equal radii a non-zero closing speed, and the Hall table's
   size-ratio-1 column reaches 4.0. Predates the fix. **Status** — open.
-- **`collisions.bin` `position` is not wrapped** — it is the unwrapped working
-  position, so in parcel mode it can be negative or, with the periodic ring,
-  offset by a multiple of `H`. Take it modulo `H` when reading.
-  **Status** — open.
+- **`collisions.bin` `position` is not wrapped** — it is the working position
+  of the lower droplet `i`, which starts each window in [0, `H`) and only moves
+  down, so in parcel mode it can be slightly negative (at most `w_fall(i)`
+  times the window). It never reaches `H`: the earlier note here that it could
+  be "offset by a multiple of `H`" was wrong. **Status** — **fixed** after
+  `a03d461`: `write_collision` wraps the value into [0, `H`) when the column is
+  periodic. Files from 3.2.0 and earlier still need `modulo(position, H)`.
 - **`test/scripts/test_cc_invariants.py` reads 48-byte records** — the record
   has been 49 bytes since the coalesced flag was added, so the script misreads
   current files. **Status** — open.

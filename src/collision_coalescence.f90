@@ -822,13 +822,23 @@ contains
         ! t_window_start. Field width is unchanged (real(dp)), so the file
         ! layout is identical to earlier versions -- only the meaning of this
         ! field changed. See docs/data_formats.md.
+        !
+        ! position_m is the scheduler's working height, which only moves down
+        ! within a window. In a periodic column it can drop below 0, so it is
+        ! wrapped into [0, H) here; the working position itself is left alone.
         integer(i4), intent(in) :: id_i, id_j
         real(dp), intent(in) :: r_i_m, r_j_m, r_after_m, position_m, time_s
         logical, intent(in) :: coalesced
         integer(i1) :: flag
+        real(dp) :: lposition
 
         flag = merge(1_i1, 0_i1, coalesced)
-        write(collision_unit) id_i, id_j, r_i_m, r_j_m, r_after_m, position_m, time_s, flag
+        if (periodic_column) then
+            lposition = modulo(position_m, H)
+        else
+            lposition = position_m
+        end if
+        write(collision_unit) id_i, id_j, r_i_m, r_j_m, r_after_m, lposition, time_s, flag
 
     end subroutine write_collision
 

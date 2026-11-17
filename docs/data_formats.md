@@ -385,7 +385,7 @@ Unformatted Fortran **stream**, written when `write_collisions = .true.`
 
 `flag` is `1` if the event was a coalescence (droplets merged; `r_after` is the merged radius) and `0` if it was a collision without coalescence (`r_after = 0`).
 
-`keep` is the larger droplet of the pair (for equal radii, the faster-falling one); it is listed first in every record, whether or not the pair coalesced. `position` is the scheduler's working height: in parcel mode it is not wrapped, so take it modulo `H`.
+`keep` is the larger droplet of the pair (for equal radii, the faster-falling one); it is listed first in every record, whether or not the pair coalesced. `position` is the height of the lower droplet of the pair at the event, in [0, `H`]. In parcel mode it is wrapped into [0, `H`) in versions after 3.2.0; files from 3.2.0 and earlier can hold small negative values there (the droplet's fall below 0 within one collision window), so take those modulo `H`.
 
 > **Files written by CODT 3.1.2 and earlier record the wrong pairs.** Before the collision-scheduler fix the model collided droplet pairs that were moving apart, so both the number of records and who collided with whom are unreliable in those files, and in records without coalescence the two droplets may appear in either order. See `docs/known_issues.md`, "Collision scheduler queues pairs that are moving apart".
 

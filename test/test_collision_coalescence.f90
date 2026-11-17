@@ -41,6 +41,7 @@ program test_collision_coalescence
     call test_separating_pair_does_not_collide()
     call test_pair_across_periodic_boundary()
     call test_two_droplet_laps()
+    call test_larger_droplet_survives_when_slower()
     call test_dsd_box_conservation()
 
     print *
@@ -234,7 +235,41 @@ contains
 
 
     ! -----------------------------------------------------------------------
-    ! Subtest 6: many-droplet box -- DSD evolution under pure coalescence
+    ! Subtest 6: the larger droplet survives even when it is the slower one
+    ! -----------------------------------------------------------------------
+    subroutine test_larger_droplet_survives_when_slower()
+        ! Stokes speed goes as virt_temp * r^2, so a slightly smaller but warmer
+        ! droplet can fall faster than a larger one. Here the upper droplet (2)
+        ! is 0.1% smaller and 3 K warmer: it is the faster one and catches the
+        ! lower droplet (1), but droplet 1 is the larger and must survive.
+        type(particle) :: p(2)
+        integer(i4) :: np
+
+        H = 1.0_dp
+        do_collisions = .true.
+        do_coalescence = .true.
+
+        p(1) = make_droplet(1_i4, 30.00e-6_dp, 0.100_dp)
+        p(2) = make_droplet(2_i4, 29.97e-6_dp, 0.101_dp)
+        p(2)%virt_temp = p(1)%virt_temp + 3.0_dp
+
+        call check_true("slower-larger: upper droplet is smaller but faster", &
+            p(2)%radius < p(1)%radius .and. &
+            abs(calculate_terminal_velocity(p(2))) > abs(calculate_terminal_velocity(p(1))))
+
+        np = 2_i4
+        call collision_coalescence_step(p, np, 2.0_dp, 2.0_dp)
+
+        call check_int("slower-larger: one coalescence", coalescences_this_step, 1)
+        call check_true("slower-larger: larger droplet (1) survives", .not. p(1)%coalesced)
+        call check_true("slower-larger: smaller droplet (2) flagged coalesced", p(2)%coalesced)
+        call check_close("slower-larger: radius_before_coalescence is the larger radius", &
+            p(1)%radius_before_coalescence, 30.00e-6_dp, 1.0e-12_dp)
+    end subroutine test_larger_droplet_survives_when_slower
+
+
+    ! -----------------------------------------------------------------------
+    ! Subtest 7: many-droplet box -- DSD evolution under pure coalescence
     ! -----------------------------------------------------------------------
     subroutine test_dsd_box_conservation()
         ! A bidisperse population -- large "collector" droplets and small

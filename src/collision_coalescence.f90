@@ -228,10 +228,22 @@ contains
 
         ! Closing speed. j = next(i) is the droplet above i and w_fall is a
         ! positive downward speed, so the pair meets only when the upper
-        ! droplet j falls faster. From here on j is the faster, larger droplet
-        ! (the collector) and i the smaller one (the collectee).
+        ! droplet j falls faster.
         vrel = w_fall(j) - w_fall(i)
         if (vrel <= 0.0) return
+
+        ! Collector (keep) and collectee (kill) by size. The faster droplet j is
+        ! normally the larger one, but not always: fall speed also depends on
+        ! each droplet's own virtual temperature, and the Beard formula steps
+        ! down 0.2% at 19 um diameter. So the larger radius decides, and equal
+        ! radii fall back to the faster droplet j.
+        if (lparticles(j)%radius >= lparticles(i)%radius) then
+            keep = j
+            kill = i
+        else
+            keep = i
+            kill = j
+        end if
 
         ! Stage 1: Collision check (geometric kernel)
         p_coll = pi * (lparticles(i)%radius + lparticles(j)%radius)**2 / grid_area
@@ -245,31 +257,28 @@ contains
             lparticles(i)%n_collisions = lparticles(i)%n_collisions + 1
             lparticles(j)%n_collisions = lparticles(j)%n_collisions + 1
 
-            ! Collision records list the larger droplet (j) first, to match the
+            ! Collision records list the larger droplet (keep) first, to match the
             ! id_keep/r_keep, id_kill/r_kill field order of a coalescence record.
             if (.not. do_coalescence) then
                 if (write_collisions) call write_collision( &
-                    lparticles(j)%particle_id, lparticles(i)%particle_id, &
-                    lparticles(j)%radius, lparticles(i)%radius, 0.0_dp, zcur(i), &
+                    lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
+                    lparticles(keep)%radius, lparticles(kill)%radius, 0.0_dp, zcur(i), &
                     t_window_start + current_time, .false.)
             else
                 ! collection_efficiency_E takes (collector, collectee) and does
                 ! not order its arguments.
-                coal_efficiency = collection_efficiency_E(lparticles(j)%radius, lparticles(i)%radius)
+                coal_efficiency = collection_efficiency_E(lparticles(keep)%radius, lparticles(kill)%radius)
 
                 call random_number(random_draw)
                 if (random_draw <= coal_efficiency) then
                     ! Coalescence: merge particles, conserving mass
                     coalescences_this_step = coalescences_this_step + 1
-                    keep = j
-                    kill = i
 
                     ! Identity (category and material) of the merged droplet.
                     !
-                    ! The survivor is always j, which is the larger droplet: a
-                    ! collision requires vrel > 0 above, so j falls faster than i,
-                    ! and fall speed grows with radius. The merged droplet therefore
-                    ! inherits the larger droplet's category by default.
+                    ! The survivor is keep, the larger droplet (chosen by radius
+                    ! above). The merged droplet therefore inherits the larger
+                    ! droplet's category by default.
                     !
                     ! Seed outranks size. If a larger background droplet collects a
                     ! seed, the merged droplet still counts as seed, so a seeded run
@@ -352,8 +361,8 @@ contains
                     return
                 else
                     if (write_collisions) call write_collision( &
-                        lparticles(j)%particle_id, lparticles(i)%particle_id, &
-                        lparticles(j)%radius, lparticles(i)%radius, 0.0_dp, zcur(i), &
+                        lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
+                        lparticles(keep)%radius, lparticles(kill)%radius, 0.0_dp, zcur(i), &
                         t_window_start + current_time, .false.)
                 end if
             end if

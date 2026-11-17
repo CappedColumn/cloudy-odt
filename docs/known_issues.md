@@ -173,6 +173,42 @@ trap, or a code defect; move it once you know.
   (or `volume_scaling`) for mass-weighted diagnostics, and probably an ensemble
   convention for entraining parcel runs.
 
+### Beard fall speed: step at 19 um, flat above 1.07 mm, its own viscosity
+
+Three properties of `fall_speed_scheme = 'beard'` (`particle_types.f90
+beard_fall_speed`) that are choices or properties of the formula, not coding
+errors. None applies to the default `'stokes'`.
+
+- **Step at 19 um diameter** — Beard's two fits do not join exactly. The speed
+  steps *down* by 0.17-0.23% going from the slip-corrected Stokes range to the
+  Reynolds-number fit (0.225% at 283 K, 1000 hPa), so in a band about 0.1% wide
+  in radius (roughly 9.49-9.51 um) a smaller droplet falls faster than a larger
+  one. The collision step takes the faster droplet of a pair as the collector,
+  so for a pair straddling the band the smaller droplet would be the collector.
+  The reference implementation (`test/cluscoll/reference/sdm_motion.f90`) has
+  the same step. `test_fall_speed` pins it (exactly one downward step between
+  9.4 and 9.6 um).
+- **Flat above 1.07 mm** — Beard's raindrop range needs surface tension and was
+  left out. Every drop larger than 1.07 mm diameter gets the 1.07 mm speed
+  (4.24 m/s at 283 K, 1000 hPa): such drops fall too slowly, by up to about a
+  factor of two for the largest raindrops, and cannot collide with each other
+  because their fall speeds are equal.
+- **Viscosity differs from the rest of the model** — Beard uses the
+  temperature-dependent fit of Pruppacher & Klett (1997), 1.766e-5 kg/m/s at
+  283 K. Stokes uses the constant `nu * rho_air`, 1.832e-5 at 283 K and
+  1000 hPa. The two formulas therefore do not agree exactly even for the
+  smallest droplets.
+- **Also** — a droplet of exactly 9.5 um radius takes the Reynolds-number fit,
+  where the reference takes Stokes, because the 19 um limit is a
+  single-precision literal slightly below 19e-6. `beard_fall_speed` guards only
+  against a non-positive radius; no path in `src/` was found that passes it an
+  unphysical temperature or pressure.
+- **Evidence** — independent audit of the uncommitted Beard work, 2026-11-16:
+  scan of 200 001 radii at four (T, p) states; formula, units and coefficients
+  checked against the reference files.
+- **Found in** — branch `feature/beard-fallspeed`, on top of `bee14d6`.
+- **Status** — open (documented behaviour).
+
 ---
 
 ## Input/Output
@@ -256,8 +292,21 @@ trap, or a code defect; move it once you know.
   - The list is not periodic. In parcel mode a droplet that wraps through the
     bottom within a window cannot meet the droplets it re-enters above; the
     `dz < 0 -> dz + H` branch in `push_pair_for_i` cannot fire on a sorted list.
-    Expected to cost a few percent at long windows; not visible in the patched
-    runs above.
+    **Measured 2026-11-16** (after the fix, `test/cluscoll` driver, one
+    10 + 40 um pair, Beard fall speeds, `dw` = 16.3 cm/s, 1 m column, 20 000
+    collisions expected): the fraction of crossings lost per call is
+    `dw * window / (2 H)`. Windows of 0.50 and 0.33 s lost 4.2% and 2.7%
+    (4.1% and 2.7% predicted); 0.091 and 0.010 s lost nothing measurable
+    (noise 0.7%). The loss resets every call because the list is re-sorted from
+    wrapped positions. Chamber mode is not periodic and is not affected. For a
+    1 m parcel domain and a 0.01 s step the loss is about 0.05%.
+    **Fixed 2026-11-16** on `feature/beard-fallspeed`: in parcel mode the
+    neighbour list is now a ring (the highest droplet's upper neighbour is the
+    lowest, one domain height up) and the gap is taken modulo `H`. The same
+    case then gives 20 063 collisions at every window length, including one
+    25 s call in which droplets lap the column up to four times.
+    `test_collision_coalescence` gained a boundary-pair case and a two-droplet
+    lapping case. Chamber mode keeps the two-ended list and is unchanged.
   - The comment in `handle_pair_event` says the survivor `i` is the larger
     droplet. With the current sign `i` is the faster one of a separating pair;
     with the sign corrected the faster droplet is `j`, so `keep`/`kill` must
@@ -300,8 +349,11 @@ trap, or a code defect; move it once you know.
   | 0.001 | 172 / 163.3 | 179 / 161.9 | 154 / 161.9 |
 
   All twelve pass the kernel check (|z| <= 1.4) and the efficiency check
-  (|z| <= 1.5). Two of the three seeds fall below 1, so the 1.04-1.09 seen with
-  a single seed was noise, not an overcount.
+  (|z| <= 1.5). Per-seed totals over the four windows are 1.047, 1.007 and
+  0.974 of expected, and all twelve runs together are 1967 / 1948.3 =
+  1.010 +/- 0.023, so the 1.04-1.09 seen with a single seed is not an
+  overcount. This table shows window independence only to about +/- 5% per
+  window length; the exact demonstration came with the periodic ring (below).
 
   `test/test_collision_coalescence.f90` had the error built in: its two-droplet
   case put the large droplet below the small one and expected them to merge.
@@ -313,6 +365,89 @@ trap, or a code defect; move it once you know.
   are not comparable with runs after the fix; distinguish by `code_version`.
   The non-periodic list (first item under "Related") is still open.
 - **Status** — **fixed** in `d62c592`..`661e47a`.
+
+### Collision step: open items from the audit of the scheduler fix
+
+Found by an independent audit of `d62c592`..`bee14d6` on 2026-11-16, which
+checked the event logic with a line-by-line Python port (not by running the
+Fortran). None changes collision counts measurably at realistic settings.
+
+- **The faster droplet is assumed to be the larger one** — `handle_pair_event`
+  takes the upper, faster droplet `j` as collector and survivor. Fall speed
+  also depends on the droplet's own `virt_temp` (Stokes speed goes as
+  `virt_temp * r^2`), so `j` can be faster yet smaller when the radii are
+  within about 0.17% per kelvin of `virt_temp` difference; with
+  `fall_speed_scheme = 'beard'` the step at 19 um diameter is a second route.
+  Then `collection_efficiency_E` is called with (smaller, larger), the smaller
+  droplet's id and category survive, and the `collisions.bin` record lists the
+  smaller droplet first. The efficiency error is small because the radii are
+  nearly equal (up to 1-2% of E for 40-70 um collectors under Hall). Not seen
+  in 47 276 records of the `test/cluscoll` pair test, which cannot reach
+  either route. Fix direction: choose collector and survivor by radius.
+  **Status** — open.
+- **Pair events are not invalidated when a droplet's speed changes** — after a
+  coalescence the survivor falls faster, but a pair event already queued for
+  it keeps the time computed from its old speed, passes the adjacency check,
+  and can fire while the two droplets are still apart. The pair is then
+  tested (and merged or swapped) early; the count is unchanged to first order
+  but the event time and position are wrong, and `zcur(keep) = zcur(i)` moves
+  the survivor to the other droplet's position. In an extreme port case
+  (collision probability 0.25, E = 1) about 1-2% of pair events fired early;
+  at realistic probabilities (about 1e-4) coalescences are rare relative to
+  crossings and the effect is negligible. The mechanism predates the fix.
+  Fix direction: a per-droplet version counter in the event, or drop an event
+  whose pair is not at the same position. **Status** — open.
+- **Equal-size droplets in different cells collide** — the same `virt_temp`
+  dependence gives equal radii a non-zero closing speed, and the Hall table's
+  size-ratio-1 column reaches 4.0. Predates the fix. **Status** — open.
+- **`collisions.bin` `position` is not wrapped** — it is the unwrapped working
+  position, so in parcel mode it can be negative or, with the periodic ring,
+  offset by a multiple of `H`. Take it modulo `H` when reading.
+  **Status** — open.
+- **`test/scripts/test_cc_invariants.py` reads 48-byte records** — the record
+  has been 49 bytes since the coalesced flag was added, so the script misreads
+  current files. **Status** — open.
+- **Unit test gaps** — `test_collision_coalescence` would catch the sign error
+  and a reverted survivor, but not a reverted efficiency argument order (it
+  uses the `unity` kernel) or record order (it does not write
+  `collisions.bin`); those are covered only by the `test/cluscoll` driver. It
+  has no chamber-mode or three-droplet case. The test fails at the
+  intermediate commits `d62c592`..`661e47a` and passes from `c87b7e0`, which
+  matters for `git bisect`. **Status** — open.
+- **Found in** — `bee14d6` (`v3.1.2-6-gbee14d6`), branch
+  `fix/cc-pair-scheduling`.
+
+### Parcel reftest droplet count is dominated by where entrainment blobs land
+
+- **Symptom** — Two parcel reftest runs that differ in anything touching the
+  random stream end with very different droplet counts, for reasons unrelated
+  to the change under test. Comparing `b7e6f3d` (baseline) with `bee14d6` (the
+  collision scheduler fix): final `Np` 852 vs 1217. Injection, seeding and
+  entrainment (15 events of 100, same times) are identical; coalescence removed
+  1 vs 3 droplets; the whole gap is detrainment, 1797 vs 1430. One event at
+  t = 278 s detrained 651 in the baseline and 212 in the new run.
+- **Cause** — `random_entrainment = .false.` fixes only the *timing* of
+  entrainment events. The blob *position* is drawn from the global random
+  stream in `place_blobs` (`src/entrainment.f90`), and the collision step draws
+  from the same stream for every pair event it processes
+  (`collision_coalescence.f90`, the `random_number` call in
+  `handle_pair_event`). Droplets are strongly clustered during the ascent (607
+  of 1038 in one tenth of the domain at t = 275 s in the baseline), so the
+  number detrained per event ranges from 0 to 651 depending on where the blob
+  falls. The cause of the clustering was not investigated.
+- **Consequence** — The parcel reftest cannot isolate the effect of a change on
+  droplet number unless the change leaves the random stream untouched. Fields
+  already differ at t = 1 s. To isolate a collision change, run with
+  `do_entrainment = .false.`, or compare ensembles of seeds; separate random
+  streams for collisions and blob placement would remove the coupling but is a
+  code change.
+- **Evidence** — `devCODT/reftest/parcel/`, `reftest.nc` vs `reftest_REF.nc`
+  and the two `collisions.bin` files, SLURM job 17126431; budget from the
+  per-interval `budget_n_*` variables summed over time (both budgets close
+  exactly). Analysis done by a subagent on 2026-11-16; the numbers were not
+  independently rechecked.
+- **Found in** — `bee14d6` (`v3.1.2-6-gbee14d6`) against `b7e6f3d`.
+- **Status** — open.
 
 ### `test_seeding` fails and then segfaults
 
@@ -389,7 +524,10 @@ trap, or a code defect; move it once you know.
 - **Status** — **fixed** (offset added). Pre-fix files still need the
   interval-block reconstruction above; detect them from the run's
   `git_commit` / `code_version` attribute, or by testing whether any `time`
-  in the binary exceeds one `delta_time`.
+  in the binary exceeds one `delta_time`. The fix is `c67809c` (3.0.1).
+  Confirmed still correct on 2026-11-16: in the parcel reftest files from
+  `b7e6f3d` and `bee14d6`, record times span the run (18-537 s) and agree with
+  `N_collisions(time)` in the netCDF.
 
 ### `parcel_height_env` is 0 in the first output record
 

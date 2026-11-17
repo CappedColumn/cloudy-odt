@@ -183,8 +183,8 @@ errors. None applies to the default `'stokes'`.
   steps *down* by 0.17-0.23% going from the slip-corrected Stokes range to the
   Reynolds-number fit (0.225% at 283 K, 1000 hPa), so in a band about 0.1% wide
   in radius (roughly 9.49-9.51 um) a smaller droplet falls faster than a larger
-  one. The collision step takes the faster droplet of a pair as the collector,
-  so for a pair straddling the band the smaller droplet would be the collector.
+  one. The collision step chooses collector and survivor by radius, so this
+  only changes which pairs close on each other inside the band.
   The reference implementation (`test/cluscoll/reference/sdm_motion.f90`) has
   the same step. `test_fall_speed` pins it (exactly one downward step between
   9.4 and 9.6 um).
@@ -383,8 +383,12 @@ Fortran). None changes collision counts measurably at realistic settings.
   smaller droplet first. The efficiency error is small because the radii are
   nearly equal (up to 1-2% of E for 40-70 um collectors under Hall). Not seen
   in 47 276 records of the `test/cluscoll` pair test, which cannot reach
-  either route. Fix direction: choose collector and survivor by radius.
-  **Status** — open.
+  either route. **Status** — **fixed** in the commit after `9931d16`
+  ("Choose collector and survivor by radius"): `handle_pair_event` now takes
+  the larger radius as collector and survivor (equal radii fall back to the
+  faster droplet), for the efficiency call, the merge and the record order.
+  `test_collision_coalescence` has a case with a smaller, warmer, faster
+  droplet.
 - **Pair events are not invalidated when a droplet's speed changes** — after a
   coalescence the survivor falls faster, but a pair event already queued for
   it keeps the time computed from its old speed, passes the adjacency check,

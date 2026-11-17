@@ -126,7 +126,7 @@ The growth bound on `equilibrium` exists for GCCN: their equilibrium radius is t
 
 With `do_coalescence`, two droplets merge into one, and the survivor takes a single category and material. The rules:
 
-- **Both from the same population:** the **larger** droplet's category and material survive. (Collisions only occur when the faster-falling droplet catches a slower one, and the faster droplet survives. Fall speed grows with radius, so that is the larger one except for near-equal radii, where a warmer or — with `fall_speed_scheme = 'beard'`, at 19 µm diameter — slightly smaller droplet can be the faster; see `docs/known_issues.md`.)
+- **Both from the same population:** the **larger** droplet's category and material survive. (The survivor is chosen by radius. It is usually also the faster-falling droplet of the pair, but not always for near-equal radii, where a warmer droplet can be the faster one.)
 - **A seed and a background droplet:** the **seed** survives, regardless of which was larger. A seed collected by a big background droplet still counts as seed, so seeded runs don't lose track of their seed material through collection.
 
 > **Caveat — mass is conserved, dissolved ions are not.** A particle carries one material, so merging droplets of different composition adds the solute masses but treats the total as the survivor's material: its density sets the merged dry radius, and its `n_ions`/`molar_mass` set the Köhler curve. Seeding a material chemically unlike your background makes this approximation bite on every collection event. Seeding a chemical twin of the background (the duplicate-composition-row recipe above) avoids it entirely, since both rows describe the same substance.
@@ -385,7 +385,7 @@ Unformatted Fortran **stream**, written when `write_collisions = .true.`
 
 `flag` is `1` if the event was a coalescence (droplets merged; `r_after` is the merged radius) and `0` if it was a collision without coalescence (`r_after = 0`).
 
-`keep` is the faster-falling droplet of the pair, which is the larger one except for near-equal radii (see `docs/known_issues.md`); it is listed first in every record, whether or not the pair coalesced. `position` is the scheduler's working height: in parcel mode it is not wrapped, so take it modulo `H`.
+`keep` is the larger droplet of the pair (for equal radii, the faster-falling one); it is listed first in every record, whether or not the pair coalesced. `position` is the scheduler's working height: in parcel mode it is not wrapped, so take it modulo `H`.
 
 > **Files written by CODT 3.1.2 and earlier record the wrong pairs.** Before the collision-scheduler fix the model collided droplet pairs that were moving apart, so both the number of records and who collided with whom are unreliable in those files, and in records without coalescence the two droplets may appear in either order. See `docs/known_issues.md`, "Collision scheduler queues pairs that are moving apart".
 

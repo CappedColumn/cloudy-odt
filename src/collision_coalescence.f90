@@ -9,6 +9,10 @@ module collision_coalescence
     !     water mass, and solute mass)
     !   - Otherwise: swap adjacency order
     !
+    ! In parcel mode the column is periodic and the adjacency list is a ring, so
+    ! pairs that meet across the bottom/top boundary are found too. In chamber
+    ! mode the list has two ends and droplets leave through the bottom.
+    !
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
     use globals, only: dp, i4, i1, pi, N, H, domain_width, volume_scaling, simulation_mode, error_unit
     use particle_types, only: particle, calculate_terminal_velocity
@@ -38,6 +42,13 @@ module collision_coalescence
     ! is what turns an event's heap key into absolute simulation time for the
     ! collision binary. Set once per call to collision_coalescence_step.
     real(dp) :: t_window_start = 0.0
+
+    ! .true. while the column is periodic (parcel mode). The neighbour list is
+    ! then a ring: the highest droplet's upper neighbour is the lowest droplet,
+    ! one domain height up, so a droplet that leaves through the bottom meets
+    ! the droplets it re-enters above. In chamber mode the list has two ends.
+    ! Set once per call to collision_coalescence_step.
+    logical :: periodic_column = .false.
 
     public :: collision_coalescence_step, initialize_collision_file, close_collision_file
 
@@ -94,6 +105,7 @@ contains
 
         ! Periodic boundary: parcel mode wraps via modulo(z, H); no fallout.
         is_periodic = (trim(simulation_mode) == 'parcel')
+        periodic_column = is_periodic
 
         if (n_active <= 1) then
             do i = 1, n_active
@@ -209,6 +221,7 @@ contains
 
         real(dp) :: vrel, p_coll, random_draw, coal_efficiency, r_keep, r_kill
         integer :: prev_neighbor, next_neighbor, keep, kill
+        type(Event) :: lap_event
 
         call update_working_pos(i, current_time, zcur, tstamp, w_fall)
         call update_working_pos(j, current_time, zcur, tstamp, w_fall)
@@ -346,6 +359,21 @@ contains
             end if
         end if
 
+        ! Only two droplets on a periodic ring: each is already the other's
+        ! upper and lower neighbour, so passing changes no adjacency. They next
+        ! meet one full lap later. Scheduled here directly, because the gap
+        ! read from the positions at this instant is zero to round-off.
+        if (periodic_column .and. prev(i) == j) then
+            lap_event%t = current_time + H / vrel
+            if (lap_event%t <= dt) then
+                lap_event%event_type = EV_PAIR
+                lap_event%i = i
+                lap_event%j = j
+                call heap_push(heap, heap_size, lap_event)
+            end if
+            return
+        end if
+
         ! No coalescence: swap adjacency order (they passed each other)
         call swap_adjacent(i, j, prev, next, head)
 
@@ -458,14 +486,23 @@ contains
 
         j = next(i)
         if (j <= 0) return
+        if (j == i) return          ! last droplet on a periodic ring
         if (.not. alive(j)) return
 
         call update_working_pos(i, current_time, zcur, tstamp, w_fall)
         call update_working_pos(j, current_time, zcur, tstamp, w_fall)
 
-        ! Forward separation (j should be above i in sorted order)
+        ! Forward separation: how far j is above i. On the periodic ring the
+        ! working positions are not wrapped during the window, so the gap is
+        ! taken modulo H: this covers the pair that spans the boundary (highest
+        ! droplet, with the lowest droplet one domain height above it) and
+        ! droplets that have lapped the column.
         dz = zcur(j) - zcur(i)
-        if (dz < 0.0) dz = dz + H
+        if (periodic_column) then
+            dz = modulo(dz, H)
+        else
+            if (dz < 0.0) dz = dz + H
+        end if
 
         ! Closing speed: the gap shrinks only when the upper droplet j falls
         ! faster than the lower droplet i (w_fall is positive downward).
@@ -549,6 +586,7 @@ contains
         ! Build a doubly linked list of droplets in position order from sort_order,
         ! so adjacency (who is next to whom) can be queried and updated in O(1) as
         ! collisions and fallout change the ordering. head points to the lowest droplet.
+        ! In a periodic column the two ends are joined into a ring.
         integer, intent(in) :: sort_order(:), n_active
         integer, intent(out) :: prev(:), next(:), head
         integer :: k
@@ -562,6 +600,11 @@ contains
         end do
 
         head = sort_order(1)
+
+        if (periodic_column .and. n_active > 1) then
+            next(sort_order(n_active)) = sort_order(1)
+            prev(sort_order(1)) = sort_order(n_active)
+        end if
     end subroutine build_links
 
 

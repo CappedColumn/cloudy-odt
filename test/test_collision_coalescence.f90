@@ -14,7 +14,7 @@ program test_collision_coalescence
     ! so every scheduled adjacent meeting (upper droplet falling faster than the
     ! lower one) results in a coalescence.
     use globals, only: dp, i4, H, N, simulation_mode, volume_scaling, pi_43, rho_l
-    use particle_types, only: particle
+    use particle_types, only: particle, calculate_terminal_velocity
     use collision_coalescence, only: collision_coalescence_step, &
         do_collisions, do_coalescence, write_collisions, &
         collisions_this_step, coalescences_this_step, fall_events_this_step
@@ -39,6 +39,8 @@ program test_collision_coalescence
     call test_two_droplet_merge()
     call test_collision_without_coalescence()
     call test_separating_pair_does_not_collide()
+    call test_pair_across_periodic_boundary()
+    call test_two_droplet_laps()
     call test_dsd_box_conservation()
 
     print *
@@ -160,7 +162,79 @@ contains
 
 
     ! -----------------------------------------------------------------------
-    ! Subtest 4: many-droplet box -- DSD evolution under pure coalescence
+    ! Subtest 4: a pair that meets across the periodic boundary
+    ! -----------------------------------------------------------------------
+    subroutine test_pair_across_periodic_boundary()
+        ! Parcel mode is periodic. A large (fast) droplet near the bottom leaves
+        ! through the floor, re-enters at the top, and catches a small (slow)
+        ! droplet near the top: the two are 0.03 m apart through the boundary
+        ! and close at about 0.08 m/s, so they meet near 0.37 s. A neighbour
+        ! list with two ends misses this pair; the ring finds it.
+        type(particle) :: p(2)
+        real(dp) :: v_pre
+        integer(i4) :: np
+
+        H = 1.0_dp
+        do_collisions = .true.
+        do_coalescence = .true.
+
+        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.02_dp)
+        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.99_dp)
+        v_pre = p(1)%radius**3 + p(2)%radius**3
+
+        np = 2_i4
+        call collision_coalescence_step(p, np, 0.5_dp, 0.5_dp)
+
+        call check_int("boundary: one collision across the boundary", collisions_this_step, 1)
+        call check_int("boundary: one coalescence", coalescences_this_step, 1)
+        call check_true("boundary: larger droplet (1) survives", .not. p(1)%coalesced)
+        call check_true("boundary: smaller droplet (2) flagged coalesced", p(2)%coalesced)
+        call check_close("boundary: water volume conserved (r^3)", p(1)%radius**3, v_pre, 1.0e-12_dp)
+        call check_true("boundary: survivor position wrapped into [0, H)", &
+            p(1)%position >= 0.0_dp .and. p(1)%position < H)
+    end subroutine test_pair_across_periodic_boundary
+
+
+    ! -----------------------------------------------------------------------
+    ! Subtest 5: two droplets lapping each other
+    ! -----------------------------------------------------------------------
+    subroutine test_two_droplet_laps()
+        ! Two droplets alone on the periodic ring, coalescence off, in one long
+        ! window. The fast one passes the slow one, then laps the column and
+        ! passes it again every H / (closing speed). Every pass is a collision
+        ! here (p_coll == 1), so the count is known exactly.
+        type(particle) :: p(2)
+        real(dp), parameter :: window = 5.0_dp
+        real(dp), parameter :: gap = 0.02_dp      ! fast droplet starts this far above the slow one
+        real(dp) :: closing, t_first, lap_time
+        integer :: expected_passes
+        integer(i4) :: np
+
+        H = 0.1_dp
+        do_collisions = .true.
+        do_coalescence = .false.
+
+        p(1) = make_droplet(1_i4, 30.0e-6_dp, 0.05_dp + gap)
+        p(2) = make_droplet(2_i4, 15.0e-6_dp, 0.05_dp)
+
+        closing = abs(calculate_terminal_velocity(p(1))) - abs(calculate_terminal_velocity(p(2)))
+        t_first = gap / closing
+        lap_time = H / closing
+        expected_passes = 1 + int((window - t_first) / lap_time)
+
+        np = 2_i4
+        call collision_coalescence_step(p, np, window, window)
+
+        call check_true("laps: more than one pass expected in the window", expected_passes > 1)
+        call check_int("laps: one collision per pass", collisions_this_step, expected_passes)
+        call check_true("laps: both droplets survive", .not. p(1)%coalesced .and. .not. p(2)%coalesced)
+        call check_true("laps: positions wrapped into [0, H)", &
+            all(p%position >= 0.0_dp) .and. all(p%position < H))
+    end subroutine test_two_droplet_laps
+
+
+    ! -----------------------------------------------------------------------
+    ! Subtest 6: many-droplet box -- DSD evolution under pure coalescence
     ! -----------------------------------------------------------------------
     subroutine test_dsd_box_conservation()
         ! A bidisperse population -- large "collector" droplets and small

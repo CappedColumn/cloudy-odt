@@ -399,8 +399,19 @@ Fortran). None changes collision counts measurably at realistic settings.
   (collision probability 0.25, E = 1) about 1-2% of pair events fired early;
   at realistic probabilities (about 1e-4) coalescences are rare relative to
   crossings and the effect is negligible. The mechanism predates the fix.
-  Fix direction: a per-droplet version counter in the event, or drop an event
-  whose pair is not at the same position. **Status** — open.
+  An early swap also leaves the list out of position order, so the next gap
+  for that pair is read as negative and wrapped to nearly a full lap
+  (`modulo(dz, H)` in parcel mode, `dz + H` in chamber mode), losing that
+  meeting. **Status** — **fixed** after `16fc44f`: each droplet carries a
+  fall-speed version, bumped when a coalescence changes its speed; each pair
+  event records both versions when it is queued, and `is_pair_valid` drops
+  it if either has changed. This also covers a pair that stops being
+  adjacent and later becomes adjacent again. `test_collision_coalescence`
+  has a three-droplet case that fails without the check (2 coalescences
+  instead of 1). The `test/cluscoll` Hall pair cases are unchanged at a
+  0.1 s window (no stale event fired at realistic probabilities). Runs with
+  coalescence are not bit-identical to earlier versions: stale events used
+  to consume random draws.
 - **Equal-size droplets in different cells collide** — the same `virt_temp`
   dependence gives equal radii a non-zero closing speed, and the Hall table's
   size-ratio-1 column reaches 4.0. Predates the fix. **Status** — accepted,

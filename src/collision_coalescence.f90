@@ -57,10 +57,17 @@ module collision_coalescence
     integer, parameter :: EV_FALL = 2
 
     ! A scheduled future event in the priority queue.
+    !
+    ! Events are never removed from the heap; a superseded one is skipped when it
+    ! is popped. vi and vj record the fall-speed versions of i and j (the ver
+    ! array in collision_coalescence_step) when the event was scheduled. A
+    ! coalescence changes the survivor's fall speed and bumps its version, which
+    ! makes every pair event computed from the old speed fail is_pair_valid.
     type :: Event
         real(dp) :: t            ! event time within the window (s); heap key
         integer  :: event_type   ! EV_PAIR (two droplets meet) or EV_FALL (exits domain)
         integer  :: i, j         ! particle indices (j unused for EV_FALL)
+        integer  :: vi = 0, vj = 0   ! fall-speed versions of i and j when scheduled (EV_PAIR)
     end type Event
 
 contains
@@ -84,6 +91,7 @@ contains
         real(dp), allocatable :: zcur(:), w_fall(:), tstamp(:)
         logical, allocatable :: alive(:)
         integer, allocatable :: sort_order(:), prev(:), next(:)
+        integer, allocatable :: ver(:)   ! fall-speed version per droplet; see type Event
         type(Event), allocatable :: heap(:)
         integer :: heap_size
         type(Event) :: current_event
@@ -119,7 +127,7 @@ contains
 
         ! Allocate working arrays
         allocate(zcur(n_active), w_fall(n_active), tstamp(n_active), alive(n_active))
-        allocate(sort_order(n_active), prev(n_active), next(n_active))
+        allocate(sort_order(n_active), prev(n_active), next(n_active), ver(n_active))
         allocate(heap(2*n_active))
 
         ! Initialize from particle data
@@ -131,6 +139,7 @@ contains
         end do
 
         alive = .true.
+        ver = 0
         current_time = 0.0
         heap_size = 0
 
@@ -139,7 +148,7 @@ contains
         call build_links(sort_order, n_active, prev, next, head)
 
         ! Seed event queue with pair-passing events
-        call push_all_pair_events(heap, heap_size, zcur, tstamp, w_fall, alive, next, head, n_active, ldt, current_time)
+        call push_all_pair_events(heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, head, n_active, ldt, current_time)
 
         ! Seed fallout events (chamber mode only; parcel mode wraps via
         ! modulo at writeback and no particle exits the domain).
@@ -157,7 +166,7 @@ contains
 
             ! Validate event is still current
             if (current_event%event_type == EV_PAIR) then
-                if (.not. is_pair_valid(current_event%i, current_event%j, alive, next, n_active)) cycle
+                if (.not. is_pair_valid(current_event, alive, next, ver, n_active)) cycle
             else if (current_event%event_type == EV_FALL) then
                 if (current_event%i < 1 .or. current_event%i > n_active) cycle
                 if (.not. alive(current_event%i)) cycle
@@ -167,10 +176,10 @@ contains
 
             if (current_event%event_type == EV_PAIR) then
                 call handle_pair_event(current_event%i, current_event%j, current_time, lparticles, zcur, tstamp, w_fall, &
-                                       alive, prev, next, head, n_active, ldt, heap, heap_size)
+                                       alive, prev, next, ver, head, n_active, ldt, heap, heap_size)
             else if (current_event%event_type == EV_FALL) then
                 call handle_fall_event(current_event%i, current_time, zcur, tstamp, w_fall, alive, prev, next, &
-                                       head, n_active, ldt, heap, heap_size)
+                                       ver, head, n_active, ldt, heap, heap_size)
             end if
         end do
 
@@ -192,7 +201,7 @@ contains
             end if
         end do
 
-        deallocate(zcur, w_fall, tstamp, alive, sort_order, prev, next, heap)
+        deallocate(zcur, w_fall, tstamp, alive, sort_order, prev, next, ver, heap)
 
     end subroutine collision_coalescence_step
 
@@ -202,20 +211,21 @@ contains
     ! =========================================================================
 
     subroutine handle_pair_event(i, j, current_time, lparticles, zcur, tstamp, w_fall, &
-                                 alive, prev, next, head, n_active, dt, heap, heap_size)
+                                 alive, prev, next, ver, head, n_active, dt, heap, heap_size)
         ! Resolve a scheduled meeting of adjacent droplets i and j. Advances both to
         ! the event time, computes the collision probability from their swept area and
         ! collection efficiency, and draws a random number: on acceptance the pair is
         ! merged (water/solute conserved, one particle killed); on rejection their
         ! adjacency order is swapped. Either way, affected neighbor pairs are
-        ! rescheduled onto the heap. Stale events (state changed since scheduling)
-        ! are detected and ignored.
+        ! rescheduled onto the heap. The caller has already rejected stale events
+        ! (is_pair_valid).
         integer, intent(in) :: i, j, n_active
         real(dp), intent(in) :: current_time, dt
         type(particle), intent(inout) :: lparticles(:)
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
+        integer, intent(inout) :: ver(:)
         type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
@@ -331,11 +341,17 @@ contains
                              (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
                     end if
 
-                    ! Recalculate terminal velocity for merged droplet
+                    ! Recalculate terminal velocity for merged droplet. The new
+                    ! speed invalidates every queued pair event involving keep
+                    ! (their times assume the old speed), so bump its version;
+                    ! the reschedule below queues the replacements.
                     w_fall(keep) = abs(calculate_terminal_velocity(lparticles(keep)))
                     if (w_fall(keep) > wmax_collision) w_fall(keep) = wmax_collision
+                    ver(keep) = ver(keep) + 1
 
-                    ! Update working position
+                    ! Restamp the survivor at the meeting point. For a valid event
+                    ! zcur(i) == zcur(j) here (to round-off), so this only removes
+                    ! the round-off difference when keep = j.
                     zcur(keep) = zcur(i)
                     tstamp(keep) = current_time
 
@@ -352,8 +368,9 @@ contains
                     ! Reschedule events for survivor and its neighbors
                     prev_neighbor = prev(keep)
                     next_neighbor = next(keep)
-                    call push_pair_for_i(keep, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
-                    if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
+                    call push_pair_for_i(keep, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
+                    if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, &
+                                                                next, ver, dt, current_time)
 
                     ! Reschedule fallout for survivor (no-op in parcel mode;
                     ! push_fall_event self-guards against periodic boundaries)
@@ -378,6 +395,8 @@ contains
                 lap_event%event_type = EV_PAIR
                 lap_event%i = i
                 lap_event%j = j
+                lap_event%vi = ver(i)
+                lap_event%vj = ver(j)
                 call heap_push(heap, heap_size, lap_event)
             end if
             return
@@ -389,15 +408,16 @@ contains
         ! Reschedule affected pairs
         prev_neighbor = prev(j)  ! j is now before i after swap
         next_neighbor = next(i)
-        if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
-        call push_pair_for_i(j, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
-        if (next_neighbor > 0) call push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
+        if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, &
+                                                    next, ver, dt, current_time)
+        call push_pair_for_i(j, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
+        if (next_neighbor > 0) call push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
 
     end subroutine handle_pair_event
 
 
     subroutine handle_fall_event(i, current_time, zcur, tstamp, w_fall, alive, prev, next, &
-                                 head, n_active, dt, heap, heap_size)
+                                 ver, head, n_active, dt, heap, heap_size)
         ! Resolve a scheduled fallout of droplet i (it reaches the bottom of the
         ! domain). After a stale-event check, unlinks i from the adjacency list,
         ! marks it dead, and reschedules its former previous neighbor against its new
@@ -407,6 +427,7 @@ contains
         real(dp), intent(inout) :: zcur(:), tstamp(:), w_fall(:)
         logical, intent(inout) :: alive(:)
         integer, intent(inout) :: prev(:), next(:), head
+        integer, intent(in) :: ver(:)
         type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
@@ -432,7 +453,8 @@ contains
         fall_events_this_step = fall_events_this_step + 1
 
         ! Reschedule neighbor pair
-        if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
+        if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, &
+                                                    next, ver, dt, current_time)
 
     end subroutine handle_fall_event
 
@@ -441,35 +463,39 @@ contains
     ! Event generation
     ! =========================================================================
 
-    logical function is_pair_valid(i, j, alive, next, n_active)
-        ! A queued pair event is still valid only if both droplets are alive and
-        ! j is still i's immediate next neighbor (guards against stale events whose
-        ! adjacency changed after they were scheduled).
-        integer, intent(in) :: i, j, n_active
+    logical function is_pair_valid(ev, alive, next, ver, n_active)
+        ! A queued pair event is still valid only if both droplets are alive, j is
+        ! still i's immediate next neighbor, and neither droplet's fall speed has
+        ! changed since the event was scheduled (its meeting time assumes the
+        ! speeds it was computed from). The speed check also covers a pair that
+        ! stopped being adjacent and later became adjacent again.
+        type(Event), intent(in) :: ev
         logical, intent(in) :: alive(:)
-        integer, intent(in) :: next(:)
+        integer, intent(in) :: next(:), ver(:)
+        integer, intent(in) :: n_active
         is_pair_valid = .false.
-        if (i < 1 .or. j < 1) return
-        if (i > n_active .or. j > n_active) return
-        if (.not. alive(i) .or. .not. alive(j)) return
-        if (next(i) /= j) return
+        if (ev%i < 1 .or. ev%j < 1) return
+        if (ev%i > n_active .or. ev%j > n_active) return
+        if (.not. alive(ev%i) .or. .not. alive(ev%j)) return
+        if (next(ev%i) /= ev%j) return
+        if (ver(ev%i) /= ev%vi .or. ver(ev%j) /= ev%vj) return
         is_pair_valid = .true.
     end function is_pair_valid
 
 
-    subroutine push_all_pair_events(heap, heap_size, zcur, tstamp, w_fall, alive, next, head, n_active, dt, current_time)
+    subroutine push_all_pair_events(heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, head, n_active, dt, current_time)
         type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         real(dp), intent(inout) :: zcur(:), tstamp(:)
         real(dp), intent(in) :: w_fall(:), dt, current_time
         logical, intent(in) :: alive(:)
-        integer, intent(in) :: next(:), head, n_active
+        integer, intent(in) :: next(:), ver(:), head, n_active
         integer :: i, count
 
         i = head
         count = 0
         do while (i /= 0 .and. count < n_active)
-            call push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
+            call push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
             i = next(i)
             count = count + 1
             if (i == 0) exit
@@ -477,14 +503,14 @@ contains
     end subroutine push_all_pair_events
 
 
-    subroutine push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, dt, current_time)
+    subroutine push_pair_for_i(i, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
         integer, intent(in) :: i
         type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
         real(dp), intent(inout) :: zcur(:), tstamp(:)
         real(dp), intent(in) :: w_fall(:), dt, current_time
         logical, intent(in) :: alive(:)
-        integer, intent(in) :: next(:)
+        integer, intent(in) :: next(:), ver(:)
 
         integer :: j
         real(dp) :: dz, vrel, te
@@ -526,6 +552,8 @@ contains
         new_event%event_type = EV_PAIR
         new_event%i = i
         new_event%j = j
+        new_event%vi = ver(i)
+        new_event%vj = ver(j)
         call heap_push(heap, heap_size, new_event)
     end subroutine push_pair_for_i
 

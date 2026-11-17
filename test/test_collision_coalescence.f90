@@ -42,6 +42,7 @@ program test_collision_coalescence
     call test_pair_across_periodic_boundary()
     call test_two_droplet_laps()
     call test_larger_droplet_survives_when_slower()
+    call test_stale_event_after_merge()
     call test_dsd_box_conservation()
 
     print *
@@ -269,7 +270,58 @@ contains
 
 
     ! -----------------------------------------------------------------------
-    ! Subtest 7: many-droplet box -- DSD evolution under pure coalescence
+    ! Subtest 7: a merge invalidates the survivor's queued events
+    ! -----------------------------------------------------------------------
+    subroutine test_stale_event_after_merge()
+        ! Three droplets, A < B < C in height. B catches A almost at once and
+        ! they merge; the survivor B falls faster than B did. The (B, C) meeting
+        ! queued at the start used B's old speed, so it is earlier than the real
+        ! one. The window is chosen to end between the two times: only the A+B
+        ! coalescence may happen. Before the fall-speed version check, the stale
+        ! (B, C) event fired at the old time and merged B and C while apart.
+        type(particle) :: p(3), merged
+        real(dp), parameter :: z_a = 0.100_dp, z_b = 0.101_dp, z_c = 0.111_dp
+        real(dp) :: w_a, w_b, w_c, w_b_new, t_ab, t_bc_old, t_bc_new, window
+        integer(i4) :: np
+
+        H = 1.0_dp
+        do_collisions = .true.
+        do_coalescence = .true.
+
+        p(1) = make_droplet(1_i4, 10.0e-6_dp, z_a)   ! A
+        p(2) = make_droplet(2_i4, 20.0e-6_dp, z_b)   ! B
+        p(3) = make_droplet(3_i4, 22.0e-6_dp, z_c)   ! C
+
+        merged = make_droplet(4_i4, (p(1)%radius**3 + p(2)%radius**3)**(1.0_dp/3.0_dp), z_b)
+        w_a = abs(calculate_terminal_velocity(p(1)))
+        w_b = abs(calculate_terminal_velocity(p(2)))
+        w_c = abs(calculate_terminal_velocity(p(3)))
+        w_b_new = abs(calculate_terminal_velocity(merged))
+
+        t_ab = (z_b - z_a) / (w_b - w_a)
+        t_bc_old = (z_c - z_b) / (w_c - w_b)
+        t_bc_new = t_ab + ((z_c - z_b) - (w_c - w_b) * t_ab) / (w_c - w_b_new)
+        window = 0.5_dp * (t_bc_old + t_bc_new)
+
+        call check_true("stale: setup, merged B still slower than C", w_c > w_b_new)
+        call check_true("stale: setup, A+B merge before the old B-C time", t_ab < t_bc_old)
+        call check_true("stale: setup, window ends between old and new B-C times", &
+            t_bc_old < window .and. window < t_bc_new)
+
+        np = 3_i4
+        call collision_coalescence_step(p, np, window, window)
+
+        call check_int("stale: one collision (A+B only)", collisions_this_step, 1)
+        call check_int("stale: one coalescence (A+B only)", coalescences_this_step, 1)
+        call check_true("stale: A flagged coalesced", p(1)%coalesced)
+        call check_true("stale: B survives", .not. p(2)%coalesced)
+        call check_true("stale: C survives", .not. p(3)%coalesced)
+        call check_true("stale: C still above B at window end", p(3)%position > p(2)%position)
+    end subroutine test_stale_event_after_merge
+
+
+    ! -----------------------------------------------------------------------
+    ! Subtest 8: many-droplet box -- DSD evolution under pure coalescence
     ! -----------------------------------------------------------------------
     subroutine test_dsd_box_conservation()
         ! A bidisperse population -- large "collector" droplets and small

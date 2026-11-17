@@ -1,6 +1,7 @@
 ! Particle data model and single-particle physics. Defines the aerosol base type
 ! and the particle type that extends it (a deliquesced aerosol = a droplet), plus
-! the type-bound procedures for Kohler activation, Stokes settling, gridcell
+! the type-bound procedures for Kohler activation, settling (Stokes or Beard
+! 1976 fall speed, selected by fall_speed_scheme), gridcell
 ! lookup, and liquid-water content. The droplet *growth* over time lives in DGM;
 ! this module holds the per-particle state and the instantaneous relations.
 module particle_types
@@ -10,6 +11,16 @@ module particle_types
 
     private
     public :: aerosol, particle, calculate_terminal_velocity
+    public :: set_fall_speed_selector, beard_fall_speed
+
+    ! Fall-speed formula used by calculate_terminal_velocity, and so by both
+    ! settling and the collision step:
+    !   'stokes' - Stokes' law with CODT's constant viscosity (default)
+    !   'beard'  - Beard (1976), see beard_fall_speed
+    character(32), public :: fall_speed_scheme = 'stokes'
+
+    integer, parameter :: FALL_STOKES = 1, FALL_BEARD = 2
+    integer :: ifall_speed = FALL_STOKES
 
     type :: aerosol
         ! Aerosol user-defined type. Aerosol is used by the
@@ -199,21 +210,133 @@ contains
 
     end subroutine particle_settling
 
+    subroutine set_fall_speed_selector(lvalid)
+        ! Resolve the namelist string fall_speed_scheme to an integer code once,
+        ! so the per-droplet fall speed avoids string comparisons. lvalid is
+        ! .false. for an unknown name, and the selector is then left unchanged.
+        logical, intent(out) :: lvalid
+
+        lvalid = .true.
+        select case (trim(fall_speed_scheme))
+            case ('stokes'); ifall_speed = FALL_STOKES
+            case ('beard');  ifall_speed = FALL_BEARD
+            case default;    lvalid = .false.
+        end select
+    end subroutine set_fall_speed_selector
+
     pure function calculate_terminal_velocity(this) result(terminal_velocity)
-        ! Stokes-regime terminal fall velocity v = -(2 g rho_l r^2)/(9 mu), valid
-        ! for small (low-Reynolds) droplets. Air density uses the particle's virtual
-        ! temperature (moisture-corrected) via the ideal gas law. nu here is the
-        ! dynamic viscosity mu. Sign is negative: positive z is up, so droplets fall.
-        ! Rogers & Yau (1989), eq. (8.6).
+        ! Terminal fall velocity of the droplet, by the formula selected with
+        ! fall_speed_scheme. Air density uses the particle's virtual temperature
+        ! (moisture-corrected) via the ideal gas law and the global pressure.
+        ! Sign is negative: positive z is up, so droplets fall.
+        !
+        ! 'stokes': v = -(2 g rho_l r^2)/(9 mu), valid for small (low-Reynolds)
+        ! droplets, with mu = nu * rho_air. Rogers & Yau (1989), eq. (8.6).
+        ! 'beard': see beard_fall_speed; uses the particle's own temperature for
+        ! the air viscosity and mean free path.
         class(particle), intent(in) :: this
         real(dp) :: terminal_velocity   ! fall speed (m/s), negative = downward
         real(dp) :: coeff, rho_air      ! Stokes prefactor; moist air density (kg/m3)
 
         rho_air = pres / (this%virt_temp * Rd)
-        coeff = 2. * g * rho_l / (9.0 * nu * rho_air)
-        terminal_velocity = -coeff * this%radius**2
+
+        select case (ifall_speed)
+            case (FALL_BEARD)
+                terminal_velocity = -beard_fall_speed(this%radius, this%temperature, pres, rho_air)
+            case default
+                coeff = 2. * g * rho_l / (9.0 * nu * rho_air)
+                terminal_velocity = -coeff * this%radius**2
+        end select
 
     end function calculate_terminal_velocity
+
+    pure function beard_fall_speed(lradius, ltemp, lpres, lrho_air) result(fall_speed)
+        ! Terminal fall speed of a water drop after Beard (1976), J. Atmos. Sci.,
+        ! 33, 851-864. Returned as a positive downward speed (m/s).
+        !
+        ! Two size ranges, split on the drop diameter d:
+        !   d <= 19 um          Stokes' law times the slip correction
+        !   19 um < d <= 1.07 mm   Reynolds number from a polynomial in the log of
+        !                          the Davies number, times the slip correction
+        ! Beard's raindrop range (d > 1.07 mm) is left out: it needs the surface
+        ! tension of water. Larger drops are given the speed of a 1.07 mm drop, so
+        ! they fall too slowly and never overtake one another.
+        !
+        ! The two fits do not join exactly: the speed steps down by about 0.2% at
+        ! d = 19 um, so fall speed is not strictly increasing with size there.
+        !
+        ! Air viscosity depends on temperature, after Pruppacher & Klett (1997),
+        ! eq. (10-141). This differs from the Stokes fall speed, which uses CODT's
+        ! constant kinematic viscosity nu.
+        real(dp), intent(in) :: lradius     ! drop radius (m)
+        real(dp), intent(in) :: ltemp       ! air temperature (K)
+        real(dp), intent(in) :: lpres       ! air pressure (Pa)
+        real(dp), intent(in) :: lrho_air    ! air density (kg/m3)
+        real(dp) :: fall_speed              ! fall speed (m/s), positive = downward
+
+        ! Reference state for the mean free path of air molecules
+        real(dp), parameter :: mfp_ref = 6.62e-8     ! mean free path at the reference state (m)
+        real(dp), parameter :: visc_ref = 1.818e-5   ! dynamic viscosity at the reference state (kg/m/s)
+        real(dp), parameter :: pres_ref = 101325.    ! reference pressure (Pa)
+        real(dp), parameter :: temp_ref = 293.15     ! reference temperature (K)
+        real(dp), parameter :: slip_factor = 2.51    ! slip correction is 1 + slip_factor * mfp / d
+
+        ! Dynamic viscosity of air (kg/m/s) with T in deg C:
+        !   visc_0C + visc_slope * T                       for T >= 0 C
+        !   visc_0C + visc_slope * T + visc_curve * T**2   for T <  0 C
+        real(dp), parameter :: visc_0C = 1.718e-5
+        real(dp), parameter :: visc_slope = 4.9e-8
+        real(dp), parameter :: visc_curve = -1.2e-10
+
+        ! Diameter limits of the two size ranges (m)
+        real(dp), parameter :: diam_stokes_max = 19.0e-6
+        real(dp), parameter :: diam_mid_max = 1.07e-3
+
+        ! ln(Reynolds number) = sum b_mid(k) * ln(Davies number)**k, Beard (1976) Table 1
+        real(dp), parameter :: b_mid(0:6) = [ -0.318657e1, 0.992696, -0.153193e-2, &
+            -0.987059e-3, -0.578878e-3, 0.855176e-4, -0.327815e-5 ]
+
+        real(dp) :: ldiam       ! drop diameter (m)
+        real(dp) :: ltemp_C     ! air temperature (deg C)
+        real(dp) :: lvisc       ! dynamic viscosity of air (kg/m/s)
+        real(dp) :: lg_drho     ! g * (water density - air density) (kg/m2/s2)
+        real(dp) :: lmfp        ! mean free path of air molecules (m)
+        real(dp) :: lslip       ! slip correction factor (dimensionless)
+        real(dp) :: ldavies     ! Davies number, drag coefficient * Re**2 (dimensionless)
+        real(dp) :: lx, ly      ! ln(Davies number); ln(Reynolds number) before slip
+        real(dp) :: lreynolds   ! Reynolds number (dimensionless)
+        integer :: k
+
+        fall_speed = 0.0
+        if (lradius <= 0.0) return
+
+        ldiam = min(2.0 * lradius, diam_mid_max)
+        lg_drho = g * (rho_l - lrho_air)
+
+        ltemp_C = ltemp - Tice
+        lvisc = visc_0C + visc_slope * ltemp_C
+        if (ltemp_C < 0.0) lvisc = lvisc + visc_curve * ltemp_C**2
+
+        lmfp = mfp_ref * (lvisc / visc_ref) * (pres_ref / lpres) * sqrt(ltemp / temp_ref)
+        lslip = 1.0 + slip_factor * lmfp / ldiam
+
+        if (ldiam <= diam_stokes_max) then
+            fall_speed = lg_drho / (18.0 * lvisc) * lslip * ldiam**2
+        else
+            ldavies = 4.0 * lrho_air * lg_drho * ldiam**3 / (3.0 * lvisc**2)
+            lx = log(ldavies)
+
+            ! Horner evaluation of the degree-6 polynomial
+            ly = b_mid(6)
+            do k = 5, 0, -1
+                ly = ly * lx + b_mid(k)
+            end do
+
+            lreynolds = lslip * exp(ly)
+            fall_speed = lvisc * lreynolds / (lrho_air * ldiam)
+        end if
+
+    end function beard_fall_speed
 
     pure subroutine particle_update_gridcell(this)
         ! Given the position of a particle, update the particle's gridcell

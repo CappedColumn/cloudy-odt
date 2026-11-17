@@ -29,6 +29,7 @@ module droplets
     public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
     public :: aerosol_concentration
     public :: do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
+    public :: fall_speed_scheme
     public :: aerosol_file
     public :: detrain_particles, entrain_particles
     public :: do_seeding, seed_hydration, seed_growth_time, n_seeded
@@ -951,11 +952,13 @@ contains
         ! Initialization of the MICROPHYSICS namelist and related parameters
         integer     :: ierr, nml_unit, i
         character(256) :: nml_line, io_emsg
+        logical     :: lvalid   ! fall_speed_scheme names a known formula
 
         namelist /MICROPHYSICS/ init_drop_each_gridpoint, expected_Ndrops_per_gridpoint, aerosol_file, &
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
         do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel, &
-        aerosol_concentration, do_seeding, seed_hydration, seed_growth_time
+        aerosol_concentration, do_seeding, seed_hydration, seed_growth_time, &
+        fall_speed_scheme
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -968,6 +971,15 @@ contains
         close(nml_unit)
 
         call set_kernel_selector()
+
+        ! Fall-speed formula for settling and collisions. An unknown name is
+        ! fatal: a silent fallback would run the wrong physics.
+        call set_fall_speed_selector(lvalid)
+        if (.not. lvalid) then
+            write(error_unit,*) "ERROR: fall_speed_scheme must be 'stokes' or 'beard' (got '", &
+                trim(fall_speed_scheme), "')."
+            call exit(1)
+        end if
 
         ! Collision-coalescence consistency checks
         if (do_coalescence .and. .not. do_collisions) then

@@ -87,6 +87,10 @@ do_seeding = .false.
 seed_hydration = 'equilibrium'  ! 'equilibrium' | 'double_growth' | 'dry'; seed material only
 seed_growth_time = 5.0          ! Growth time allowed at release, bounds 'equilibrium' (s)
 
+! --- Droplet Fall Speed (settling and collisions) ---
+
+fall_speed_scheme = 'stokes'    ! 'stokes' | 'beard' (Beard 1976)
+
 ! --- Collision-Coalescence Parameters ---
 
 do_collisions = .false.

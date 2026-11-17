@@ -1,103 +1,47 @@
 #!/usr/bin/env python3
-"""Collision-coalescence invariant tests.
+"""Collision-coalescence invariant tests on finished CODT runs.
 
-Runs the CODT executable twice on a CC-on, E=1 namelist and verifies:
+Reads an existing simulation directory (run with ``write_collisions = .true.``)
+and verifies:
 
-  T1. Per-event water-volume conservation (from collision binary log)
-  T2. Collision bookkeeping: Σ N_collisions == Σ N_coalescences == #log_records
-      and every surviving particle has n_collisions == n_coalescences.
+  T1. Per-event water-volume conservation over the coalescence records
+  T2. Collision bookkeeping: Σ N_collisions == #records,
+      Σ N_coalescences == #coalescence records (flag 1), and every surviving
+      particle has n_coalescences <= n_collisions
   T3. Particle-count invariant: Np_final = Np_0 + injected - fellout - coalesced
-  T4. Determinism: two back-to-back runs produce identical collision logs
+  T4. Determinism: two runs produce identical collision logs (optional)
   T5. Global water-mass closure via budgets (sanity)
 
-Uses codt_tools for namelist manipulation and simulation loading. Must be
-run in the research conda env. Invokes CODT via `fpm run` from the repo
-root.
+The collision log is read with ``Simulation.load_collisions`` from
+codt_tools, so the record layout lives in one place. Every collision is
+logged, coalescing or not; the ``coalesced`` flag tells them apart.
 
 Usage:
     conda run -n research python test/scripts/test_cc_invariants.py \\
-        [--nml <source_nml>] [--outdir <scratch_dir>]
+        <sim_dir> [--sim-b <second_sim_dir>]
 """
 import argparse
 import pathlib
-import shutil
-import struct
-import subprocess
 import sys
 
 import numpy as np
 
-from codt_tools import CODTConfig, CODTSimulation
+from codt_tools import Simulation
 
 
-REPO = pathlib.Path(__file__).resolve().parents[2]
 
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"
 
 
 # ---------------------------------------------------------------------------
-# Run helpers
+# Collision log
 # ---------------------------------------------------------------------------
 
-def prepare_run(src_nml: pathlib.Path, base_outdir: pathlib.Path, sim_name: str,
-                aerosol_file: pathlib.Path | None = None, **overrides) -> pathlib.Path:
-    """Write a copy of the source config into base_outdir/sim_name/run/ and
-    return the path to the generated namelist."""
-    cfg = CODTConfig(namelist_path=src_nml)
-    cfg.set(simulation_name=sim_name, output_directory=str(base_outdir), **overrides)
-    run_dir = base_outdir / sim_name / "run"
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    cfg.write(run_dir)
-    if aerosol_file is not None:
-        shutil.copy2(aerosol_file, run_dir / "aerosol_input.nc")
-    return run_dir / "params.nml"
-
-
-def run_codt(nml: pathlib.Path) -> None:
-    r = subprocess.run(
-        ["fpm", "run", "--", str(nml)],
-        cwd=REPO, capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        print(r.stdout)
-        print(r.stderr)
-        raise RuntimeError(f"CODT run failed for {nml}")
-
-
-# ---------------------------------------------------------------------------
-# Collision binary parser
-# ---------------------------------------------------------------------------
-
-def read_collision_log(path: pathlib.Path):
-    """Parse the CODT ``_collisions.bin`` stream.
-
-    Header: N (i4), H (f8), domain_width (f8), volume_scaling (f8)
-    Record: id_keep (i4), id_kill (i4), r_keep (f8), r_kill (f8),
-            r_after (f8), position (f8), time (f8)
-    """
-    raw = path.read_bytes()
-    header_fmt = "<i3d"
-    header_size = struct.calcsize(header_fmt)
-    N, H, Dw, Vs = struct.unpack(header_fmt, raw[:header_size])
-
-    record_fmt = "<2i5d"
-    record_size = struct.calcsize(record_fmt)
-    body = raw[header_size:]
-    n_records = len(body) // record_size
-    rec = np.zeros(
-        n_records,
-        dtype=[
-            ("id_keep", "i4"), ("id_kill", "i4"),
-            ("r_keep", "f8"), ("r_kill", "f8"), ("r_after", "f8"),
-            ("position", "f8"), ("time", "f8"),
-        ],
-    )
-    for k in range(n_records):
-        off = k * record_size
-        rec[k] = struct.unpack(record_fmt, body[off : off + record_size])
-    return {"N": N, "H": H, "domain_width": Dw, "volume_scaling": Vs, "records": rec}
+def coalescence_records(log):
+    """Records of events where the droplets merged (flag 1)."""
+    ev = log["events"]
+    return ev[ev["coalesced"] == 1]
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +49,7 @@ def read_collision_log(path: pathlib.Path):
 # ---------------------------------------------------------------------------
 
 def t1_water_volume_per_event(log, rtol=1e-10):
-    rec = log["records"]
+    rec = coalescence_records(log)
     if len(rec) == 0:
         return False, "no coalescence events in log — test inconclusive"
     v_pre = rec["r_keep"] ** 3 + rec["r_kill"] ** 3
@@ -115,40 +59,46 @@ def t1_water_volume_per_event(log, rtol=1e-10):
     return worst < rtol, f"max rel err = {worst:.2e} over {len(rec)} events (tol {rtol:.0e})"
 
 
-def t2_bookkeeping(sim: CODTSimulation, log):
-    n_log = int(len(log["records"]))
+def t2_bookkeeping(sim: Simulation, log):
+    n_log = int(len(log["events"]))
+    n_log_coal = int(len(coalescence_records(log)))
     ts_coll = int(sim.N_collisions.sum())
     ts_coal = int(sim.N_coalescences.sum())
-    ok_coal_log = (ts_coal == n_log)
+    ok_coll_log = (ts_coll == n_log)
+    ok_coal_log = (ts_coal == n_log_coal)
     ok_coal_le_coll = (ts_coal <= ts_coll)
 
     # Surviving-particle check on the final snapshot:
-    # each surviving particle's n_coalescences <= n_collisions
-    pds = sim._particles_ds
-    if pds is None:
-        pds = sim.load_trajectories()
-    row_sizes = pds["row_sizes"].values.astype(int)
-    end = int(row_sizes.sum())
-    start = end - int(row_sizes[-1])
-    p_coll = pds["n_collisions"].values[start:end].astype(int)
-    p_coal = pds["n_coalescences"].values[start:end].astype(int)
-    ok_particles = bool(np.all(p_coal <= p_coll))
+    # each surviving particle's n_coalescences <= n_collisions.
+    # Needs trajectory records (write_trajectories = .true. over the run's end);
+    # skipped without them.
+    pds = sim.load_trajectories() if sim.has_trajectories else None
+    if pds is not None and pds["row_sizes"].size > 0:
+        row_sizes = pds["row_sizes"].values.astype(int)
+        end = int(row_sizes.sum())
+        start = end - int(row_sizes[-1])
+        p_coll = pds["n_collisions"].values[start:end].astype(int)
+        p_coal = pds["n_coalescences"].values[start:end].astype(int)
+        ok_particles = bool(np.all(p_coal <= p_coll))
+    else:
+        ok_particles = "skipped (no trajectory records)"
 
-    ok = ok_coal_log and ok_coal_le_coll and ok_particles
+    ok = ok_coll_log and ok_coal_log and ok_coal_le_coll and ok_particles is not False
     msg = (
-        f"Σ N_collisions={ts_coll}, Σ N_coalescences={ts_coal}, "
-        f"log records={n_log}; coal==log: {ok_coal_log}, "
+        f"Σ N_collisions={ts_coll}, log records={n_log}; "
+        f"Σ N_coalescences={ts_coal}, coalescence records={n_log_coal}; "
+        f"coll==log: {ok_coll_log}, coal==log: {ok_coal_log}, "
         f"coal<=coll: {ok_coal_le_coll}, "
         f"per-particle coal<=coll: {ok_particles}"
     )
     return ok, msg
 
 
-def t3_particle_count(sim: CODTSimulation, log):
+def t3_particle_count(sim: Simulation, log):
     Np = sim.Np.values.astype(int)
     n_inj = int(sim.budget_n_injected.values.sum())
     n_fel = int(sim.budget_n_fellout.values.sum())
-    n_coal_log = int(len(log["records"]))
+    n_coal_log = int(len(coalescence_records(log)))
     n_coal_budget = int(sim.budget_n_coalesced.values.sum())
 
     Np_0 = int(Np[0])
@@ -169,7 +119,7 @@ def t4_determinism(log_a: pathlib.Path, log_b: pathlib.Path):
     return (ba == bb), f"sizes {len(ba)} vs {len(bb)}"
 
 
-def t5_water_mass_closure(sim: CODTSimulation, tol=1e-6):
+def t5_water_mass_closure(sim: Simulation, tol=1e-6):
     """Liquid water mass closure: QC(final) = QC(init) + injected - fallout + condensation.
 
     All terms in kg. domain_volume = volume_scaling * domain_width^2 * H,
@@ -221,18 +171,18 @@ def main():
     args = ap.parse_args()
 
     sim_dir = pathlib.Path(args.sim_dir)
-    sim_name = sim_dir.name
-    sim_a = CODTSimulation(sim_dir)
-    log_path_a = sim_dir / f"{sim_name}_collisions.bin"
+    sim_a = Simulation(sim_dir)
+    log_path_a = sim_dir / f"{sim_a.name}_collisions.bin"
 
-    if not log_path_a.exists():
+    if not sim_a.has_collisions:
         print(f"ERROR: collision log not found: {log_path_a}")
         sys.exit(1)
 
-    log_a = read_collision_log(log_path_a)
+    log_a = sim_a.load_collisions()
 
     print(f"Simulation: {sim_dir}")
-    print(f"Collision log: {len(log_a['records'])} coalescence events")
+    print(f"Collision log: {len(log_a['events'])} collisions, "
+          f"{len(coalescence_records(log_a))} coalescences")
     print("=" * 60)
 
     results = []
@@ -242,7 +192,7 @@ def main():
 
     if args.sim_b is not None:
         sim_b_dir = pathlib.Path(args.sim_b)
-        log_path_b = sim_b_dir / f"{sim_b_dir.name}_collisions.bin"
+        log_path_b = sim_b_dir / f"{Simulation(sim_b_dir).name}_collisions.bin"
         results.append(("T4 determinism (collision log)",   *t4_determinism(log_path_a, log_path_b)))
     else:
         results.append(("T4 determinism (collision log)",   True, "skipped (no --sim-b provided)"))

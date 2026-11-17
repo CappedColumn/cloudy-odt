@@ -403,7 +403,9 @@ Fortran). None changes collision counts measurably at realistic settings.
   whose pair is not at the same position. **Status** — open.
 - **Equal-size droplets in different cells collide** — the same `virt_temp`
   dependence gives equal radii a non-zero closing speed, and the Hall table's
-  size-ratio-1 column reaches 4.0. Predates the fix. **Status** — open.
+  size-ratio-1 column reaches 4.0. Predates the fix. **Status** — accepted,
+  not fixing: radii are double precision and grow independently, so exactly
+  equal radii are not expected in practice.
 - **`collisions.bin` `position` is not wrapped** — it is the working position
   of the lower droplet `i`, which starts each window in [0, `H`) and only moves
   down, so in parcel mode it can be slightly negative (at most `w_fall(i)`
@@ -413,7 +415,11 @@ Fortran). None changes collision counts measurably at realistic settings.
   periodic. Files from 3.2.0 and earlier still need `modulo(position, H)`.
 - **`test/scripts/test_cc_invariants.py` reads 48-byte records** — the record
   has been 49 bytes since the coalesced flag was added, so the script misreads
-  current files. **Status** — open.
+  current files. It also imported classes that CODT_tools 1.0 no longer has,
+  and treated every record as a coalescence. **Status** — **fixed** after
+  `2e3e3aa`: it reads the log with CODT_tools `Simulation.load_collisions`,
+  checks coalescence records by the flag, and skips the per-particle check
+  when there are no trajectory records.
 - **Unit test gaps** — `test_collision_coalescence` would catch the sign error
   and a reverted survivor, but not a reverted efficiency argument order (it
   uses the `unity` kernel) or record order (it does not write

@@ -4,8 +4,10 @@ module collision_coalescence
     ! Operates directly on type(particle) arrays. Within a time window dt,
     ! adjacent droplets (sorted by position) are checked for pair-passing events
     ! using a min-heap priority queue. When a pair meets:
-    !   - With probability p = min(1, pi*(ri+rj)^2 / A), collision is accepted
-    !   - On acceptance: merge the two particles (conserve water volume, liquid
+    !   - One draw u: u < pi*(ri+rj)^2 / A is a geometric collision, and with
+    !     coalescence on u < E pi*(ri+rj)^2 / A coalesces (E the collection
+    !     efficiency, which may exceed 1)
+    !   - On coalescence: merge the two particles (conserve water volume, liquid
     !     water mass, and solute mass)
     !   - Otherwise: swap adjacency order
     !
@@ -16,7 +18,7 @@ module collision_coalescence
     ! Reference: coll-coal/collide_event_1d.f90, coll-coal/event_driven_1d_collision_high_level.pdf
     use globals, only: dp, i4, i1, pi, N, H, domain_width, volume_scaling, simulation_mode, error_unit
     use particle_types, only: particle, calculate_terminal_velocity
-    use collection_efficiency, only: collection_efficiency_E
+    use collection_efficiency, only: collection_efficiency_E, E_max
     implicit none
     private
 
@@ -213,11 +215,11 @@ contains
     subroutine handle_pair_event(i, j, current_time, lparticles, zcur, tstamp, w_fall, &
                                  alive, prev, next, ver, head, n_active, dt, heap, heap_size)
         ! Resolve a scheduled meeting of adjacent droplets i and j. Advances both to
-        ! the event time, computes the collision probability from their swept area and
-        ! collection efficiency, and draws a random number: on acceptance the pair is
-        ! merged (water/solute conserved, one particle killed); on rejection their
-        ! adjacency order is swapped. Either way, affected neighbor pairs are
-        ! rescheduled onto the heap. The caller has already rejected stale events
+        ! the event time and draws one random number u against the geometric
+        ! probability p_geo = pi (r_i + r_j)^2 / A and the coalescence probability
+        ! E p_geo: u < E p_geo merges the pair (water/solute conserved, one
+        ! particle killed); otherwise their adjacency order is swapped. Either
+        ! way, affected neighbor pairs are rescheduled onto the heap. The caller has already rejected stale events
         ! (is_pair_valid).
         integer, intent(in) :: i, j, n_active
         real(dp), intent(in) :: current_time, dt
@@ -229,8 +231,9 @@ contains
         type(Event), allocatable, intent(inout) :: heap(:)
         integer, intent(inout) :: heap_size
 
-        real(dp) :: vrel, p_coll, random_draw, coal_efficiency, r_keep, r_kill
+        real(dp) :: vrel, p_geo, random_draw, coal_efficiency, r_keep, r_kill
         integer :: prev_neighbor, next_neighbor, keep, kill
+        logical :: coalesce
         type(Event) :: lap_event
 
         call update_working_pos(i, current_time, zcur, tstamp, w_fall)
@@ -255,133 +258,139 @@ contains
             kill = j
         end if
 
-        ! Stage 1: Collision check (geometric kernel)
-        p_coll = pi * (lparticles(i)%radius + lparticles(j)%radius)**2 / grid_area
-        if (p_coll > 1.0) p_coll = 1.0
+        ! One draw decides both collision and coalescence. A crossing pair's
+        ! horizontal offset is uniform over the cell area A, so the pair is within
+        ! the collision radius y_c with probability pi y_c^2 / A. The collection
+        ! efficiency is E = y_c^2 / (r_i + r_j)^2, so
+        !   u < p_geo        geometric collision (offset < r_i + r_j)
+        !   u < E p_geo      coalescence
+        ! E > 1 (the collector's wake, Hall table near p = 1) widens the capture
+        ! area past the geometric one, and those wake captures coalesce although
+        ! u >= p_geo; they are counted and recorded as collisions. E < 1 leaves
+        ! geometric collisions that do not coalesce. Without coalescence only
+        ! p_geo matters. E is evaluated only when u < E_max p_geo, which few
+        ! crossings reach. Since u < 1, a p_geo or E p_geo above 1 acts as 1.
+        p_geo = pi * (lparticles(i)%radius + lparticles(j)%radius)**2 / grid_area
 
         call random_number(random_draw)
 
-        if (random_draw < p_coll) then
-            ! Collision occurred
+        coalesce = .false.
+        if (do_coalescence .and. random_draw < E_max * p_geo) then
+            ! collection_efficiency_E takes (collector, collectee) and does
+            ! not order its arguments.
+            coal_efficiency = collection_efficiency_E(lparticles(keep)%radius, lparticles(kill)%radius)
+            coalesce = random_draw < coal_efficiency * p_geo
+        end if
+
+        if (coalesce .or. random_draw < p_geo) then
+            ! Collision occurred (geometric, or a wake capture)
             collisions_this_step = collisions_this_step + 1
             lparticles(i)%n_collisions = lparticles(i)%n_collisions + 1
             lparticles(j)%n_collisions = lparticles(j)%n_collisions + 1
 
             ! Collision records list the larger droplet (keep) first, to match the
             ! id_keep/r_keep, id_kill/r_kill field order of a coalescence record.
-            if (.not. do_coalescence) then
+            if (coalesce) then
+                ! Coalescence: merge particles, conserving mass
+                coalescences_this_step = coalescences_this_step + 1
+
+                ! Identity (category and material) of the merged droplet.
+                !
+                ! The survivor is keep, the larger droplet (chosen by radius
+                ! above). The merged droplet therefore inherits the larger
+                ! droplet's category by default.
+                !
+                ! Seed outranks size. If a larger background droplet collects a
+                ! seed, the merged droplet still counts as seed, so a seeded run
+                ! does not quietly lose its seed to collection by the background
+                ! it was released into. The reverse case needs nothing: a seed
+                ! that collects background already survives as itself.
+                if (lparticles(kill)%solute_type%is_seed .and. &
+                    .not. lparticles(keep)%solute_type%is_seed) then
+                    lparticles(keep)%aerosol_category = lparticles(kill)%aerosol_category
+                    lparticles(keep)%solute_type = lparticles(kill)%solute_type
+                end if
+
+                r_keep = lparticles(keep)%radius
+                r_kill = lparticles(kill)%radius
+
+                ! Record pre-coalescence state
+                lparticles(keep)%radius_before_coalescence = r_keep
+                lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
+                lparticles(keep)%h_last = 1.0e-3
+
+                ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
+                lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)
+
+                ! Conserve liquid water mass
+                lparticles(keep)%water_liquid = lparticles(keep)%water_liquid &
+                                               + lparticles(kill)%water_liquid
+
+                ! Conserve solute mass and recompute solute radius.
+                !
+                ! A particle holds one material, so when droplets of different
+                ! composition merge the solute masses still add but the total is
+                ! then treated as the survivor's material throughout: its density
+                ! sets the dry radius below, and its n_ions and molar mass set the
+                ! Kohler curve. Mass is conserved; dissolved ion count is not.
+                !
+                ! TODO: this needs to change. Seeding makes droplets of unlike
+                ! composition collide routinely -- that is the point of it -- and
+                ! every such merge silently relabels the minority solute as the
+                ! survivor's material, biasing the merged droplet's Kohler curve
+                ! and its dry radius. The fix is an internally mixed particle:
+                ! a per-type solute mass vector rather than one solute_type, with
+                ! density and n_ions/molar_mass taken as mass-weighted means.
+                ! That reaches particle_types, the Kohler routines, and the
+                ! aerosol sampler, so it is its own piece of work.
+                lparticles(keep)%solute_gross_mass = lparticles(keep)%solute_gross_mass &
+                                                    + lparticles(kill)%solute_gross_mass
+                if (lparticles(keep)%solute_type%solute_density > 0.0) then
+                    lparticles(keep)%solute_radius = &
+                        (3.0_dp * lparticles(keep)%solute_gross_mass / &
+                         (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
+                end if
+
+                ! Recalculate terminal velocity for merged droplet. The new
+                ! speed invalidates every queued pair event involving keep
+                ! (their times assume the old speed), so bump its version;
+                ! the reschedule below queues the replacements.
+                w_fall(keep) = abs(calculate_terminal_velocity(lparticles(keep)))
+                if (w_fall(keep) > wmax_collision) w_fall(keep) = wmax_collision
+                ver(keep) = ver(keep) + 1
+
+                ! Restamp the survivor at the meeting point. For a valid event
+                ! zcur(i) == zcur(j) here (to round-off), so this only removes
+                ! the round-off difference when keep = j.
+                zcur(keep) = zcur(i)
+                tstamp(keep) = current_time
+
+                if (write_collisions) call write_collision( &
+                    lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
+                    r_keep, r_kill, lparticles(keep)%radius, zcur(keep), &
+                    t_window_start + current_time, .true.)
+
+                ! Remove killed particle from linked list
+                call unlink_particle(kill, alive, prev, next, head)
+                alive(kill) = .false.
+                lparticles(kill)%coalesced = .true.
+
+                ! Reschedule events for survivor and its neighbors
+                prev_neighbor = prev(keep)
+                next_neighbor = next(keep)
+                call push_pair_for_i(keep, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
+                if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, &
+                                                            next, ver, dt, current_time)
+
+                ! Reschedule fallout for survivor (no-op in parcel mode;
+                ! push_fall_event self-guards against periodic boundaries)
+                call push_fall_event(heap, heap_size, keep, zcur, tstamp, w_fall, alive, dt, current_time)
+                return
+            else
                 if (write_collisions) call write_collision( &
                     lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
                     lparticles(keep)%radius, lparticles(kill)%radius, 0.0_dp, zcur(i), &
                     t_window_start + current_time, .false.)
-            else
-                ! collection_efficiency_E takes (collector, collectee) and does
-                ! not order its arguments.
-                coal_efficiency = collection_efficiency_E(lparticles(keep)%radius, lparticles(kill)%radius)
-
-                call random_number(random_draw)
-                if (random_draw <= coal_efficiency) then
-                    ! Coalescence: merge particles, conserving mass
-                    coalescences_this_step = coalescences_this_step + 1
-
-                    ! Identity (category and material) of the merged droplet.
-                    !
-                    ! The survivor is keep, the larger droplet (chosen by radius
-                    ! above). The merged droplet therefore inherits the larger
-                    ! droplet's category by default.
-                    !
-                    ! Seed outranks size. If a larger background droplet collects a
-                    ! seed, the merged droplet still counts as seed, so a seeded run
-                    ! does not quietly lose its seed to collection by the background
-                    ! it was released into. The reverse case needs nothing: a seed
-                    ! that collects background already survives as itself.
-                    if (lparticles(kill)%solute_type%is_seed .and. &
-                        .not. lparticles(keep)%solute_type%is_seed) then
-                        lparticles(keep)%aerosol_category = lparticles(kill)%aerosol_category
-                        lparticles(keep)%solute_type = lparticles(kill)%solute_type
-                    end if
-
-                    r_keep = lparticles(keep)%radius
-                    r_kill = lparticles(kill)%radius
-
-                    ! Record pre-coalescence state
-                    lparticles(keep)%radius_before_coalescence = r_keep
-                    lparticles(keep)%n_coalescences = lparticles(keep)%n_coalescences + 1
-                    lparticles(keep)%h_last = 1.0e-3
-
-                    ! Conserve water volume: r_new = (r1^3 + r2^3)^(1/3)
-                    lparticles(keep)%radius = (r_keep**3 + r_kill**3)**(1.0_dp/3.0_dp)
-
-                    ! Conserve liquid water mass
-                    lparticles(keep)%water_liquid = lparticles(keep)%water_liquid &
-                                                   + lparticles(kill)%water_liquid
-
-                    ! Conserve solute mass and recompute solute radius.
-                    !
-                    ! A particle holds one material, so when droplets of different
-                    ! composition merge the solute masses still add but the total is
-                    ! then treated as the survivor's material throughout: its density
-                    ! sets the dry radius below, and its n_ions and molar mass set the
-                    ! Kohler curve. Mass is conserved; dissolved ion count is not.
-                    !
-                    ! TODO: this needs to change. Seeding makes droplets of unlike
-                    ! composition collide routinely -- that is the point of it -- and
-                    ! every such merge silently relabels the minority solute as the
-                    ! survivor's material, biasing the merged droplet's Kohler curve
-                    ! and its dry radius. The fix is an internally mixed particle:
-                    ! a per-type solute mass vector rather than one solute_type, with
-                    ! density and n_ions/molar_mass taken as mass-weighted means.
-                    ! That reaches particle_types, the Kohler routines, and the
-                    ! aerosol sampler, so it is its own piece of work.
-                    lparticles(keep)%solute_gross_mass = lparticles(keep)%solute_gross_mass &
-                                                        + lparticles(kill)%solute_gross_mass
-                    if (lparticles(keep)%solute_type%solute_density > 0.0) then
-                        lparticles(keep)%solute_radius = &
-                            (3.0_dp * lparticles(keep)%solute_gross_mass / &
-                             (4.0_dp * pi * lparticles(keep)%solute_type%solute_density))**(1.0_dp/3.0_dp)
-                    end if
-
-                    ! Recalculate terminal velocity for merged droplet. The new
-                    ! speed invalidates every queued pair event involving keep
-                    ! (their times assume the old speed), so bump its version;
-                    ! the reschedule below queues the replacements.
-                    w_fall(keep) = abs(calculate_terminal_velocity(lparticles(keep)))
-                    if (w_fall(keep) > wmax_collision) w_fall(keep) = wmax_collision
-                    ver(keep) = ver(keep) + 1
-
-                    ! Restamp the survivor at the meeting point. For a valid event
-                    ! zcur(i) == zcur(j) here (to round-off), so this only removes
-                    ! the round-off difference when keep = j.
-                    zcur(keep) = zcur(i)
-                    tstamp(keep) = current_time
-
-                    if (write_collisions) call write_collision( &
-                        lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                        r_keep, r_kill, lparticles(keep)%radius, zcur(keep), &
-                        t_window_start + current_time, .true.)
-
-                    ! Remove killed particle from linked list
-                    call unlink_particle(kill, alive, prev, next, head)
-                    alive(kill) = .false.
-                    lparticles(kill)%coalesced = .true.
-
-                    ! Reschedule events for survivor and its neighbors
-                    prev_neighbor = prev(keep)
-                    next_neighbor = next(keep)
-                    call push_pair_for_i(keep, heap, heap_size, zcur, tstamp, w_fall, alive, next, ver, dt, current_time)
-                    if (prev_neighbor > 0) call push_pair_for_i(prev_neighbor, heap, heap_size, zcur, tstamp, w_fall, alive, &
-                                                                next, ver, dt, current_time)
-
-                    ! Reschedule fallout for survivor (no-op in parcel mode;
-                    ! push_fall_event self-guards against periodic boundaries)
-                    call push_fall_event(heap, heap_size, keep, zcur, tstamp, w_fall, alive, dt, current_time)
-                    return
-                else
-                    if (write_collisions) call write_collision( &
-                        lparticles(keep)%particle_id, lparticles(kill)%particle_id, &
-                        lparticles(keep)%radius, lparticles(kill)%radius, 0.0_dp, zcur(i), &
-                        t_window_start + current_time, .false.)
-                end if
             end if
         end if
 

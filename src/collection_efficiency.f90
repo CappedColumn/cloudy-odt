@@ -17,6 +17,11 @@ module collection_efficiency
 
     public :: set_kernel_selector, collection_efficiency_E
 
+    ! Largest value collection_efficiency_E can return for the selected kernel,
+    ! set by set_kernel_selector. The collision step uses it as an upper bound so
+    ! that it only evaluates E for the few crossings that could be accepted.
+    real(dp), public, protected :: E_max = 1.0
+
     ! Hall (1980) table, corrected by SKK (2009, 2017, 2018)
     ! Collector radii in ascending order (μm)
     integer, parameter :: NR = 12, NP = 21
@@ -104,19 +109,28 @@ contains
     subroutine set_kernel_selector()
         ! Resolve the namelist string coalescence_kernel to an integer code once,
         ! so the per-pair efficiency lookup avoids string comparisons. Unknown
-        ! names fall back to the Long kernel.
+        ! names fall back to the Long kernel. Also sets E_max, the kernel's upper
+        ! bound: Long is clamped to [0, 1], unity is 1, and bilinear interpolation
+        ! of the Hall table never exceeds the largest table entry.
         select case (trim(coalescence_kernel))
             case ('long');  ikernel = KERN_LONG
             case ('hall');  ikernel = KERN_HALL
             case ('unity'); ikernel = KERN_UNITY
             case default;   ikernel = KERN_LONG
         end select
+
+        select case (ikernel)
+            case (KERN_HALL); E_max = maxval(E_hall)
+            case default;     E_max = 1.0
+        end select
     end subroutine set_kernel_selector
 
 
     pure function collection_efficiency_E(r_large, r_small) result(E)
         ! Public entry point: dispatches to the selected kernel and returns the
-        ! collection efficiency (dimensionless, ~0 to 1) for a collector/collectee pair.
+        ! collection efficiency (dimensionless) for a collector/collectee pair. The
+        ! Hall table exceeds 1 for near-equal sizes (the collector's wake captures
+        ! droplets outside the geometric swept area); E_max is the upper bound.
         real(dp), intent(in) :: r_large, r_small   ! collector, collectee radii (m)
         real(dp) :: E
 

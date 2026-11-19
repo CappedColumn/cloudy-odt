@@ -19,6 +19,7 @@ module ode_integrators
 
   private
   public :: ode_rhs, ode_rhs_jac, rkck45_integrate, ros3_integrate
+  public :: lu_factor3, lu_solve3   ! public for test/test_lu3.f90
 
   ! Step-size controller constants (shared by both solvers)
   real(dp), parameter :: SAFETY     = 0.9   ! safety factor on new step size
@@ -244,9 +245,12 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
   ! Sized by the constant ROS3_NVAR, not by the nvar argument. gfortran puts
   ! local arrays whose size is only known at run time on the heap, which cost
   ! one malloc/free pair per array on every call (see docs/known_issues.md).
-  ! The linear solve (solve3) is 3x3 in any case.
+  ! The linear solve (lu_factor3/lu_solve3) is 3x3 in any case.
   real(dp) :: J_mat(ROS3_NVAR,ROS3_NVAR)     ! Jacobian matrix J = df/dy
   real(dp) :: W_matrix(ROS3_NVAR,ROS3_NVAR)  ! iteration matrix W = I/(h*gamma) - J
+  real(dp) :: W_lu(ROS3_NVAR,ROS3_NVAR)      ! LU factors of W (from lu_factor3)
+  integer  :: piv1                           ! row swapped with row 1 in the factorization
+  logical  :: swap2                          ! rows 2 and 3 swapped for column 2
   real(dp) :: f_current(ROS3_NVAR)      ! f(t, y) at current state
   real(dp) :: f_stage2(ROS3_NVAR)       ! f(t + gamma*h, y + k1)
   real(dp) :: k1(ROS3_NVAR), k2(ROS3_NVAR), k3(ROS3_NVAR)  ! stage vectors (solutions of W*k = rhs)
@@ -264,7 +268,7 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
   integer(i4) :: rhs_err           ! RHS error flag
   logical  :: need_jacobian        ! true when J must be recomputed
 
-  ! The work arrays and solve3 are fixed at ROS3_NVAR variables
+  ! The work arrays and the 3x3 LU routines are fixed at ROS3_NVAR variables
   if (nvar /= ROS3_NVAR) then
     ierr = -2
     return
@@ -301,20 +305,23 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
       W_matrix(i,i) = W_matrix(i,i) + inv_gamma_h
     end do
 
+    ! Factor W once; the three stage solves reuse the factors
+    call lu_factor3(W_matrix, W_lu, piv1, swap2)
+
     ! Stage 1 solve: W * k1 = f(y)
     k1 = f_current
-    call solve3(W_matrix, k1)
+    call lu_solve3(W_lu, piv1, swap2, k1)
 
     ! Stage 2: solve W * k2 = f(y + k1) + (c21/h) * k1
     y_stage = y + k1
     call rhs(t + gamma * h, y_stage, f_stage2, rhs_err)
     if (rhs_err /= 0) then; ierr = rhs_err; return; end if
     k2 = f_stage2 + (c21 / h) * k1
-    call solve3(W_matrix, k2)
+    call lu_solve3(W_lu, piv1, swap2, k2)
 
     ! Stage 3: solve W * k3 = f_stage2 + (c31/h)*k1 + (c32/h)*k2  [reuses f_stage2]
     k3 = f_stage2 + (c31 / h) * k1 + (c32 / h) * k2
-    call solve3(W_matrix, k3)
+    call lu_solve3(W_lu, piv1, swap2, k3)
 
     ! 3rd-order solution and embedded 2nd-order error estimate
     y_trial = y + m1 * k1 + m2 * k2 + m3 * k3
@@ -368,48 +375,84 @@ end subroutine adjust_step_size
 
 
 ! ==========================================================================
-! Direct 3x3 linear solve: A*x = b via LU with partial pivoting.
-! Overwrites b with the solution x.  A is not modified.
+! 3x3 LU factorization with partial pivoting, split from the solve so that
+! ros3_integrate factors W once per step instead of once per stage.
+!
+! lu_factor3 does the matrix half of the former solve3 and lu_solve3 the
+! right-hand-side half, with the same operations in the same order, so
+! factor + solve gives bit-for-bit the result of the former single-call solve
+! (checked by test/test_lu3.f90 against a verbatim copy of solve3).
+!
+! Layout of LU: unit-lower multipliers below the diagonal (column 1 in
+! LU(2:3,1), column 2 in LU(3,2)), U on and above it. The column-2 row swap
+! moves only columns 2-3, as in the former code, so the column-1 multipliers
+! stay in the rows where they were computed.
 ! ==========================================================================
-subroutine solve3(A_in, b)
-  real(dp), intent(in)    :: A_in(3,3)
-  real(dp), intent(inout) :: b(3)
+pure subroutine lu_factor3(A_in, LU, piv1, swap2)
+  real(dp), intent(in)  :: A_in(3,3)
+  real(dp), intent(out) :: LU(3,3)
+  integer,  intent(out) :: piv1    ! row swapped with row 1 (1 = no swap)
+  logical,  intent(out) :: swap2   ! rows 2 and 3 swapped for column 2
 
-  real(dp) :: A(3,3), tmp
-  integer  :: piv, i, j
+  real(dp) :: tmp
+  integer  :: i, j
 
-  A = A_in
+  LU = A_in
 
-  ! Forward elimination — column 1
-  piv = 1
-  if (abs(A(2,1)) > abs(A(piv,1))) piv = 2
-  if (abs(A(3,1)) > abs(A(piv,1))) piv = 3
-  if (piv /= 1) then
-    do j = 1, 3; tmp = A(1,j); A(1,j) = A(piv,j); A(piv,j) = tmp; end do
-    tmp = b(1); b(1) = b(piv); b(piv) = tmp
+  ! Column 1
+  piv1 = 1
+  if (abs(LU(2,1)) > abs(LU(piv1,1))) piv1 = 2
+  if (abs(LU(3,1)) > abs(LU(piv1,1))) piv1 = 3
+  if (piv1 /= 1) then
+    do j = 1, 3; tmp = LU(1,j); LU(1,j) = LU(piv1,j); LU(piv1,j) = tmp; end do
   end if
   do i = 2, 3
-    A(i,1) = A(i,1) / A(1,1)
+    LU(i,1) = LU(i,1) / LU(1,1)
     do j = 2, 3
-      A(i,j) = A(i,j) - A(i,1) * A(1,j)
+      LU(i,j) = LU(i,j) - LU(i,1) * LU(1,j)
     end do
-    b(i) = b(i) - A(i,1) * b(1)
+  end do
+
+  ! Column 2
+  swap2 = abs(LU(3,2)) > abs(LU(2,2))
+  if (swap2) then
+    do j = 2, 3; tmp = LU(2,j); LU(2,j) = LU(3,j); LU(3,j) = tmp; end do
+  end if
+  LU(3,2) = LU(3,2) / LU(2,2)
+  LU(3,3) = LU(3,3) - LU(3,2) * LU(2,3)
+
+end subroutine lu_factor3
+
+
+! Solve A*x = b with the factors from lu_factor3. Overwrites b with x.
+pure subroutine lu_solve3(LU, piv1, swap2, b)
+  real(dp), intent(in)    :: LU(3,3)
+  integer,  intent(in)    :: piv1
+  logical,  intent(in)    :: swap2
+  real(dp), intent(inout) :: b(3)
+
+  real(dp) :: tmp
+  integer  :: i
+
+  ! Forward elimination — column 1
+  if (piv1 /= 1) then
+    tmp = b(1); b(1) = b(piv1); b(piv1) = tmp
+  end if
+  do i = 2, 3
+    b(i) = b(i) - LU(i,1) * b(1)
   end do
 
   ! Forward elimination — column 2
-  if (abs(A(3,2)) > abs(A(2,2))) then
-    do j = 2, 3; tmp = A(2,j); A(2,j) = A(3,j); A(3,j) = tmp; end do
+  if (swap2) then
     tmp = b(2); b(2) = b(3); b(3) = tmp
   end if
-  A(3,2) = A(3,2) / A(2,2)
-  A(3,3) = A(3,3) - A(3,2) * A(2,3)
-  b(3)   = b(3) - A(3,2) * b(2)
+  b(3) = b(3) - LU(3,2) * b(2)
 
   ! Back-substitution
-  b(3) = b(3) / A(3,3)
-  b(2) = (b(2) - A(2,3) * b(3)) / A(2,2)
-  b(1) = (b(1) - A(1,2) * b(2) - A(1,3) * b(3)) / A(1,1)
+  b(3) = b(3) / LU(3,3)
+  b(2) = (b(2) - LU(2,3) * b(3)) / LU(2,2)
+  b(1) = (b(1) - LU(1,2) * b(2) - LU(1,3) * b(3)) / LU(1,1)
 
-end subroutine solve3
+end subroutine lu_solve3
 
 end module ode_integrators

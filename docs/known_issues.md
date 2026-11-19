@@ -209,6 +209,33 @@ errors. None applies to the default `'stokes'`.
 - **Found in** — branch `feature/beard-fallspeed`, on top of `bee14d6`.
 - **Status** — open (documented behaviour).
 
+### ~~Collection efficiency above 1 is truncated to 1~~
+
+- **Symptom** — the coalescence probability per crossing was
+  `p_geo * min(E, 1)`, with `p_geo = pi (r_i + r_j)^2 / A`. The Hall table
+  exceeds 1 for near-equal sizes (up to 4.0 at size ratio 1): the collector's
+  wake captures droplets outside its geometric swept area. Those captures were
+  lost, so coalescence among near-equal droplets was undercounted.
+- **Evidence** — `test/cluscoll` (local, untracked) Hall pair cases: pooled
+  coalescence z over 48 cases was -1.36 with the truncation.
+- **Suspected location** — `src/collision_coalescence.f90`
+  `handle_pair_event`: it accepted a geometric collision first and only then
+  drew against E. Verified by source read.
+- **Found in** — `eed495a` (`v3.2.1`), `main`. Also noted while planning the
+  Pinsky kernel (2026-08-27).
+- **Status** — **fixed in `264fc09`**: one draw `u` per crossing; `u < E p_geo`
+  coalesces, `u < p_geo` without coalescing is a geometric collision. A wake
+  capture (coalesced with `u >= p_geo`) is counted and recorded as a collision
+  with `flag = 1`, so collision counts follow `max(1, E) K`. `E_max` (set by
+  `set_kernel_selector`: max of the Hall table, 1 for Long and unity) bounds
+  the draw so E is evaluated only when `u < E_max p_geo`. Pair cases after the
+  fix, 4 realizations x 12 cases: 122 415 coalescences / 122 570 expected
+  (0.999), 230 960 collisions / 231 007 expected (1.000), max |z| 2.9. Runs with
+  `do_coalescence = .true.` are not bit-identical to 3.2.1 (the random-number
+  sequence changes). Whether the Hall table values themselves are right (the
+  CODT "SKK-corrected" table differs from the SDM reference) is a separate,
+  open question.
+
 ---
 
 ### Droplet growth treats every aerosol as NaCl, whatever the composition table says

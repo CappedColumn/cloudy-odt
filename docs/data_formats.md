@@ -228,7 +228,7 @@ Profiles and time series. Always written.
 | `Nun` | (time) | count | Unactivated droplets |
 | `Ravg` | (time) | µm | Mean radius (wet) |
 | `LWC` | (time) | g/m³ | Liquid water content |
-| `N_collisions` | (time) | count | Collisions in interval |
+| `N_collisions` | (time) | count | Collisions in interval (from 3.2.2, includes wake captures where E > 1) |
 | `N_coalescences` | (time) | count | Coalescences in interval |
 
 **Budget variables** (time dim, double, accumulated per write interval)
@@ -384,6 +384,8 @@ Unformatted Fortran **stream**, written when `write_collisions = .true.`
 **Per-event record:** `id_keep` (i4), `id_kill` (i4), `r_keep` (f8), `r_kill` (f8), `r_after` (f8), `position` (f8), `time` (f8), `flag` (i1)
 
 `flag` is `1` if the event was a coalescence (droplets merged; `r_after` is the merged radius) and `0` if it was a collision without coalescence (`r_after = 0`).
+
+From CODT 3.2.2 a coalescence can come from a **wake capture**: where the collection efficiency E exceeds 1 (the Hall table reaches 4.0 for near-equal sizes), the collector also captures droplets that pass outside its geometric cross-section. A wake capture is written as an ordinary record with `flag = 1`; there is no field that tells it apart from a geometric coalescence. So the number of records (and `N_collisions`) per crossing follows max(1, E) times the geometric kernel, not the geometric kernel alone. Files from 3.2.1 and earlier truncate E to 1 and contain no wake captures.
 
 `keep` is the larger droplet of the pair (for equal radii, the faster-falling one); it is listed first in every record, whether or not the pair coalesced. `position` is the height of the lower droplet of the pair at the event, in [0, `H`]. In parcel mode it is wrapped into [0, `H`) from CODT 3.2.1; files from 3.2.0 and earlier can hold small negative values there (the droplet's fall below 0 within one collision window), so take those modulo `H`.
 

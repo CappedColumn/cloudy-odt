@@ -25,6 +25,7 @@ module ode_integrators
   real(dp), parameter :: GROW_MAX   = 5.0   ! max step size growth ratio
   real(dp), parameter :: SHRINK_MIN = 0.1   ! min step size shrink ratio
   integer,  parameter :: MAX_STEPS  = 10000
+  integer,  parameter :: ROS3_NVAR  = 3     ! system size ros3_integrate supports
 
   abstract interface
     ! Right-hand side: dydt = f(t, y).  ierr /= 0 signals failure.
@@ -198,7 +199,8 @@ end subroutine rkck45_integrate
 !   h_last   — step size hint on entry, last accepted step on exit
 !   rtol     — relative error tolerance per component
 !   atol     — absolute error tolerance per component
-!   ierr     — 0 on success, -1 if max_steps exceeded, or RHS error code
+!   ierr     — 0 on success, -1 if max_steps exceeded, -2 if nvar is not
+!              ROS3_NVAR, or RHS error code
 ! ==========================================================================
 subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, atol, ierr)
   procedure(ode_rhs)         :: rhs
@@ -230,14 +232,18 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
   real(dp), parameter :: e3 =  0.22354069897811569627360909276199
 
   ! ---- Work arrays ----
-  real(dp) :: J_mat(nvar,nvar)     ! Jacobian matrix J = df/dy
-  real(dp) :: W_matrix(nvar,nvar)  ! iteration matrix W = I/(h*gamma) - J
-  real(dp) :: f_current(nvar)      ! f(t, y) at current state
-  real(dp) :: f_stage2(nvar)       ! f(t + gamma*h, y + k1)
-  real(dp) :: k1(nvar), k2(nvar), k3(nvar)  ! stage vectors (solutions of W*k = rhs)
-  real(dp) :: y_trial(nvar)        ! candidate solution at t + h
-  real(dp) :: y_err(nvar)          ! local error estimate
-  real(dp) :: y_stage(nvar)        ! intermediate state for RHS evaluation
+  ! Sized by the constant ROS3_NVAR, not by the nvar argument. gfortran puts
+  ! local arrays whose size is only known at run time on the heap, which cost
+  ! one malloc/free pair per array on every call (see docs/known_issues.md).
+  ! The linear solve (solve3) is 3x3 in any case.
+  real(dp) :: J_mat(ROS3_NVAR,ROS3_NVAR)     ! Jacobian matrix J = df/dy
+  real(dp) :: W_matrix(ROS3_NVAR,ROS3_NVAR)  ! iteration matrix W = I/(h*gamma) - J
+  real(dp) :: f_current(ROS3_NVAR)      ! f(t, y) at current state
+  real(dp) :: f_stage2(ROS3_NVAR)       ! f(t + gamma*h, y + k1)
+  real(dp) :: k1(ROS3_NVAR), k2(ROS3_NVAR), k3(ROS3_NVAR)  ! stage vectors (solutions of W*k = rhs)
+  real(dp) :: y_trial(ROS3_NVAR)        ! candidate solution at t + h
+  real(dp) :: y_err(ROS3_NVAR)          ! local error estimate
+  real(dp) :: y_stage(ROS3_NVAR)        ! intermediate state for RHS evaluation
 
   real(dp) :: t                    ! current time
   real(dp) :: h                    ! current step size
@@ -248,6 +254,12 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
   integer  :: step, i
   integer(i4) :: rhs_err           ! RHS error flag
   logical  :: need_jacobian        ! true when J must be recomputed
+
+  ! The work arrays and solve3 are fixed at ROS3_NVAR variables
+  if (nvar /= ROS3_NVAR) then
+    ierr = -2
+    return
+  end if
 
   ierr = 0
   t = t_start

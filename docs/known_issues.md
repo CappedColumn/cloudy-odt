@@ -801,8 +801,7 @@ Fortran). None changes collision counts measurably at realistic settings.
   in the parcel profiling case allocates and frees them. `nvar` is always 3.
   Confirmed by `perf --call-graph dwarf`: the `malloc` samples sit directly
   under `ros3_integrate`.
-- **Fix direction** — fixed-size (`parameter`) work arrays. Expected to be
-  bit-identical; not yet tried.
+- **Fix direction** — fixed-size (`parameter`) work arrays.
 - **Evidence** — `devCODT/profiling/archive/8d4d6fb/soa_step0/`
   (`npv3_*`, `rel8_*`, `stacks_*`); notchpeak Xeon Gold 6130, 2026-11-13.
   Summary in `SOA_RESULTS.md`.
@@ -810,7 +809,13 @@ Fortran). None changes collision counts measurably at realistic settings.
   read and call stacks.
 - **Found in** — `8d4d6fb` (`v3.1.2`), built from a `git archive` export
   (binaries report `3.1.2-src`).
-- **Status** — cause known / unfixed.
+- **Status** — **fixed** on `main` (the commit that adds this line;
+  cherry-picked from `84411dd` on `explore/soa-particles`). The ten work arrays
+  are sized by the constant `ROS3_NVAR = 3`; `ros3_integrate` returns
+  `ierr = -2` for any other `nvar`. Measured on the SoA branch (np-v3, Gold
+  6130): bit-identical, user CPU 590.9 -> 389.9 s parcel (1.52x) and
+  94.7 -> 80.2 s chamber (1.18x). Bit-identity on `main` to be confirmed by
+  the next A/B reftest.
 
 ### Droplet transport through triplet maps used the wrong map direction
 

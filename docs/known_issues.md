@@ -777,7 +777,8 @@ Fortran). None changes collision counts measurably at realistic settings.
   source, not just inferred from the profile.
 - **Found in** — `527cd7f` (`v2.0.0-1-g527cd7f`), `main`; from the output
   `git_commit` attribute of the madison SF1 runs.
-- **Status** — **resolved on `feature/lem-empm-port`** (slice 1). The routine was
+- **Status** — **resolved in `a760c51`** (LEM/EMPM slice 1, released in
+  v3.0.0). The routine was
   replaced by the composed-map path described in the next entry, which touches
   each droplet once per turbulence step instead of once per map: madison ent1
   went **48.1 s -> 4.0 s (~12x)**, and the mover dropped to 0.2% of runtime with
@@ -890,8 +891,8 @@ between each droplet and the thermodynamic history of the air around it.
   index carried forward) and a stale-index regression guard.
 - **Found in** — `afc798f`, branch `feature/lem-empm-port`; found by reading the
   code and by an equivalence test, not from a run.
-- **Status** — **fixed on `feature/lem-empm-port`** (uncommitted at time of
-  writing; update this line with the commit hash when slice 1 lands).
+- **Status** — **fixed in `a760c51`** (LEM/EMPM slice 1, "Unify droplet eddy
+  transport for LEM and ODT; fix map direction"; released in v3.0.0).
 
 ---
 

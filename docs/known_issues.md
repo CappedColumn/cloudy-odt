@@ -918,6 +918,32 @@ between each droplet and the thermodynamic history of the air around it.
 - **Status** — **fixed in `a760c51`** (LEM/EMPM slice 1, "Unify droplet eddy
   transport for LEM and ODT; fix map direction"; released in v3.0.0).
 
+### DGM growth equations are written out three times
+
+- **Symptom** — `growth_rhs`, `growth_jacobian` and `growth_rhs_jac` in
+  `src/DGM.f90` each compute the same thermodynamic intermediates (Lv, K, Dv,
+  `esat`, jump lengths, kinetic factors, solution density, Köhler terms,
+  diffusion denominator), and the two Jacobian routines repeat the same
+  derivative code. Any physics change has to be made three times. Adding
+  `do_kinetic_correction` showed the risk: the first draft had two errors in
+  `growth_rhs_jac` only (kinetic factors set to 0 instead of 1, and
+  `d_vvp_dr` assigned where `d_vvp_dt` was meant). `test_kinetic_correction`
+  now checks all three routines against finite differences.
+- **Cause** — `growth_rhs_jac` was added in `16a6cd4` (2026-05-22) as a fused
+  copy of the other two, so ROS3 stage 1 computes the intermediates once.
+  `growth_rhs` is still needed for the RHS-only stages. `growth_jacobian` was
+  left behind: no model code calls it; only `test/test_jac_magnitudes.f90`
+  (unregistered) and `test/test_kinetic_correction.f90` use it.
+- **Proposed fix** — (1) delete `growth_jacobian` and point its tests at
+  `growth_rhs_jac`. (2) Move the shared code into one new `pure` module
+  procedure in `DGM` that both remaining routines call. It must stay in the
+  same module so gfortran can still inline it on this hot path. Keep the
+  operation order so output stays bit-identical (check with an A/B reftest),
+  and compare runtimes.
+- **Found in** — `cb0c5a1` (`v3.2.2`), branch
+  `feature/kinetic-correction-switch`; found by source read.
+- **Status** — open.
+
 ---
 
 ## Unknown

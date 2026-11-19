@@ -14,7 +14,7 @@ module writeout
                         dsd_varid, aerDSD_varids, aerosol_file, aerosol_concentration, &
                         do_collisions, do_coalescence, wmax_collision, write_collisions, &
                         coalescence_kernel, do_seeding, seed_hydration, seed_growth_time, &
-                        fall_speed_scheme
+                        fall_speed_scheme, do_kinetic_correction
     use special_effects, only: do_sidewalls, do_random_fallout, area_sw, area_bot, C_sw, T_sw, &
                                RH_sw, P_sw, sw_nudging_time, random_fallout_rate
     use parcel, only: do_parcel_ascent, parcel_height, parcel_velocity, &
@@ -825,6 +825,8 @@ contains
                             trim(coalescence_kernel)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.fall_speed_scheme", &
                             trim(fall_speed_scheme)) )
+            call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.do_kinetic_correction", &
+                            merge(1, 0, do_kinetic_correction)) )
             call nc_verify( nf90_put_att(lncid, NF90_GLOBAL, "MICROPHYSICS.do_seeding", &
                             merge(1, 0, do_seeding)) )
             if (do_seeding) then

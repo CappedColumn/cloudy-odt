@@ -7,6 +7,8 @@
 !
 ! Physics: Su et al. (1998) growth equation with Fukuta & Walter (1970)
 ! kinetic corrections and full Köhler equilibrium (Kelvin + Raoult).
+! The kinetic correction can be switched off (&MICROPHYSICS
+! do_kinetic_correction), which gives the continuum (Maxwell) limit.
 !
 ! The module maintains per-droplet aerosol state (solute mass, species
 ! properties, derived coefficients) via set_aerosol_properties, which must
@@ -21,8 +23,14 @@ module DGM
   public :: integrate_ODE, set_aerosol_properties
   public :: growth_rhs, growth_jacobian, growth_rhs_jac
   public :: growth_rate, critical_radius
+  public :: do_kinetic_correction
 
   integer(i4), parameter :: nvar = 3
+
+  ! Gas-kinetic (Fukuta & Walter 1970) correction on/off, read from
+  ! &MICROPHYSICS in initialize_microphysics. Off sets both jump lengths to 0,
+  ! so K and Dv are not reduced for small droplets (continuum limit).
+  logical :: do_kinetic_correction = .true.
 
   ! ---- Per-droplet aerosol state (set by set_aerosol_properties) ----
   integer(i4) :: aerosol_type       ! species index (1=NaCl, 2=(NH4)2SO4, 3=fumaric)
@@ -46,8 +54,9 @@ module DGM
 
   real(dp), parameter :: sigma_w = 7.392730e-2  ! surface tension of water [N/m]
 
-  ! Kinetic accommodation coefficients (Fukuta & Walter 1970)
-  real(dp), parameter :: thermal_accom    = 1.0   ! thermal accommodation coefficient
+  ! Kinetic accommodation coefficients (Fukuta & Walter 1970); used only when
+  ! do_kinetic_correction is on
+  real(dp), parameter :: thermal_accom   = 1.0   ! thermal accommodation coefficient
   real(dp), parameter :: condensation_eff = 0.04  ! condensation (mass) coefficient
 
   real(dp), parameter :: eps_r = 1.0e-2  ! dry radius margin: r_floor = r_dry * (1 + eps_r)
@@ -207,13 +216,20 @@ pure subroutine growth_rhs(ltime, y, dydt, ierr)
   es = esat(temp)
 
   ! Kinetic correction: mean free path jump lengths (Fukuta & Walter 1970)
-  jump_thermal = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-               / (thermal_accom * pres * (cv + Rd / 2.0))
-  jump_vapor   = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-
-  ! Ventilation coefficients (transition regime correction)
-  vent_thermal = radius / (radius + jump_thermal)
-  vent_vapor   = radius / (radius + jump_vapor)
+  if (do_kinetic_correction) then
+    jump_thermal = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+                 / (thermal_accom * pres * (cv + Rd / 2.0))
+    jump_vapor   = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
+    ! Ventilation coefficients (transition regime correction)
+    vent_thermal = radius / (radius + jump_thermal)
+    vent_vapor   = radius / (radius + jump_vapor)
+  else
+    jump_thermal = 0.0
+    jump_vapor   = 0.0
+    ! Ventilation coefficients (transition regime correction)
+    vent_thermal = 1.0
+    vent_vapor   = 1.0
+  end if
 
   ! Solution density: accounts for dissolved solute volume
   solution_density = (radius**3 * pi_43 * rho_l + solute_c7) / (radius**3 * pi_43)
@@ -316,13 +332,20 @@ pure subroutine growth_jacobian(ltime, y, jac)
   es = esat(temp)
 
   ! Kinetic jump lengths (Fukuta & Walter 1970)
-  jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-          / (thermal_accom * pres * (cv + Rd / 2.0))
-  jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-
-  ! Ventilation coefficients
-  vent_th = r / (r + jump_th)
-  vent_vp = r / (r + jump_vp)
+  if (do_kinetic_correction) then
+    jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+            / (thermal_accom * pres * (cv + Rd / 2.0))
+    jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
+    ! Ventilation coefficients
+    vent_th = r / (r + jump_th)
+    vent_vp = r / (r + jump_vp)
+  else
+    jump_th = 0.0
+    jump_vp = 0.0
+    ! Ventilation coefficients
+    vent_th = 1.0
+    vent_vp = 1.0
+  end if
 
   ! Solution density
   rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
@@ -352,8 +375,13 @@ pure subroutine growth_jacobian(ltime, y, jac)
   d_rho_dr = -3.0 * solute_c7 / (pi_43 * r4)
 
   ! d(ventilation)/dr — jump lengths are independent of r
-  d_vth_dr = jump_th / (r + jump_th)**2
-  d_vvp_dr = jump_vp / (r + jump_vp)**2
+  if (do_kinetic_correction) then
+    d_vth_dr = jump_th / (r + jump_th)**2
+    d_vvp_dr = jump_vp / (r + jump_vp)**2
+  else
+    d_vth_dr = 0.0
+    d_vvp_dr = 0.0
+  end if
 
   ! d(Kelvin)/dr
   d_kelvin_dr = -2.0 * sigma_w * (rho_sol + r * d_rho_dr) &
@@ -394,15 +422,21 @@ pure subroutine growth_jacobian(ltime, y, jac)
   d_dv_dt = 1.57e-7 * 1.0e5 / pres
 
   ! d(jump lengths)/dT
-  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
-           + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
-           / (thermal_accom * pres * (cv + Rd / 2.0))
-  d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
-           + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
-
-  ! d(ventilation)/dT via jump length dependence
-  d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
-  d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
+  if (do_kinetic_correction) then
+    d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
+             + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
+             / (thermal_accom * pres * (cv + Rd / 2.0))
+    d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+             + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
+    ! d(ventilation)/dT via jump length dependence
+    d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
+    d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
+  else
+    d_jth_dt = 0.0
+    d_jvp_dt = 0.0
+    d_vth_dt = 0.0
+    d_vvp_dt = 0.0
+  end if
 
   ! d(Kelvin)/dT — only the 1/T factor
   d_kelvin_dt = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
@@ -527,12 +561,18 @@ pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
   vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
   es = esat(temp)
 
-  jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-          / (thermal_accom * pres * (cv + Rd / 2.0))
-  jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-
-  vent_th = r / (r + jump_th)
-  vent_vp = r / (r + jump_vp)
+  if (do_kinetic_correction) then
+    jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+            / (thermal_accom * pres * (cv + Rd / 2.0))
+    jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
+    vent_th = r / (r + jump_th)
+    vent_vp = r / (r + jump_vp)
+  else
+    jump_th = 0.0
+    jump_vp = 0.0
+    vent_th = 1.0
+    vent_vp = 1.0
+  end if
 
   rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
 
@@ -565,8 +605,13 @@ pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
   ! =====================================================================
   d_rho_dr = -3.0 * solute_c7 / (pi_43 * r4)
 
-  d_vth_dr = jump_th / (r + jump_th)**2
-  d_vvp_dr = jump_vp / (r + jump_vp)**2
+  if (do_kinetic_correction) then
+    d_vth_dr = jump_th / (r + jump_th)**2
+    d_vvp_dr = jump_vp / (r + jump_vp)**2
+  else
+    d_vth_dr = 0.0
+    d_vvp_dr = 0.0
+  end if
 
   d_kelvin_dr = -2.0 * sigma_w * (rho_sol + r * d_rho_dr) &
               / (Rv * temp * (rho_sol * r)**2)
@@ -592,14 +637,20 @@ pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
   d_k_dt  = 7.7e-5
   d_dv_dt = 1.57e-7 * 1.0e5 / pres
 
-  d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
-           + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
-           / (thermal_accom * pres * (cv + Rd / 2.0))
-  d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
-           + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
-
-  d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
-  d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
+  if (do_kinetic_correction) then
+    d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
+             + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
+             / (thermal_accom * pres * (cv + Rd / 2.0))
+    d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
+             + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
+    d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
+    d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
+  else
+    d_jth_dt = 0.0
+    d_jvp_dt = 0.0
+    d_vth_dt = 0.0
+    d_vvp_dt = 0.0
+  end if
 
   d_kelvin_dt = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
 

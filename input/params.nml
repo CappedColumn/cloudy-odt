@@ -91,6 +91,10 @@ seed_growth_time = 5.0          ! Growth time allowed at release, bounds 'equili
 
 fall_speed_scheme = 'stokes'    ! 'stokes' | 'beard' (Beard 1976)
 
+! --- Droplet Growth ---
+
+do_kinetic_correction = .true.  ! Fukuta & Walter gas-kinetic correction; .false. = continuum limit
+
 ! --- Collision-Coalescence Parameters ---
 
 do_collisions = .false.

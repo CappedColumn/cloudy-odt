@@ -13,7 +13,7 @@ module droplets
                                      collision_coalescence_step, wmax_collision, &
                                      write_collisions, collisions_this_step, coalescences_this_step
     use collection_efficiency, only: coalescence_kernel, set_kernel_selector
-    use DGM, only: integrate_ODE, set_aerosol_properties
+    use DGM, only: integrate_ODE, set_aerosol_properties, do_kinetic_correction
     use special_effects, only: do_random_fallout, random_fallout_rate
     use microphysics
     implicit none
@@ -29,7 +29,7 @@ module droplets
     public :: initial_wet_radius, init_drop_each_gridpoint, expected_Ndrops_per_gridpoint
     public :: aerosol_concentration
     public :: do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel
-    public :: fall_speed_scheme
+    public :: fall_speed_scheme, do_kinetic_correction
     public :: aerosol_file
     public :: detrain_particles, entrain_particles
     public :: do_seeding, seed_hydration, seed_growth_time, n_seeded
@@ -935,7 +935,7 @@ contains
         write_trajectories, trajectory_start, trajectory_end, trajectory_timer, initial_wet_radius, &
         do_collisions, do_coalescence, wmax_collision, write_collisions, coalescence_kernel, &
         aerosol_concentration, do_seeding, seed_hydration, seed_growth_time, &
-        fall_speed_scheme
+        fall_speed_scheme, do_kinetic_correction
 
         ! Read in microphysical namelist parameters
         write(*,*) 'Reading MICROPHYSICS namelist values...'
@@ -956,6 +956,10 @@ contains
             write(error_unit,*) "ERROR: fall_speed_scheme must be 'stokes' or 'beard' (got '", &
                 trim(fall_speed_scheme), "')."
             call exit(1)
+        end if
+
+        if (.not. do_kinetic_correction) then
+            write(*,*) 'NOTE: gas-kinetic correction in droplet growth is OFF (continuum limit).'
         end if
 
         ! Collision-coalescence consistency checks

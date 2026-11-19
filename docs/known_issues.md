@@ -666,7 +666,7 @@ Fortran). None changes collision counts measurably at realistic settings.
   computed only in `apply_adiabatic_forcing`, the per-step routine. The first
   output record is written in `initialize_simulation` (`initialize.f90:71`)
   before any step, so it held the default.
-- **Status** — **fixed** on `main` (the commit that adds this line):
+- **Status** — **fixed in `a9f98c7`**:
   `initialize_parcel` now evaluates it for the initial pressure as soon as
   `write_height_env` is set. Only the t = 0 value of `parcel_height_env`
   changes (hydrostatic runs with a sounding); `[1:]` slicing is no longer
@@ -698,13 +698,16 @@ Fortran). None changes collision counts measurably at realistic settings.
   arrays") and `0e070e2` ("Added (ghost) point to top of nondimensional scalar
   arrays"), so it is present on every commit from `0e070e2` forward — including
   current `527cd7f`. Not tied to a specific simulation run.
-- **Status** — **fixed** on `main` (the commit that adds this line): `rdx` is
+- **Status** — **fixed in `4b80979`**: `rdx` is
   declared `rdx(N+1)`. Checked against the caller: `diffuse_scalar` builds an
   (N+1)-point system (`l`, `d`, `r`, `xsc` are all `N+1`), the forward loop
   writes `rdx(2:N+1)` and the back substitution reads `rdx(N+1)` for `ui(N)`,
   the cell below the top boundary. Whether release output changes depends on
   whether anything reused the stack slot past `rdx` between that write and
-  read; to be measured by an A/B reftest against the commit before.
+  read. Measured: A/B reftest `b1c3a0d` vs `4b80979` (job 17264748, np-v3,
+  Gold 6130) is bit-identical in chamber and parcel mode, so in that build the
+  slot was not reused and past release output is unaffected. The fix removes
+  the out-of-bounds write and lets chamber runs proceed under `debug`.
 
 ### Eddy-particle movement (`move_particles_in_eddy`) is ~90% of parcel runtime
 
@@ -822,13 +825,16 @@ Fortran). None changes collision counts measurably at realistic settings.
   read and call stacks.
 - **Found in** — `8d4d6fb` (`v3.1.2`), built from a `git archive` export
   (binaries report `3.1.2-src`).
-- **Status** — **fixed** on `main` (the commit that adds this line;
-  cherry-picked from `84411dd` on `explore/soa-particles`). The ten work arrays
+- **Status** — **fixed in `507d660`** (cherry-picked from `84411dd` on
+  `explore/soa-particles`). The ten work arrays
   are sized by the constant `ROS3_NVAR = 3`; `ros3_integrate` returns
   `ierr = -2` for any other `nvar`. Measured on the SoA branch (np-v3, Gold
   6130): bit-identical, user CPU 590.9 -> 389.9 s parcel (1.52x) and
-  94.7 -> 80.2 s chamber (1.18x). Bit-identity on `main` to be confirmed by
-  the next A/B reftest.
+  94.7 -> 80.2 s chamber (1.18x). On `main`, together with `deaf0a6`,
+  `fbde630` and `b1c3a0d` (the other bit-identical DGM savings): A/B reftest
+  v3.2.2 (`cb0c5a1`, job 17260660) vs `b1c3a0d` (job 17264748), np-v3, Gold
+  6130, is bit-identical in chamber and parcel mode; wall time 328 -> 259 s
+  chamber (1.27x) and 1299 -> 760 s parcel (1.71x), single runs per leg.
 
 ### Droplet transport through triplet maps used the wrong map direction
 

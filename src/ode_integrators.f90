@@ -27,6 +27,15 @@ module ode_integrators
   integer,  parameter :: MAX_STEPS  = 10000
   integer,  parameter :: ROS3_NVAR  = 3     ! system size ros3_integrate supports
 
+  ! Error norms below which an accepted step grows by exactly GROW_MAX, so
+  ! adjust_step_size can skip the power. The growth term SAFETY*err**(-grow_exp)
+  ! exceeds GROW_MAX for err < (SAFETY/GROW_MAX)**(1/grow_exp): 5.83e-3 for ROS3
+  ! (grow_exp 1/3) and 1.89e-4 for RKCK45 (1/5). The values below sit 5-14%
+  ! under those crossovers, far more than the rounding error of the power, so
+  ! the result is unchanged.
+  real(dp), parameter :: ERR_GROW_CAP_ROS3   = 5.0e-3
+  real(dp), parameter :: ERR_GROW_CAP_RKCK45 = 1.8e-4
+
   abstract interface
     ! Right-hand side: dydt = f(t, y).  ierr /= 0 signals failure.
     pure subroutine ode_rhs(t, y, dydt, ierr)
@@ -160,7 +169,7 @@ subroutine rkck45_integrate(rhs, nvar, y, t_start, t_end, h_last, rtol, atol, ie
     end do
 
     ! Accept or reject, then adjust step size
-    call adjust_step_size(h, err_max, 0.2_dp, 0.25_dp, h_new)
+    call adjust_step_size(h, err_max, 0.2_dp, 0.25_dp, ERR_GROW_CAP_RKCK45, h_new)
     if (err_max <= 1.0) then
       t = t + h
       y = y_trial
@@ -319,7 +328,7 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
     end do
 
     ! Accept or reject, then adjust step size
-    call adjust_step_size(h, err_max, 1.0_dp/3.0_dp, 0.5_dp, h_new)
+    call adjust_step_size(h, err_max, 1.0_dp/3.0_dp, 0.5_dp, ERR_GROW_CAP_ROS3, h_new)
     if (err_max <= 1.0) then
       t = t + h
       y = y_trial
@@ -340,15 +349,16 @@ end subroutine ros3_integrate
 ! On accept (err_max <= 1): h_new = min(safety * h * err^(-grow_exp), grow_max * h)
 ! On reject (err_max >  1): h_new = max(safety * h * err^(-shrink_exp), shrink_min * h)
 ! ==========================================================================
-pure subroutine adjust_step_size(h, err_max, grow_exp, shrink_exp, h_new)
+pure subroutine adjust_step_size(h, err_max, grow_exp, shrink_exp, err_grow_cap, h_new)
   real(dp), intent(in)  :: h, err_max, grow_exp, shrink_exp
+  real(dp), intent(in)  :: err_grow_cap   ! below this the growth is GROW_MAX (no power needed)
   real(dp), intent(out) :: h_new
 
   if (err_max <= 1.0) then
-    if (err_max > 1.0e-30) then
-      h_new = min(SAFETY * h * err_max**(-grow_exp), GROW_MAX * h)
-    else
+    if (err_max < err_grow_cap) then
       h_new = GROW_MAX * h
+    else
+      h_new = min(SAFETY * h * err_max**(-grow_exp), GROW_MAX * h)
     end if
   else
     h_new = max(SAFETY * h * err_max**(-shrink_exp), SHRINK_MIN * h)

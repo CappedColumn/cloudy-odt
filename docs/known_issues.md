@@ -662,7 +662,16 @@ Fortran). None changes collision counts measurably at realistic settings.
   the writeout routine — *unverified*.
 - **Found in** — `527cd7f` (`v2.0.0-1-g527cd7f`), `main`; from the output
   `git_commit` attribute of the madison SF1 runs.
-- **Status** — open, cause not yet investigated.
+- **Cause** — `parcel_height_env` starts at `0.0` (`parcel.f90:61`) and was
+  computed only in `apply_adiabatic_forcing`, the per-step routine. The first
+  output record is written in `initialize_simulation` (`initialize.f90:71`)
+  before any step, so it held the default.
+- **Status** — **fixed** on `main` (the commit that adds this line):
+  `initialize_parcel` now evaluates it for the initial pressure as soon as
+  `write_height_env` is set. Only the t = 0 value of `parcel_height_env`
+  changes (hydrostatic runs with a sounding); `[1:]` slicing is no longer
+  needed for output from this version on. `test_parcel_v3_ascent` has a check
+  that fails without the fix.
 
 ### `rdx` out-of-bounds access in the tridiagonal solver
 

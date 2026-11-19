@@ -113,6 +113,20 @@ program test_parcel_v3_ascent
     call check_true("env: parcel frozen after completion", parcel_height == z_expect)
 
     ! =======================================================================
+    ! Subtest 2a: hydrostatic mode with sounding — diagnostic set at t = 0
+    ! (the first output record is written before any step). Starts at
+    ! sounding level 2 so the expected value (1000 m) differs from the
+    ! variable's default of 0.
+    ! =======================================================================
+    call write_namelist('test_parcel_v3.nml', 'test_parcel_v3.nc', 'hydrostatic')
+    pres = env_p(2)
+    time = 0.0
+    T(:) = Tref
+    call initialize_parcel()
+    call check_true("hydro: height_env set at initialization (800 hPa -> 1000 m)", &
+                    abs(parcel_height_env - env_z(2)) < 1.0e-9)
+
+    ! =======================================================================
     ! Subtest 2: hydrostatic mode with sounding — diagnostic drift
     ! =======================================================================
     call write_namelist('test_parcel_v3.nml', 'test_parcel_v3.nc', 'hydrostatic')

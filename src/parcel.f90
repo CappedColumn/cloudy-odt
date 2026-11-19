@@ -189,6 +189,12 @@ contains
             pres = interp_profile(env_height, env_pressure, initial_height)
         end if
         write_height_env = have_sounding .and. trim(pressure_mode) == 'hydrostatic'
+        ! Evaluate the diagnostic for the initial state too: the first output
+        ! record is written before any step, which is the only other place it
+        ! is set, so it used to read 0 at t = 0.
+        if (write_height_env) then
+            parcel_height_env = interp_profile(env_pressure, env_height, pres)
+        end if
 
         call validate_legs()
 

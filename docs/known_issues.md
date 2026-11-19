@@ -211,6 +211,35 @@ errors. None applies to the default `'stokes'`.
 
 ---
 
+### Droplet growth treats every aerosol as NaCl, whatever the composition table says
+
+- **Symptom** — The growth ODE uses NaCl solute constants for every droplet.
+  `single_droplet_growth` calls `set_aerosol_properties(1, ...)` with the
+  species index hard-coded, and `set_aerosol_properties` then takes `n_ions`,
+  molar mass, and the `c7` density correction from its own internal
+  `select case` table (1 = NaCl), not from the particle's `solute_type`. The
+  composition table read from the aerosol file (`n_ions`, `molar_mass`) never
+  reaches the growth model. Only `solute_density` does, indirectly, through
+  `solute_gross_mass` and `solute_radius`.
+- **Why it bites** — The Köhler critical radius and critical supersaturation
+  (`particle_critical_kohler`) *do* use the per-type file values, so in a run
+  with a non-NaCl type the activation diagnostic and the growth physics
+  disagree about the same droplet. For ammonium sulfate the Raoult coefficient
+  `n_ions * Mw / M_s` is 2/58.44 instead of 3/132.14 per kg of solute, about
+  51% too large by that ratio. Single-species NaCl runs are unaffected, as long
+  as the file's type-1 values match the hard-coded ones. The seeding paths
+  (`grown_radius`, the equilibration loop near `droplets.f90:1144`) go through
+  the same call.
+- **Evidence** — source read only; not observed in a run. `git log -S` shows
+  the literal `1` has been there since the initial commit.
+- **Suspected location** — `src/droplets.f90:848` (the call) and
+  `src/DGM.f90:86` (the internal species table). Confirmed by source read; this
+  is the only call to `set_aerosol_properties` in `src/`.
+- **Found in** — `8d4d6fb` (`v3.1.2`), `main`; found while tracing the growth
+  path for the SoA exploration (`SOA_EXPLORATION.md`).
+- **Status** — open. Any refactor that passes DGM parameters explicitly should
+  decide this deliberately rather than carry the `1` over.
+
 ## Input/Output
 
 ### `pressure_mode = "environment"` silently launches the parcel at the surface
@@ -232,6 +261,37 @@ errors. None applies to the default `'stokes'`.
   Being examined as part of a planned hydrostatic-vs-environment comparison.
 
 ---
+
+### Aerosol species are not self-descriptive — only type 1 has a real name
+
+- **Symptom** — The aerosol input carries one global `aerosol_name` attribute
+  for the whole composition table. Type 1 gets that name; every other type is
+  named `<aerosol_name>_typeN`. A NaCl + ammonium sulfate file with
+  `aerosol_name = "NaCl"` names the sulfate `NaCl_type2`, and nothing in the
+  input or output says what type 2 actually is. The species identity lives only
+  in its `n_ions` / `molar_mass` / `solute_density` row.
+- **Why it bites** — Multi-species runs (several background types via
+  `bin_type`, or a seed type) cannot be read back without outside notes. The
+  obvious workaround of a combined name (`"NaCl+AmSul"`) makes it worse:
+  type 1 is then called `NaCl+AmSul` and type 2 `NaCl+AmSul_type2`.
+- **Two silent traps on the way in** —
+  - `codt_tools` coerces `aerosol_name` with `str(value)`
+    (`codt_tools/case/aerosol.py:617`), so passing a list writes the literal
+    string `"['NaCl', 'AmSul']"` with no error.
+  - `aerosol_name` is `character(20)` (`particle_types.f90:17`), so a long base
+    name plus the `_typeN` suffix is truncated without warning.
+- **Suspected location** — `droplets.f90 build_aerosol_table` (the naming loop)
+  and the attribute read in `read_aerosol_netcdf`. Confirmed by source read.
+  The comment there states the cause: "the v1 schema carries no per-type names."
+- **Desired behavior** — Each composition row should carry its own name, e.g. a
+  per-type `aerosol_name(aerosol_type)` string variable, written through to the
+  output so every species is identifiable from the files alone. This is a
+  schema change (`CODT_aerosol_input_v1` → v2) and needs a matching
+  `codt_tools` `Aerosol` change; keep the global attribute readable for old
+  files.
+- **Found in** — `8d4d6fb` (`v3.1.2`), `main`; found by source read while
+  configuring a two-species injection. Not observed in a run.
+- **Status** — open.
 
 ## Coding
 
@@ -700,6 +760,29 @@ Fortran). None changes collision counts measurably at realistic settings.
   wrong.** The routine had two independent correctness defects, documented in
   the next entry. The performance framing is what kept them unexamined for so
   long: the routine was read as bookkeeping, so nobody checked its arithmetic.
+
+### `ros3_integrate` heap-allocates its work arrays on every droplet call
+
+- **Symptom** — `malloc`/`free` are **29% of parcel runtime and 13% of chamber
+  runtime** (`perf`, `np-v3` build; 27% and 12% on the gcc 8.5 `release`
+  build). gprof never showed this because libc is not instrumented.
+- **Cause** — `ros3_integrate` declares ten local arrays sized by its `nvar`
+  dummy argument (`J_mat`, `W_matrix`, `f_current`, `f_stage2`, `k1`-`k3`,
+  `y_trial`, `y_err`, `y_stage`). gfortran puts runtime-sized local arrays on
+  the heap unless `-fstack-arrays` is set, so each of the ~4.3e8 droplet calls
+  in the parcel profiling case allocates and frees them. `nvar` is always 3.
+  Confirmed by `perf --call-graph dwarf`: the `malloc` samples sit directly
+  under `ros3_integrate`.
+- **Fix direction** — fixed-size (`parameter`) work arrays. Expected to be
+  bit-identical; not yet tried.
+- **Evidence** — `devCODT/profiling/archive/8d4d6fb/soa_step0/`
+  (`npv3_*`, `rel8_*`, `stacks_*`); notchpeak Xeon Gold 6130, 2026-11-13.
+  Summary in `SOA_RESULTS.md`.
+- **Suspected location** — `src/ode_integrators.f90:233`. Verified by source
+  read and call stacks.
+- **Found in** — `8d4d6fb` (`v3.1.2`), built from a `git archive` export
+  (binaries report `3.1.2-src`).
+- **Status** — cause known / unfixed.
 
 ### Droplet transport through triplet maps used the wrong map direction
 

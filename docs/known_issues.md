@@ -689,9 +689,13 @@ Fortran). None changes collision counts measurably at realistic settings.
   arrays") and `0e070e2` ("Added (ghost) point to top of nondimensional scalar
   arrays"), so it is present on every commit from `0e070e2` forward — including
   current `527cd7f`. Not tied to a specific simulation run.
-- **Status** — open. Reported from an earlier debugging session; the fix looks
-  mechanical but should be confirmed against the ghost-point commit and covered
-  by a reftest before being applied.
+- **Status** — **fixed** on `main` (the commit that adds this line): `rdx` is
+  declared `rdx(N+1)`. Checked against the caller: `diffuse_scalar` builds an
+  (N+1)-point system (`l`, `d`, `r`, `xsc` are all `N+1`), the forward loop
+  writes `rdx(2:N+1)` and the back substitution reads `rdx(N+1)` for `ui(N)`,
+  the cell below the top boundary. Whether release output changes depends on
+  whether anything reused the stack slot past `rdx` between that write and
+  read; to be measured by an A/B reftest against the commit before.
 
 ### Eddy-particle movement (`move_particles_in_eddy`) is ~90% of parcel runtime
 

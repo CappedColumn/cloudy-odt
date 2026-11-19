@@ -553,7 +553,7 @@ contains
         real(dp), intent(in) :: l(:), d(:), r(:)  ! sub-, main-, super-diagonals
         real(dp), intent(in) :: xui(:)            ! right-hand side
         real(dp), intent(inout) :: ui(:)          ! solution, written in place
-        real(dp) :: b, rdx(N)                     ! running pivot; super-diag/pivot ratios
+        real(dp) :: b, rdx(N+1)                   ! running pivot; super-diag/pivot ratios (2..N+1 used)
         integer(i4) :: k
 
         b = d(1)

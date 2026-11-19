@@ -171,8 +171,8 @@ end subroutine integrate_ODE
 ! The supersaturation driving growth comes from the module-level ode_supersat,
 ! not from y(2).  y(2) evolves via mass conservation with the gridcell.
 ! ==========================================================================
-pure subroutine growth_rhs(t, y, dydt, ierr)
-  real(dp),    intent(in)  :: t
+pure subroutine growth_rhs(ltime, y, dydt, ierr)
+  real(dp),    intent(in)  :: ltime   ! time [s]; unused (autonomous ODE), required by ode_rhs
   real(dp),    intent(in)  :: y(:)
   real(dp),    intent(out) :: dydt(:)
   integer(i4), intent(out) :: ierr
@@ -262,8 +262,8 @@ end subroutine growth_rhs
 !
 ! Uses module-level aerosol state set by set_aerosol_properties.
 ! ==========================================================================
-pure subroutine growth_jacobian(t, y, jac)
-  real(dp), intent(in)  :: t
+pure subroutine growth_jacobian(ltime, y, jac)
+  real(dp), intent(in)  :: ltime   ! time [s]; unused (autonomous ODE)
   real(dp), intent(in)  :: y(:)
   real(dp), intent(out) :: jac(:,:)
 
@@ -468,8 +468,8 @@ end subroutine growth_jacobian
 ! point.  Avoids the redundant recomputation that separate growth_rhs +
 ! growth_jacobian calls would perform.
 ! ==========================================================================
-pure subroutine growth_rhs_jac(t, y, dydt, jac, ierr)
-  real(dp),    intent(in)  :: t
+pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
+  real(dp),    intent(in)  :: ltime   ! time [s]; unused (autonomous ODE), required by ode_rhs_jac
   real(dp),    intent(in)  :: y(:)
   real(dp),    intent(out) :: dydt(:)
   real(dp),    intent(out) :: jac(:,:)

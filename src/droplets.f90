@@ -148,7 +148,8 @@ contains
             call move_particles_by_gravity(particles, ldt)
         end if
 
-        call update_all_particles(particles, T, WV, Tv, SS)
+        ! droplet_growth_model refreshes each droplet from its cell (update_particle)
+        ! just before growing it, so no separate refresh pass is needed here.
         call droplet_growth_model(particles, ltime, ldt)
 
     end subroutine update_droplets
@@ -893,30 +894,6 @@ contains
 
     end subroutine update_scalar_fields_DGM
 
-    subroutine update_all_particles(lparticles, lT, lWV, lTv, lSS)
-        ! Controller subroutine to update particle properties based on the local properties
-        ! of the gridcell. Called after any positional updates to the particles.
-        !
-        ! Input:
-        ! lparticles - array of particle types
-        ! lT - temperature at each gridcell, C
-        ! lWV - water vapor content at each gridcell, kg/kg
-        ! lTv - virtual temperature at each gridcell, C
-        ! lSS - supersaturation at each gridcell, %
-        !
-        ! Output:
-        ! lparticles - array of particle types with updated properties
-        type(particle), intent(inout) :: lparticles(:)
-        real(dp), intent(in) :: lT(:), lWV(:), lTv(:), lSS(:)
-        integer :: i, idx
-
-        do i = 1, current_n_particles
-            idx = lparticles(i)%gridcell
-            call lparticles(i)%update_scalars(lT(idx), lWV(idx), lTv(idx), lSS(idx))
-            call lparticles(i)%verify_activation
-        end do
-
-    end subroutine update_all_particles
 
     subroutine update_particle(lparticle)
         ! Adjust particle properties to its local grid box

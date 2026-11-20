@@ -918,7 +918,7 @@ between each droplet and the thermodynamic history of the air around it.
 - **Status** — **fixed in `a760c51`** (LEM/EMPM slice 1, "Unify droplet eddy
   transport for LEM and ODT; fix map direction"; released in v3.0.0).
 
-### DGM growth equations are written out three times
+### ~~DGM growth equations are written out three times~~
 
 - **Symptom** — `growth_rhs`, `growth_jacobian` and `growth_rhs_jac` in
   `src/DGM.f90` each compute the same thermodynamic intermediates (Lv, K, Dv,
@@ -942,7 +942,20 @@ between each droplet and the thermodynamic history of the air around it.
   and compare runtimes.
 - **Found in** — `cb0c5a1` (`v3.2.2`), branch
   `feature/kinetic-correction-switch`; found by source read.
-- **Status** — open.
+- **Status** — **fixed** on `main` (the commit that adds this line).
+  `growth_jacobian` is deleted. `growth_terms` (private, pure) computes the
+  shared terms once into a `growth_terms_t`, and `growth_tendencies` builds
+  dydt; `growth_rhs` and `growth_rhs_jac` both call them, and the derivative
+  code in `growth_rhs_jac` is unchanged (it reads the shared terms through
+  `associate`). Checked bit-identical before/after on 542 states (grid of
+  radius, S, T, dry size, kinetic on/off, plus the evaporation limiter and the
+  guarded state) under the debug and release profiles; np-v3 to be checked by
+  A/B reftest. Note: gfortran does **not** inline `growth_terms` (release:
+  called from 3 sites, `growth_tendencies` inlined; np-v3: neither inlined),
+  so the A/B also measures the cost of the extra call. If it matters, the
+  fallback is a textual `include` of the shared block in both routines.
+  `test_kinetic_correction` now checks that `growth_rhs_jac`'s dydt equals
+  `growth_rhs` bit for bit.
 
 ---
 

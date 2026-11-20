@@ -10,12 +10,12 @@ program test_kinetic_correction
     !     50 nm dry particle) to 200 um the off/on ratio equals the expected
     !     D_on / D_off. That check uses the same property formulas as DGM, so
     !     it catches coding errors in the switch, not errors in the formulas.
-    !   - in both modes the analytic Jacobians (growth_jacobian and
-    !     growth_rhs_jac) match central finite differences of growth_rhs in
-    !     the radius and temperature columns
+    !   - in both modes the analytic Jacobian of growth_rhs_jac matches central
+    !     finite differences of growth_rhs in the radius and temperature
+    !     columns, and its dydt equals growth_rhs bit for bit
     use globals, only: dp, i4, pi, pi_43, pres, domain_width, H, N, Rd, Rv, cv, Tice
     use microphysics, only: saturation_vapor_pressure
-    use DGM, only: set_aerosol_properties, growth_rhs, growth_jacobian, growth_rhs_jac, &
+    use DGM, only: set_aerosol_properties, growth_rhs, growth_rhs_jac, &
                    do_kinetic_correction
     implicit none
 
@@ -164,7 +164,7 @@ contains
         real(dp), parameter :: radii(5) = [0.1, 0.3, 1.0, 5.0, 30.0] * um
         real(dp), parameter :: ss_values(2) = [0.005, -0.05]
         real(dp) :: ly(3), lyp(3), lym(3), lfp(3), lfm(3), ldydt(3)
-        real(dp) :: ljac_a(3, 3), ljac_f(3, 3), lfd(3, 3), lstep, lerr_a, lerr_f
+        real(dp) :: ldydt_rhs(3), ljac_f(3, 3), lfd(3, 3), lstep, lerr_f
         integer(i4) :: lierr
         integer :: i, j, col
         character(100) :: label
@@ -188,15 +188,14 @@ contains
                     lfd(:, col) = (lfp - lfm) / (2.0 * lstep)
                 end do
 
-                call growth_jacobian(t0, ly, ljac_a)
+                call growth_rhs(t0, ly, ldydt_rhs, lierr)
                 call growth_rhs_jac(t0, ly, ldydt, ljac_f, lierr)
 
-                lerr_a = max_rel_err(ljac_a, lfd)
                 lerr_f = max_rel_err(ljac_f, lfd)
 
                 write(label, '(a,l1,a,f5.1,a,f6.3,a)') 'kinetic=', lkinetic, ' r=', radii(i) / um, &
-                    ' um S=', 100.0 * ss_values(j), ' %: growth_jacobian matches FD'
-                call check(lerr_a < jac_rtol, trim(label), lerr_a)
+                    ' um S=', 100.0 * ss_values(j), ' %: growth_rhs_jac dydt == growth_rhs'
+                call check(all(ldydt == ldydt_rhs), trim(label))
                 write(label, '(a,l1,a,f5.1,a,f6.3,a)') 'kinetic=', lkinetic, ' r=', radii(i) / um, &
                     ' um S=', 100.0 * ss_values(j), ' %: growth_rhs_jac matches FD'
                 call check(lerr_f < jac_rtol, trim(label), lerr_f)

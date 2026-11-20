@@ -1,12 +1,13 @@
 program test_jac_magnitudes
   use globals
   use microphysics, only: saturation_vapor_pressure
-  use DGM, only: set_aerosol_properties, growth_jacobian
+  use DGM, only: set_aerosol_properties, growth_rhs_jac
   implicit none
 
   integer, parameter :: n_cases = 12
   real(dp) :: r_sol, sol_mass, es_val, qv_sat
-  real(dp) :: y(3), jac(3,3)
+  real(dp) :: y(3), jac(3,3), dydt(3)
+  integer(i4) :: ierr
   real(dp) :: inv_grid_mass, grid_rho, grid_mass
   integer :: i, j, k
 
@@ -46,7 +47,7 @@ program test_jac_magnitudes
     y(2) = qv_sat * (1.0 + ss_vals(k))
     y(3) = 280.0
 
-    call growth_jacobian(0.0_dp, y, jac)
+    call growth_rhs_jac(0.0_dp, y, dydt, jac, ierr)
 
     write(*,'(/,A)') trim(labels(k))
     write(*,'(A)') "            dr           dqv          dT"

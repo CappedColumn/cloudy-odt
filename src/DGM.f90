@@ -21,7 +21,7 @@ module DGM
 
   private
   public :: integrate_ODE, set_aerosol_properties
-  public :: growth_rhs, growth_jacobian, growth_rhs_jac
+  public :: growth_rhs, growth_rhs_jac
   public :: growth_rate, critical_radius
   public :: do_kinetic_correction
 
@@ -64,6 +64,26 @@ module DGM
   ! ---- Default ODE tolerances ----
   real(dp) :: ode_rtol(nvar) = [1.0e-4, 1.0e-4, 1.0e-4]
   real(dp) :: ode_atol(nvar) = [1.0e-10, 1.0e-10, 1.0e-10]
+
+  ! Quantities shared by growth_rhs and growth_rhs_jac at one state, filled
+  ! by growth_terms. Written once so the RHS and the Jacobian cannot drift.
+  type :: growth_terms_t
+    real(dp) :: r, qv, temp          ! radius (floored at r_floor) [m], mixing ratio [kg/kg], T [K]
+    real(dp) :: r2, r3               ! r**2, r**3
+    real(dp) :: cp_moist             ! moist heat capacity [J/(kg K)]
+    real(dp) :: latent_heat          ! Lv [J/kg]
+    real(dp) :: thermal_cond         ! K [W/(m K)]
+    real(dp) :: vapor_diff           ! Dv [m2/s]
+    real(dp) :: es                   ! saturation vapor pressure [Pa]
+    real(dp) :: jump_th, jump_vp     ! kinetic jump lengths [m] (0 when the correction is off)
+    real(dp) :: vent_th, vent_vp     ! kinetic factors r/(r + jump) (1 when off)
+    real(dp) :: rho_sol              ! solution density [kg/m3]
+    real(dp) :: kelvin_term, raoult_term
+    real(dp) :: denom_water          ! water mass term of the Raoult denominator
+    real(dp) :: ss_eff               ! S - Kelvin + Raoult
+    real(dp) :: diff_denom           ! diffusion resistance D
+    real(dp) :: drdt                 ! dr/dt = (1/r) ss_eff / D [m/s]
+  end type growth_terms_t
 
 
 contains
@@ -186,87 +206,122 @@ pure subroutine growth_rhs(ltime, y, dydt, ierr)
   real(dp),    intent(out) :: dydt(:)
   integer(i4), intent(out) :: ierr
 
-  real(dp) :: radius, qv, temp
-  real(dp) :: es
-  real(dp) :: cp_moist, latent_heat, thermal_cond, vapor_diff
-  real(dp) :: jump_thermal, jump_vapor
-  real(dp) :: vent_thermal, vent_vapor
-  real(dp) :: solution_density
-  real(dp) :: kelvin, raoult, diffusion_denom
+  type(growth_terms_t) :: lterms
 
-  radius = max(y(1), r_floor)
-  qv     = y(2)
-  temp   = y(3)
-
-  ! Guard against unphysical state
-  if (qv < 0.0 .or. temp > 320.0 .or. temp < 193.0) then
-    ierr = 1
+  call growth_terms(y, lterms, ierr)
+  if (ierr /= 0) then
     dydt = 0.0
     return
   end if
-
-  ierr = 0
-
-  ! Thermodynamic properties
-  cp_moist    = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
-  latent_heat = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6        ! [J/kg]
-  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399                 ! [W/(m·K)]
-  vapor_diff  = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres  ! [m²/s]
-
-  es = esat(temp)
-
-  ! Kinetic correction: mean free path jump lengths (Fukuta & Walter 1970)
-  if (do_kinetic_correction) then
-    jump_thermal = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-                 / (thermal_accom * pres * (cv + Rd / 2.0))
-    jump_vapor   = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-    ! Ventilation coefficients (transition regime correction)
-    vent_thermal = radius / (radius + jump_thermal)
-    vent_vapor   = radius / (radius + jump_vapor)
-  else
-    jump_thermal = 0.0
-    jump_vapor   = 0.0
-    ! Ventilation coefficients (transition regime correction)
-    vent_thermal = 1.0
-    vent_vapor   = 1.0
-  end if
-
-  ! Solution density: accounts for dissolved solute volume
-  solution_density = (radius**3 * pi_43 * rho_l + solute_c7) / (radius**3 * pi_43)
-
-  ! Köhler equilibrium terms
-  kelvin = 2.0 * sigma_w / (Rv * temp * solution_density * radius)
-  raoult = raoult_coeff / (pi_43 * radius**3 * solution_density - solute_mass)
-
-  ! Thermodynamic diffusion resistance
-  diffusion_denom = solution_density &
-    * (Rv * temp / (vent_vapor * vapor_diff * es) &
-     + latent_heat**2 / (vent_thermal * thermal_cond * Rv * temp**2))
-
-  ! Radius tendency: dr/dt = (1/r) * (S - Kelvin + Raoult) / D
-  dydt(1) = (1.0 / radius) * (ode_supersat - kelvin + raoult) / diffusion_denom
-
-  ! Vapor tendency: mass conservation with gridcell
-  dydt(2) = -flux_coeff * radius**2 * dydt(1)
-
-  ! Limit evaporation to available vapor
-  if (dydt(2) < 0.0 .and. abs(dydt(2)) > qv) then
-    dydt(2) = -qv
-    dydt(1) = -dydt(2) / (flux_coeff * radius**2)
-  end if
-
-  ! Temperature tendency: latent heating
-  dydt(3) = -latent_heat / cp_moist * dydt(2)
+  call growth_tendencies(lterms, dydt)
 
 end subroutine growth_rhs
 
 
 ! ==========================================================================
-! Analytical Jacobian of growth_rhs: jac(i,j) = d(dydt_i)/d(y_j).
+! Quantities shared by growth_rhs and growth_rhs_jac at state y: properties,
+! kinetic factors, solution density, Köhler terms, diffusion resistance and
+! dr/dt = (1/r) * (S - Kelvin + Raoult) / D.
 !
-! Differentiates the unconstrained growth equations (ignores the vapor
-! limiter branch, which is non-smooth; the Jacobian is correct whenever
-! the limiter is inactive).
+! Private, in this module, so the compiler can inline it into both callers.
+! ierr = 1 (and lterms undefined) for an unphysical state.
+! ==========================================================================
+pure subroutine growth_terms(y, lterms, ierr)
+  real(dp),             intent(in)  :: y(:)
+  type(growth_terms_t), intent(out) :: lterms
+  integer(i4),          intent(out) :: ierr
+
+  lterms%r    = max(y(1), r_floor)
+  lterms%qv   = y(2)
+  lterms%temp = y(3)
+
+  ! Guard against unphysical state
+  if (lterms%qv < 0.0 .or. lterms%temp > 320.0 .or. lterms%temp < 193.0) then
+    ierr = 1
+    return
+  end if
+
+  ierr = 0
+
+  associate (r => lterms%r, qv => lterms%qv, temp => lterms%temp)
+
+    lterms%r2 = r * r
+    lterms%r3 = lterms%r2 * r
+
+    ! Thermodynamic properties
+    lterms%cp_moist     = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
+    lterms%latent_heat  = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6               ! [J/kg]
+    lterms%thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399                        ! [W/(m·K)]
+    lterms%vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres     ! [m²/s]
+    lterms%es = esat(temp)
+
+    ! Kinetic correction: mean free path jump lengths (Fukuta & Walter 1970)
+    if (do_kinetic_correction) then
+      lterms%jump_th = lterms%thermal_cond * sqrt(2.0 * pi * Rd * temp) &
+                / (thermal_accom * pres * (cv + Rd / 2.0))
+      lterms%jump_vp = sqrt(2.0 * pi / (Rv * temp)) * lterms%vapor_diff / condensation_eff
+      lterms%vent_th = r / (r + lterms%jump_th)
+      lterms%vent_vp = r / (r + lterms%jump_vp)
+    else
+      lterms%jump_th = 0.0
+      lterms%jump_vp = 0.0
+      lterms%vent_th = 1.0
+      lterms%vent_vp = 1.0
+    end if
+
+    ! Solution density: accounts for dissolved solute volume
+    lterms%rho_sol = (lterms%r3 * pi_43 * rho_l + solute_c7) / (lterms%r3 * pi_43)
+
+    ! Köhler equilibrium terms
+    lterms%kelvin_term = 2.0 * sigma_w / (Rv * temp * lterms%rho_sol * r)
+    lterms%denom_water = pi_43 * lterms%r3 * lterms%rho_sol - solute_mass
+    lterms%raoult_term = raoult_coeff / lterms%denom_water
+
+    ! Effective supersaturation and thermodynamic diffusion resistance
+    lterms%ss_eff = ode_supersat - lterms%kelvin_term + lterms%raoult_term
+    lterms%diff_denom = lterms%rho_sol &
+      * (Rv * temp / (lterms%vent_vp * lterms%vapor_diff * lterms%es) &
+       + lterms%latent_heat**2 / (lterms%vent_th * lterms%thermal_cond * Rv * temp**2))
+
+    ! Radius tendency
+    lterms%drdt = (1.0 / r) * lterms%ss_eff / lterms%diff_denom
+
+  end associate
+
+end subroutine growth_terms
+
+
+! ==========================================================================
+! dydt from the shared terms: dr/dt, vapor from mass conservation with the
+! gridcell (limited to the vapor available), and latent heating.
+! ==========================================================================
+pure subroutine growth_tendencies(lterms, dydt)
+  type(growth_terms_t), intent(in)  :: lterms
+  real(dp),             intent(out) :: dydt(:)
+
+  dydt(1) = lterms%drdt
+  dydt(2) = -flux_coeff * lterms%r2 * lterms%drdt
+
+  ! Limit evaporation to available vapor
+  if (dydt(2) < 0.0 .and. abs(dydt(2)) > lterms%qv) then
+    dydt(2) = -lterms%qv
+    dydt(1) = -dydt(2) / (flux_coeff * lterms%r2)
+  end if
+
+  ! Temperature tendency: latent heating
+  dydt(3) = -lterms%latent_heat / lterms%cp_moist * dydt(2)
+
+end subroutine growth_tendencies
+
+
+! ==========================================================================
+! RHS and analytical Jacobian at the same state: dydt as growth_rhs, and
+! jac(i,j) = d(dydt_i)/d(y_j). Called by ros3_integrate at stage 1, where
+! both are needed; the shared terms come from growth_terms.
+!
+! The Jacobian differentiates the unconstrained growth equations (ignores
+! the vapor limiter branch, which is non-smooth; the Jacobian is correct
+! whenever the limiter is inactive).
 !
 ! The core quantity is dr/dt = (1/r) * SS_eff / D, where:
 !   SS_eff = S_ambient - Kelvin(r,T) + Raoult(r)
@@ -278,20 +333,15 @@ end subroutine growth_rhs
 !
 ! Uses module-level aerosol state set by set_aerosol_properties.
 ! ==========================================================================
-pure subroutine growth_jacobian(ltime, y, jac)
-  real(dp), intent(in)  :: ltime   ! time [s]; unused (autonomous ODE)
-  real(dp), intent(in)  :: y(:)
-  real(dp), intent(out) :: jac(:,:)
+pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
+  real(dp),    intent(in)  :: ltime   ! time [s]; unused (autonomous ODE), required by ode_rhs_jac
+  real(dp),    intent(in)  :: y(:)
+  real(dp),    intent(out) :: dydt(:)
+  real(dp),    intent(out) :: jac(:,:)
+  integer(i4), intent(out) :: ierr
 
-  ! State
-  real(dp) :: r, qv, temp
-  real(dp) :: r2, r3, r4
-
-  ! Base quantities (shared by forward and derivative calculations)
-  real(dp) :: es, cp_moist, latent_heat, thermal_cond, vapor_diff
-  real(dp) :: jump_th, jump_vp, vent_th, vent_vp
-  real(dp) :: rho_sol, kelvin_term, raoult_term, denom_water
-  real(dp) :: ss_eff, diff_denom, drdt
+  type(growth_terms_t) :: lterms
+  real(dp) :: r4
 
   ! --- Derivatives w.r.t. radius ---
   real(dp) :: d_rho_dr                        ! d(rho_sol)/dr
@@ -310,59 +360,26 @@ pure subroutine growth_jacobian(ltime, y, jac)
   real(dp) :: d_drdt_dt                       ! d(dr/dt)/dT
 
   ! =====================================================================
-  ! Unpack state
+  ! Shared terms and the RHS
   ! =====================================================================
-  r    = max(y(1), r_floor)
-  qv   = y(2)
-  temp = y(3)
-
-  r2 = r * r
-  r3 = r2 * r
-  r4 = r3 * r
-
-  ! =====================================================================
-  ! Base quantities (needed by both forward evaluation and derivatives)
-  ! =====================================================================
-
-  ! Thermodynamic properties
-  cp_moist     = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
-  latent_heat  = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
-  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399
-  vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
-  es = esat(temp)
-
-  ! Kinetic jump lengths (Fukuta & Walter 1970)
-  if (do_kinetic_correction) then
-    jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-            / (thermal_accom * pres * (cv + Rd / 2.0))
-    jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-    ! Ventilation coefficients
-    vent_th = r / (r + jump_th)
-    vent_vp = r / (r + jump_vp)
-  else
-    jump_th = 0.0
-    jump_vp = 0.0
-    ! Ventilation coefficients
-    vent_th = 1.0
-    vent_vp = 1.0
+  call growth_terms(y, lterms, ierr)
+  if (ierr /= 0) then
+    dydt = 0.0
+    jac  = 0.0
+    return
   end if
+  call growth_tendencies(lterms, dydt)
 
-  ! Solution density
-  rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
+  ! The derivative code below uses the shared terms under their usual names
+  associate (r => lterms%r, r2 => lterms%r2, r3 => lterms%r3, qv => lterms%qv, temp => lterms%temp, &
+             cp_moist => lterms%cp_moist, latent_heat => lterms%latent_heat, &
+             thermal_cond => lterms%thermal_cond, vapor_diff => lterms%vapor_diff, es => lterms%es, &
+             jump_th => lterms%jump_th, jump_vp => lterms%jump_vp, &
+             vent_th => lterms%vent_th, vent_vp => lterms%vent_vp, rho_sol => lterms%rho_sol, &
+             denom_water => lterms%denom_water, ss_eff => lterms%ss_eff, &
+             diff_denom => lterms%diff_denom, drdt => lterms%drdt)
 
-  ! Köhler terms
-  kelvin_term = 2.0 * sigma_w / (Rv * temp * rho_sol * r)
-  denom_water = pi_43 * r3 * rho_sol - solute_mass
-  raoult_term = raoult_coeff / denom_water
-
-  ! Effective supersaturation and diffusion denominator
-  ss_eff = ode_supersat - kelvin_term + raoult_term
-  diff_denom = rho_sol &
-    * (Rv * temp / (vent_vp * vapor_diff * es) &
-     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2))
-
-  ! Forward growth rate
-  drdt = (1.0 / r) * ss_eff / diff_denom
+  r4 = r3 * r
 
   ! =====================================================================
   ! Derivatives w.r.t. radius (r)
@@ -490,204 +507,7 @@ pure subroutine growth_jacobian(ltime, y, jac)
   jac(3,3) = -(latent_heat / cp_moist) * jac(2,3) &
            - (d_lv_dt / cp_moist) * (-flux_coeff * r2 * drdt)
 
-end subroutine growth_jacobian
-
-
-! ==========================================================================
-! Fused RHS + Jacobian: computes both dydt and jac at the same (t, y),
-! sharing all thermodynamic intermediates (esat, Lv, K, Dv, jump lengths,
-! ventilation, Köhler terms, diffusion denominator).
-!
-! Called by ros3_integrate at Stage 1 where both are needed at the same
-! point.  Avoids the redundant recomputation that separate growth_rhs +
-! growth_jacobian calls would perform.
-! ==========================================================================
-pure subroutine growth_rhs_jac(ltime, y, dydt, jac, ierr)
-  real(dp),    intent(in)  :: ltime   ! time [s]; unused (autonomous ODE), required by ode_rhs_jac
-  real(dp),    intent(in)  :: y(:)
-  real(dp),    intent(out) :: dydt(:)
-  real(dp),    intent(out) :: jac(:,:)
-  integer(i4), intent(out) :: ierr
-
-  ! State
-  real(dp) :: r, qv, temp
-  real(dp) :: r2, r3, r4
-
-  ! Shared intermediates (used by both RHS and Jacobian)
-  real(dp) :: es, cp_moist, latent_heat, thermal_cond, vapor_diff
-  real(dp) :: jump_th, jump_vp, vent_th, vent_vp
-  real(dp) :: rho_sol, kelvin_term, raoult_term, denom_water
-  real(dp) :: ss_eff, diff_denom, drdt
-
-  ! Derivatives w.r.t. radius
-  real(dp) :: d_rho_dr
-  real(dp) :: d_vth_dr, d_vvp_dr
-  real(dp) :: d_kelvin_dr, d_raoult_dr
-  real(dp) :: d_diff_dr, d_drdt_dr
-
-  ! Derivatives w.r.t. temperature
-  real(dp) :: des_dt_val
-  real(dp) :: d_lv_dt, d_k_dt, d_dv_dt
-  real(dp) :: d_jth_dt, d_jvp_dt, d_vth_dt, d_vvp_dt
-  real(dp) :: d_kelvin_dt, d_diff_dt, d_drdt_dt
-
-  ! =====================================================================
-  ! Unpack state
-  ! =====================================================================
-  r    = max(y(1), r_floor)
-  qv   = y(2)
-  temp = y(3)
-
-  if (qv < 0.0 .or. temp > 320.0 .or. temp < 193.0) then
-    ierr = 1
-    dydt = 0.0
-    jac  = 0.0
-    return
-  end if
-
-  ierr = 0
-
-  r2 = r * r
-  r3 = r2 * r
-  r4 = r3 * r
-
-  ! =====================================================================
-  ! Shared intermediates (computed once, used by both RHS and Jacobian)
-  ! =====================================================================
-
-  cp_moist     = cp * ((1.0 + cp_wv / cp * qv) / (1.0 + qv))
-  latent_heat  = (2.501 - 0.00237 * (temp - Tice)) * 1.0e6
-  thermal_cond = 7.7e-5 * (temp - Tice) + 0.02399
-  vapor_diff   = (1.57e-7 * (temp - Tice) + 2.211e-5) * 1.0e5 / pres
-  es = esat(temp)
-
-  if (do_kinetic_correction) then
-    jump_th = thermal_cond * sqrt(2.0 * pi * Rd * temp) &
-            / (thermal_accom * pres * (cv + Rd / 2.0))
-    jump_vp = sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / condensation_eff
-    vent_th = r / (r + jump_th)
-    vent_vp = r / (r + jump_vp)
-  else
-    jump_th = 0.0
-    jump_vp = 0.0
-    vent_th = 1.0
-    vent_vp = 1.0
-  end if
-
-  rho_sol = (r3 * pi_43 * rho_l + solute_c7) / (r3 * pi_43)
-
-  kelvin_term = 2.0 * sigma_w / (Rv * temp * rho_sol * r)
-  denom_water = pi_43 * r3 * rho_sol - solute_mass
-  raoult_term = raoult_coeff / denom_water
-
-  ss_eff = ode_supersat - kelvin_term + raoult_term
-  diff_denom = rho_sol &
-    * (Rv * temp / (vent_vp * vapor_diff * es) &
-     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2))
-
-  drdt = (1.0 / r) * ss_eff / diff_denom
-
-  ! =====================================================================
-  ! RHS output
-  ! =====================================================================
-  dydt(1) = drdt
-  dydt(2) = -flux_coeff * r2 * drdt
-
-  if (dydt(2) < 0.0 .and. abs(dydt(2)) > qv) then
-    dydt(2) = -qv
-    dydt(1) = -dydt(2) / (flux_coeff * r2)
-  end if
-
-  dydt(3) = -latent_heat / cp_moist * dydt(2)
-
-  ! =====================================================================
-  ! Jacobian: derivatives w.r.t. radius
-  ! =====================================================================
-  d_rho_dr = -3.0 * solute_c7 / (pi_43 * r4)
-
-  if (do_kinetic_correction) then
-    d_vth_dr = jump_th / (r + jump_th)**2
-    d_vvp_dr = jump_vp / (r + jump_vp)**2
-  else
-    d_vth_dr = 0.0
-    d_vvp_dr = 0.0
-  end if
-
-  d_kelvin_dr = -2.0 * sigma_w * (rho_sol + r * d_rho_dr) &
-              / (Rv * temp * (rho_sol * r)**2)
-  d_raoult_dr = -raoult_coeff * (3.0 * pi_43 * r2 * rho_sol + pi_43 * r3 * d_rho_dr) &
-              / denom_water**2
-
-  d_diff_dr = d_rho_dr &
-    * (Rv * temp / (vent_vp * vapor_diff * es) &
-     + latent_heat**2 / (vent_th * thermal_cond * Rv * temp**2)) &
-    + rho_sol &
-    * (-Rv * temp * d_vvp_dr / (vent_vp**2 * vapor_diff * es) &
-     - latent_heat**2 * d_vth_dr / (vent_th**2 * thermal_cond * Rv * temp**2))
-
-  d_drdt_dr = (-1.0 / r2) * ss_eff / diff_denom &
-            + (1.0 / r) * (-d_kelvin_dr + d_raoult_dr) / diff_denom &
-            - (1.0 / r) * ss_eff * d_diff_dr / diff_denom**2
-
-  ! =====================================================================
-  ! Jacobian: derivatives w.r.t. temperature
-  ! =====================================================================
-  des_dt_val = desat_dT(temp)
-  d_lv_dt = -0.00237e6
-  d_k_dt  = 7.7e-5
-  d_dv_dt = 1.57e-7 * 1.0e5 / pres
-
-  if (do_kinetic_correction) then
-    d_jth_dt = (d_k_dt * sqrt(2.0 * pi * Rd * temp) &
-             + thermal_cond * pi * Rd / sqrt(2.0 * pi * Rd * temp)) &
-             / (thermal_accom * pres * (cv + Rd / 2.0))
-    d_jvp_dt = -0.5 * sqrt(2.0 * pi / (Rv * temp)) * vapor_diff / (condensation_eff * temp) &
-             + sqrt(2.0 * pi / (Rv * temp)) * d_dv_dt / condensation_eff
-    d_vth_dt = -r * d_jth_dt / (r + jump_th)**2
-    d_vvp_dt = -r * d_jvp_dt / (r + jump_vp)**2
-  else
-    d_jth_dt = 0.0
-    d_jvp_dt = 0.0
-    d_vth_dt = 0.0
-    d_vvp_dt = 0.0
-  end if
-
-  d_kelvin_dt = -2.0 * sigma_w / (Rv * temp**2 * rho_sol * r)
-
-  d_diff_dt = rho_sol * ( &
-    (Rv * vent_vp * vapor_diff * es &
-     - Rv * temp * (d_vvp_dt * vapor_diff * es + vent_vp * d_dv_dt * es &
-                  + vent_vp * vapor_diff * des_dt_val)) &
-    / (vent_vp * vapor_diff * es)**2 &
-    + (2.0 * latent_heat * d_lv_dt * vent_th * thermal_cond * Rv * temp**2 &
-     - latent_heat**2 * (d_vth_dt * thermal_cond * Rv * temp**2 &
-              + vent_th * d_k_dt * Rv * temp**2 &
-              + vent_th * thermal_cond * Rv * 2.0 * temp)) &
-    / (vent_th * thermal_cond * Rv * temp**2)**2 )
-
-  d_drdt_dt = (1.0 / r) * (-d_kelvin_dt / diff_denom &
-            - ss_eff * d_diff_dt / diff_denom**2)
-
-  ! =====================================================================
-  ! Assemble Jacobian
-  ! =====================================================================
-
-  ! Column 1: d(f)/dr
-  jac(1,1) = d_drdt_dr
-  jac(2,1) = -flux_coeff * (2.0 * r * drdt + r2 * d_drdt_dr)
-  jac(3,1) = -(latent_heat / cp_moist) * jac(2,1)
-
-  ! Column 2: d(f)/dqv
-  jac(1,2) = 0.0
-  jac(2,2) = 0.0
-  jac(3,2) = -(latent_heat / cp_moist**2) * flux_coeff * r2 * drdt &
-           * (cp_wv - cp) / (1.0 + qv)**2
-
-  ! Column 3: d(f)/dT
-  jac(1,3) = d_drdt_dt
-  jac(2,3) = -flux_coeff * r2 * d_drdt_dt
-  jac(3,3) = -(latent_heat / cp_moist) * jac(2,3) &
-           - (d_lv_dt / cp_moist) * (-flux_coeff * r2 * drdt)
+  end associate
 
 end subroutine growth_rhs_jac
 

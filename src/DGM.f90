@@ -14,6 +14,7 @@
 ! composition from the droplet's aerosol type, derived coefficients) via
 ! set_aerosol_properties, which must be called before each integration.
 module DGM
+  use iso_fortran_env, only: int64
   use globals
   use ode_integrators, only: ode_rhs, ros3_integrate
 
@@ -170,9 +171,48 @@ subroutine integrate_ODE(y, t_start, t_end, h_last, stat, rtol, atol)
     write(error_unit,*) 'DGM ODE integration failed, ierr = ', ierr
     write(error_unit,*) '  radius=', y(1), ' qv=', y(2), ' T=', y(3)
     call exit(1)
+  else if (ierr > 0) then
+    call warn_rhs_failure(ierr, y, t_start, t_end)
   end if
 
 end subroutine integrate_ODE
+
+
+! ==========================================================================
+! Report a growth step cut short by an RHS failure (ierr > 0).
+!
+! growth_terms flags an unphysical state (qv < 0 or T outside 193-320 K).
+! When that happens at a ROS3 trial stage, ros3_integrate returns at once:
+! the droplet keeps its last accepted state and the rest of [t_start, t_end]
+! is skipped. Behaviour is unchanged here; this only makes it visible in the
+! log (see docs/known_issues.md, "A failed growth RHS silently truncates the
+! droplet's growth step"). The first n_warn_full occurrences are printed in
+! full, then one line every n_warn_every with the running count.
+! ==========================================================================
+subroutine warn_rhs_failure(lierr, ly, lt_start, lt_end)
+  integer(i4), intent(in) :: lierr
+  real(dp),    intent(in) :: ly(nvar)            ! last accepted state [r, qv, T]
+  real(dp),    intent(in) :: lt_start, lt_end    ! requested interval [s]
+
+  integer, parameter :: n_warn_full = 10, n_warn_every = 1000
+  integer(int64), save :: n_rhs_failures = 0
+
+  n_rhs_failures = n_rhs_failures + 1
+  if (n_rhs_failures <= n_warn_full) then
+    write(*,'(a,i0,a,i0,a)') ' WARNING: droplet growth step cut short (RHS ierr = ', lierr, &
+      ', occurrence ', n_rhs_failures, '): unphysical state at a ROS3 stage (qv < 0 or T outside 193-320 K)'
+    write(*,'(a,es12.5,a,es12.5,a,es11.4,a,es11.4,a,f8.3,a)') '   interval t = ', lt_start, &
+      ' to ', lt_end, ' s; droplet keeps last accepted state r = ', ly(1), ' m, qv = ', ly(2), &
+      ' kg/kg, T = ', ly(3), ' K'
+    if (n_rhs_failures == n_warn_full) then
+      write(*,'(a,i0,a)') '   (further occurrences reported every ', n_warn_every, ')'
+    end if
+  else if (mod(n_rhs_failures, int(n_warn_every, int64)) == 0) then
+    write(*,'(a,i0,a)') ' WARNING: droplet growth steps cut short by RHS failures so far: ', &
+      n_rhs_failures, ' (see the first occurrences above)'
+  end if
+
+end subroutine warn_rhs_failure
 
 
 ! ==========================================================================

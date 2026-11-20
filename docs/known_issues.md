@@ -1035,7 +1035,13 @@ between each droplet and the thermodynamic history of the air around it.
   only where the truncation happens today; decide before changing.
 - **Found in** — 2026-11-19 audit of `main` at `abbce87`
   (`v3.2.2-11-gabbce87`); dates from `5dffb4c`. Source read only.
-- **Status** — open.
+- **Status** — open, now **reported** (the commit that adds this line):
+  `integrate_ODE` calls `warn_rhs_failure` for `ierr > 0`, which writes a
+  `WARNING: droplet growth step cut short` line to stdout (the run's log) with
+  the code, the requested interval and the state the droplet keeps; the first
+  10 occurrences in full, then one line every 1000 with the running count.
+  Behaviour and output are unchanged. Next step: check production logs for
+  the warning before choosing a fix.
 - **Related minor notes from the same audit** (no action taken):
   `growth_rhs_jac` column 1 is non-zero when `y(1) < r_floor` although the
   RHS does not depend on r there (`max(y(1), r_floor)`), costing only W-method

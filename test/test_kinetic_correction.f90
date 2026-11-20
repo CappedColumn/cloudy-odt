@@ -23,6 +23,8 @@ program test_kinetic_correction
     real(dp), parameter :: t0 = 0.0               ! time argument of the DGM routines (unused)
     real(dp), parameter :: temp_K = 280.0         ! air temperature [K]
     real(dp), parameter :: rho_solute = 1769.0    ! ammonium sulfate [kg/m3]
+    real(dp), parameter :: molar_mass_as = 132.1395e-3   ! ammonium sulfate [kg/mol]
+    integer(i4), parameter :: n_ions_as = 3
     real(dp), parameter :: r_solute = 0.05 * um   ! dry radius [m]
     real(dp), parameter :: jac_rtol = 1.0e-4      ! Jacobian vs finite differences
     ! off/on ratio vs expected. Not 1e-15: es here comes from
@@ -80,7 +82,8 @@ contains
         real(dp) :: lmass, les, lqv_sat
 
         lmass = pi_43 * r_solute**3 * rho_solute
-        call set_aerosol_properties(2_i4, lmass, r_solute, inv_grid_mass, lss)
+        call set_aerosol_properties(n_ions_as, molar_mass_as, rho_solute, lmass, r_solute, &
+                                    inv_grid_mass, lss)
         les = saturation_vapor_pressure(temp_K)
         lqv_sat = 0.622 * les / (pres - les)
         ly = [lradius, lqv_sat * (1.0 + lss), temp_K]
@@ -157,7 +160,8 @@ contains
     end subroutine test_growth_ratio
 
 
-    ! Compare both analytic Jacobians with central differences of growth_rhs.
+    ! Compare growth_rhs_jac's analytic Jacobian with central differences of
+    ! growth_rhs, and its dydt with growth_rhs.
     subroutine test_jacobians(lkinetic)
         logical, intent(in) :: lkinetic
 

@@ -158,6 +158,7 @@ contains
         real(dp), parameter :: ss_values(3) = [0.005, -0.05, -0.5]
         real(dp), parameter :: steps(5) = [1.0e-6, 1.0e-4, 1.0e-2, 0.1, 1.0]
         real(dp), parameter :: r_solute = 0.05e-6, rho_solute = 1769.0
+        real(dp), parameter :: molar_mass_as = 132.1395e-3   ! ammonium sulfate [kg/mol]
         real(dp) :: ly(3), ldydt(3), ljac(3,3), lW(3,3), lrhs(3,3), lu_rhs(3,3)
         real(dp) :: lmass, les, lqv_sat, inv_grid_mass
         integer(i4) :: lierr
@@ -173,7 +174,8 @@ contains
         n_cases = 0
         do i = 1, size(radii)
             do j = 1, size(ss_values)
-                call set_aerosol_properties(2_i4, lmass, r_solute, inv_grid_mass, ss_values(j))
+                call set_aerosol_properties(3_i4, molar_mass_as, rho_solute, lmass, r_solute, &
+                                            inv_grid_mass, ss_values(j))
                 ly = [radii(i), lqv_sat * (1.0 + ss_values(j)), temp_K]
                 call growth_rhs_jac(0.0d0, ly, ldydt, ljac, lierr)
                 do k = 1, size(steps)

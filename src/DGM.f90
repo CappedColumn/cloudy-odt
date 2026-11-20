@@ -10,9 +10,9 @@
 ! The kinetic correction can be switched off (&MICROPHYSICS
 ! do_kinetic_correction), which gives the continuum (Maxwell) limit.
 !
-! The module maintains per-droplet aerosol state (solute mass, species
-! properties, derived coefficients) via set_aerosol_properties, which must
-! be called before each integration.
+! The module maintains per-droplet aerosol state (solute mass, the solute's
+! composition from the droplet's aerosol type, derived coefficients) via
+! set_aerosol_properties, which must be called before each integration.
 module DGM
   use globals
   use ode_integrators, only: ode_rhs, ros3_integrate
@@ -33,7 +33,6 @@ module DGM
   logical :: do_kinetic_correction = .true.
 
   ! ---- Per-droplet aerosol state (set by set_aerosol_properties) ----
-  integer(i4) :: aerosol_type       ! species index (1=NaCl, 2=(NH4)2SO4, 3=fumaric)
   real(dp)    :: solute_mass         ! dry solute mass [kg]
   real(dp)    :: solute_c7           ! solute_mass * c7 — density correction product
   real(dp)    :: raoult_coeff        ! Raoult prefactor: n_ions * (Mw/M_s) * m_s
@@ -41,17 +40,12 @@ module DGM
   real(dp)    :: r_floor             ! minimum radius: dry radius * (1 + eps_r)
   real(dp)    :: ode_supersat        ! ambient supersaturation [fraction, not %]
 
-  ! ---- Species lookup tables ----
+  ! ---- Solute composition of the current droplet (from its aerosol type) ----
   real(dp) :: molar_mass_solute      ! molar mass of solute [kg/mol]
-  real(dp) :: c7_solute              ! solution density correction factor
+  real(dp) :: c7_solute              ! 1 - rho_w/rho_s: solution density factor (volume additivity)
   real(dp) :: n_ions                 ! van't Hoff factor (effective ions per molecule)
 
   ! ---- Physical constants ----
-  ! Solute density corrections (c7): ratio of apparent volume occupied by dissolved
-  ! solute to its dry-particle volume.  Species-specific empirical values.
-  real(dp), parameter :: c7_ammonium_sulfate = 0.4363021
-  real(dp), parameter :: c7_sodium_chloride  = 0.5381062
-
   real(dp), parameter :: sigma_w = 7.392730e-2  ! surface tension of water [N/m]
 
   ! Kinetic accommodation coefficients (Fukuta & Walter 1970); used only when
@@ -93,42 +87,35 @@ contains
 ! Set per-droplet aerosol properties before ODE integration.
 !
 ! Must be called once per droplet before integrate_ODE.  Populates module
-! state: solute mass, species-dependent constants, and derived coefficients
-! used by growth_rhs and growth_jacobian.
+! state: solute mass, the droplet's solute composition, and derived
+! coefficients used by growth_rhs and growth_rhs_jac. The composition comes
+! from the droplet's aerosol type (the aerosol input file), the same values
+! the activation diagnostic uses.
 !
 ! Arguments:
-!   species    — aerosol type: 1=NaCl, 2=(NH4)2SO4, 3=fumaric acid
-!   mass       — dry solute mass [kg]
-!   r_solute   — dry solute radius [m]
-!   grid_scale — 1 / (gridcell air mass) [kg^-1]
-!   supersat   — ambient supersaturation [fraction, not %]
+!   ln_ions         — van't Hoff factor of the solute (ions per molecule)
+!   lmolar_mass     — solute molar mass [kg/mol]
+!   lsolute_density — dry solute density [kg/m3]
+!   mass            — dry solute mass [kg]
+!   r_solute        — dry solute radius [m]
+!   grid_scale      — 1 / (gridcell air mass) [kg^-1]
+!   supersat        — ambient supersaturation [fraction, not %]
 ! ==========================================================================
-subroutine set_aerosol_properties(species, mass, r_solute, grid_scale, supersat)
-  integer(i4), intent(in) :: species
+subroutine set_aerosol_properties(ln_ions, lmolar_mass, lsolute_density, &
+                                  mass, r_solute, grid_scale, supersat)
+  integer(i4), intent(in) :: ln_ions
+  real(dp), intent(in)    :: lmolar_mass, lsolute_density
   real(dp), intent(in)    :: mass, r_solute, grid_scale, supersat
 
-  aerosol_type = species
   solute_mass  = mass
   r_floor      = r_solute * (1.0 + eps_r)
   ode_supersat = supersat
 
-  select case (species)
-  case (1) ! NaCl
-    molar_mass_solute = 58.4428e-3
-    c7_solute         = c7_sodium_chloride
-    n_ions            = 2.0
-  case (2) ! (NH4)2SO4
-    molar_mass_solute = 132.1395e-3
-    c7_solute         = c7_ammonium_sulfate
-    n_ions            = 3.0
-  case (3) ! fumaric acid
-    molar_mass_solute = 115.11e-3
-    c7_solute         = c7_ammonium_sulfate
-    n_ions            = 2.0
-  case default
-    write(error_unit,*) 'set_aerosol_properties: unknown aerosol species: ', species
-    call exit(1)
-  end select
+  n_ions            = real(ln_ions, dp)
+  molar_mass_solute = lmolar_mass
+  ! Solution density with solute and water volumes additive:
+  !   rho_sol = rho_w + (1 - rho_w/rho_s) * m_s / V,  so  c7 = 1 - rho_w/rho_s
+  c7_solute         = 1.0 - rho_l / lsolute_density
 
   ! Precompute derived coefficients used by the RHS
   solute_c7    = solute_mass * c7_solute
@@ -142,7 +129,7 @@ end subroutine set_aerosol_properties
 ! Integrate the droplet growth ODE from t_start to t_end.
 !
 ! Wraps ros3_integrate with default tolerances and error handling.
-! Calls set_aerosol_properties first to configure module state.
+! The caller must call set_aerosol_properties first to configure module state.
 !
 ! Arguments:
 !   y        — state vector [radius, qv, T], overwritten with solution

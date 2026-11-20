@@ -28,8 +28,14 @@ program test_dgm_solvers
   real(dp), parameter :: perturb_r  = 1.0e-6
   real(dp), parameter :: ss_drop    = -0.70
 
-  integer(i4), parameter :: species = 2  ! (NH4)2SO4
-  real(dp), parameter :: rho_solute = 2165.0
+  ! (NH4)2SO4, as the former species = 2 selected (its old c7 corresponds to a
+  ! solute density of 1774 kg/m3). The solute mass uses the same density: the
+  ! former 2165 (NaCl) mass with the (NH4)2SO4 c7 made the water mass vanish at
+  ! r = 1.07 r_dry, above the radius floor, where Raoult changes sign.
+  integer(i4), parameter :: n_ions_as = 3
+  real(dp), parameter :: molar_mass_as = 132.1395e-3   ! [kg/mol]
+  real(dp), parameter :: density_as = 1774.0           ! [kg/m3]
+  real(dp), parameter :: rho_solute = density_as
   real(dp), parameter :: temp0 = 280.0
   real(dp), parameter :: h_init = 1.0e-3
   real(dp), parameter :: rtol_arr(3) = [1.0e-4, 1.0e-4, 1.0e-4]
@@ -113,14 +119,14 @@ program test_dgm_solvers
         end if
 
         ! RK45
-        call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, ss_env)
+        call set_aerosol_properties(n_ions_as, molar_mass_as, density_as, sol_mass, r_sol, inv_grid_mass, ss_env)
         call integrate_ODE(y_rk, tstart, tend, h_rk, stat=istat)
         y_rk(1) = max(y_rk(1), r_sol * 1.01)
         ss_out = compute_ss(y_rk(2), y_rk(3))
         call write_row(aero_labels(ia), ic_labels(ic), "RK45", k, tend, y_rk(1), ss_out)
 
         ! ROS3
-        call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, ss_env)
+        call set_aerosol_properties(n_ions_as, molar_mass_as, density_as, sol_mass, r_sol, inv_grid_mass, ss_env)
         call ros3_integrate(growth_rhs, growth_rhs_jac, 3, y_ros, tstart, tend, &
                               h_ros, rtol_arr, atol_arr, istat)
         y_ros(1) = max(y_ros(1), r_sol * 1.01)
@@ -148,7 +154,7 @@ program test_dgm_solvers
   y0(1) = r_sol * 70.0
   y0(2) = qv_sat * (1.0 + 0.005)
   y0(3) = temp0
-  call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, 0.005_dp)
+  call set_aerosol_properties(n_ions_as, molar_mass_as, density_as, sol_mass, r_sol, inv_grid_mass, 0.005_dp)
 
   write(0,'(A,ES10.3,A)') "Non-stiff case: r=", y0(1), " m, SS=0.5%"
 
@@ -178,7 +184,7 @@ program test_dgm_solvers
   y0(1) = r_sol * 2.0
   y0(2) = qv_sat * (1.0 - 0.005)
   y0(3) = temp0
-  call set_aerosol_properties(species, sol_mass, r_sol, inv_grid_mass, -0.005_dp)
+  call set_aerosol_properties(n_ions_as, molar_mass_as, density_as, sol_mass, r_sol, inv_grid_mass, -0.005_dp)
 
   write(0,'(/,A,ES10.3,A)') "Stiff case: r=", y0(1), " m, SS=-0.5%"
 

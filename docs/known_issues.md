@@ -238,7 +238,7 @@ errors. None applies to the default `'stokes'`.
 
 ---
 
-### Droplet growth treats every aerosol as NaCl, whatever the composition table says
+### ~~Droplet growth treats every aerosol as NaCl, whatever the composition table says~~
 
 - **Symptom** — The growth ODE uses NaCl solute constants for every droplet.
   `single_droplet_growth` calls `set_aerosol_properties(1, ...)` with the
@@ -264,8 +264,31 @@ errors. None applies to the default `'stokes'`.
   is the only call to `set_aerosol_properties` in `src/`.
 - **Found in** — `8d4d6fb` (`v3.1.2`), `main`; found while tracing the growth
   path for the SoA exploration (`SOA_EXPLORATION.md`).
-- **Status** — open. Any refactor that passes DGM parameters explicitly should
-  decide this deliberately rather than carry the `1` over.
+- **Status** — **fixed** on `main` (the commit that adds this line).
+  `set_aerosol_properties` takes `n_ions`, `molar_mass` and `solute_density`
+  from the droplet's `solute_type` (the aerosol file), the same values the
+  activation diagnostic uses; the internal species table is gone. The
+  solution-density factor is derived: `c7 = 1 - rho_w/solute_density`
+  (solute and water volumes additive, so `rho_sol*V - m_s` is the water mass).
+  The former constants were exactly that for 2165 (NaCl) and 1774
+  ((NH4)2SO4) kg/m3; fumaric acid borrowed the (NH4)2SO4 value (its density
+  ~1635 gives 0.388, not 0.436). `build_aerosol_table` now rejects
+  `n_ions < 1`, `molar_mass <= 0` or `solute_density <= 0`, and warns for
+  `molar_mass > 1 kg/mol` (likely g/mol).
+  - **Output changes.** Non-NaCl material changes substantially ((NH4)2SO4
+    Raoult ~1.5x smaller). NaCl runs change slightly: the bundled and reftest
+    aerosol files give NaCl 2163 kg/m3, so c7 moves 0.5381 -> 0.5377 (8e-4),
+    and the molar mass is now the file's double rather than a
+    single-precision literal. Not bit-identical to earlier versions.
+  - **Coalescence of mixed material** — the survivor's `solute_type` now also
+    sets the merged droplet's growth Raoult term (before, it set only the
+    activation diagnostic and dry radius), so the documented "survivor's
+    material" approximation (`data_formats.md`, `collision_coalescence.f90`)
+    has a larger effect than before when unlike materials coalesce.
+  - `test_dgm_composition`: Köhler equilibrium written from the volumes
+    (independent of DGM's c7 algebra) is a growth equilibrium for three
+    compositions to ~1e-13; (NH4)2SO4 and NaCl equilibria differ; densities
+    2165/1774 reproduce the former constants.
 
 ## Input/Output
 
@@ -681,8 +704,10 @@ Fortran). None changes collision counts measurably at realistic settings.
   grid now requires.
 - **Consequence** — Latent in all versions since the ghost-point change. Will
   not necessarily crash; expect subtly wrong diffusion at the domain edge.
-  Confirmed to be an out-of-bounds **write**, not just a short read, so in a
-  release build it corrupts whatever follows `rdx` on the stack.
+  Confirmed to be an out-of-bounds **write**, not just a short read. `rdx(N)`
+  is an automatic array sized by the run-time `N`, which gfortran allocates on
+  the **heap** (no `-fstack-arrays` in the profiles), so in a release build the
+  write lands just past that allocation (see Status for what that means).
 - **Location** — *pinned* (`e1c03be`): `src/ODT.f90:556` declares
   `real(dp) :: b, rdx(N)` while the loop at `:561-562` runs `do k = 2, N+1` and
   assigns `rdx(k)`. Reproduced under the `debug` profile from a chamber run on
@@ -702,12 +727,17 @@ Fortran). None changes collision counts measurably at realistic settings.
   declared `rdx(N+1)`. Checked against the caller: `diffuse_scalar` builds an
   (N+1)-point system (`l`, `d`, `r`, `xsc` are all `N+1`), the forward loop
   writes `rdx(2:N+1)` and the back substitution reads `rdx(N+1)` for `ui(N)`,
-  the cell below the top boundary. Whether release output changes depends on
-  whether anything reused the stack slot past `rdx` between that write and
-  read. Measured: A/B reftest `b1c3a0d` vs `4b80979` (job 17264748, np-v3,
-  Gold 6130) is bit-identical in chamber and parcel mode, so in that build the
-  slot was not reused and past release output is unaffected. The fix removes
-  the out-of-bounds write and lets chamber runs proceed under `debug`.
+  the cell below the top boundary. Measured: A/B reftest `b1c3a0d` vs
+  `4b80979` (job 17264748, np-v3, Gold 6130, N = 2000) is bit-identical in
+  chamber and parcel mode, so past release output at that N is unaffected.
+  *Inferred, not observed* (from glibc malloc chunk rounding, per the
+  2026-11-19 audit; the commit message's "onto the stack" was wrong): for even
+  N the 8N-byte request gets 8 bytes of rounding slack, so the stray element
+  lands in slack and reads back intact; for odd N there is no slack and the
+  write overwrites the next heap chunk's header, which could corrupt the heap
+  or crash at `free`. Runs with an odd `N` before this fix deserve suspicion.
+  The fix removes the out-of-bounds write and lets chamber runs proceed under
+  `debug`.
 
 ### Eddy-particle movement (`move_particles_in_eddy`) is ~90% of parcel runtime
 
@@ -949,13 +979,45 @@ between each droplet and the thermodynamic history of the air around it.
   code in `growth_rhs_jac` is unchanged (it reads the shared terms through
   `associate`). Checked bit-identical before/after on 542 states (grid of
   radius, S, T, dry size, kinetic on/off, plus the evaporation limiter and the
-  guarded state) under the debug and release profiles; np-v3 to be checked by
-  A/B reftest. Note: gfortran does **not** inline `growth_terms` (release:
-  called from 3 sites, `growth_tendencies` inlined; np-v3: neither inlined),
-  so the A/B also measures the cost of the extra call. If it matters, the
-  fallback is a textual `include` of the shared block in both routines.
+  guarded state) under the debug and release profiles, and by A/B reftest
+  `29c6b95` vs `abbce87` (job 17265266, np-v3, Gold 6130) in chamber and
+  parcel mode. gfortran does **not** inline `growth_terms` (release: called
+  from 3 sites, `growth_tendencies` inlined; np-v3: neither inlined), but the
+  extra call costs nothing measurable: 256 -> 252 s chamber, 755 -> 765 s
+  parcel (single runs). Fallback if that ever changes: a textual `include` of
+  the shared block in both routines.
   `test_kinetic_correction` now checks that `growth_rhs_jac`'s dydt equals
   `growth_rhs` bit for bit.
+
+### A failed growth RHS silently truncates the droplet's growth step
+
+- **Symptom** — `growth_terms` returns `ierr = 1` for an unphysical state
+  (`qv < 0` or T outside 193-320 K). `ros3_integrate` returns that code
+  immediately (`ierr = rhs_err; return`), including when it comes from a
+  *trial* stage state `y + k1`, not an accepted one. `integrate_ODE` aborts
+  only for `ierr < 0`, and the model's only call (`single_droplet_growth`,
+  `droplets.f90:~863`) passes no `stat`. So a positive code ends that
+  droplet's integration at its last accepted state with t < t_end, with no
+  message: the droplet gets a truncated growth step and the budgets book the
+  partial change.
+- **Plausible trigger** — strong evaporation in a very dry cell (e.g. a dry
+  entrained blob), where a stage-2 trial state overshoots to `qv < 0`.
+  Not observed in a run; frequency unknown.
+- **Suspected location** — `src/DGM.f90` `integrate_ODE` (the `ierr < 0`
+  test) and `src/ode_integrators.f90` `ros3_integrate` (stage RHS failures
+  returned rather than treated as a rejected step).
+- **Fix options** — (a) in `ros3_integrate`, treat a stage RHS failure as a
+  rejected step (shrink `h`, retry); (b) in `integrate_ODE`, abort on any
+  `ierr /= 0`; (c) at least count and report occurrences. (a) changes results
+  only where the truncation happens today; decide before changing.
+- **Found in** — 2026-11-19 audit of `main` at `abbce87`
+  (`v3.2.2-11-gabbce87`); dates from `5dffb4c`. Source read only.
+- **Status** — open.
+- **Related minor notes from the same audit** (no action taken):
+  `growth_rhs_jac` column 1 is non-zero when `y(1) < r_floor` although the
+  RHS does not depend on r there (`max(y(1), r_floor)`), costing only W-method
+  efficiency; `n_ions` is an integer in the aerosol schema, so a fractional
+  effective van't Hoff factor cannot be entered.
 
 ---
 

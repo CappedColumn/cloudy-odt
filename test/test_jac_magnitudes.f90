@@ -37,11 +37,12 @@ program test_jac_magnitudes
 
   do k = 1, n_cases
     r_sol = r_solutes(k)
-    sol_mass = pi_43 * r_sol**3 * 2165.0
+    sol_mass = pi_43 * r_sol**3 * 1774.0   ! (NH4)2SO4, consistent with the density passed below
     es_val = saturation_vapor_pressure(280.0_dp)
     qv_sat = 0.622 * es_val / (pres - es_val)
 
-    call set_aerosol_properties(2_i4, sol_mass, r_sol, inv_grid_mass, ss_vals(k))
+    ! (NH4)2SO4 growth constants as the former species 2 (c7 <-> 1774 kg/m3)
+    call set_aerosol_properties(3_i4, 132.1395d-3, 1774.0d0, sol_mass, r_sol, inv_grid_mass, ss_vals(k))
 
     y(1) = radii(k)
     y(2) = qv_sat * (1.0 + ss_vals(k))

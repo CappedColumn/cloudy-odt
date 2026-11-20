@@ -846,8 +846,11 @@ contains
         wl_before = droplet%water_liquid
         T_before = droplet%temperature
 
-        ! set odeint parameters for different aerosol mass of each droplet
-        call set_aerosol_properties(1, droplet%solute_gross_mass, droplet%solute_radius, &
+        ! Solute composition from the droplet's own aerosol type (the aerosol
+        ! file), the same values the activation diagnostic uses
+        call set_aerosol_properties(droplet%solute_type%n_ions, droplet%solute_type%solute_molar_mass, &
+                                    droplet%solute_type%solute_density, &
+                                    droplet%solute_gross_mass, droplet%solute_radius, &
                                     inverse_grid_mass, droplet%supersaturation/100)
 
         ! Package droplet properties into an array for ode solver
@@ -1439,6 +1442,25 @@ contains
         integer :: i, n_aerosol_types
 
         n_aerosol_types = size(n_ions)
+
+        ! The composition sets both droplet growth (Raoult term, and the
+        ! solution density through 1 - rho_w/solute_density) and activation,
+        ! so nonphysical values are fatal rather than silently propagated.
+        do i = 1, n_aerosol_types
+            if (n_ions(i) < 1 .or. molar_mass(i) <= 0.0 .or. density(i) <= 0.0) then
+                write(error_unit,*) 'Error: aerosol type ', i, ' has a nonphysical composition: ', &
+                    'n_ions = ', n_ions(i), ', molar_mass = ', molar_mass(i), ' kg/mol, ', &
+                    'solute_density = ', density(i), ' kg/m3 (need n_ions >= 1 and both > 0)'
+                call exit(1)
+            end if
+            ! molar_mass is in kg/mol; a value entered in g/mol (e.g. 58.44 for
+            ! NaCl) would make the solute effect 1000x too small, silently.
+            if (molar_mass(i) > 1.0) then
+                write(*,*) 'WARNING: aerosol type ', i, ' molar_mass = ', molar_mass(i), &
+                    ' kg/mol; this is > 1 kg/mol, check it is not in g/mol'
+            end if
+        end do
+
         allocate(aerosols(n_aerosol_types))
 
         do i = 1, n_aerosol_types

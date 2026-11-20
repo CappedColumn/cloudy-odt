@@ -42,9 +42,11 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 
 | Variable | Dims | Units | Description |
 |----------|------|-------|-------------|
-| `n_ions` | (aerosol_type) | — | Van't Hoff factor |
-| `molar_mass` | (aerosol_type) | kg/mol | Solute molar mass |
-| `solute_density` | (aerosol_type) | kg/m³ | Solute density |
+| `n_ions` | (aerosol_type) | — | Van't Hoff factor (integer, ≥ 1) |
+| `molar_mass` | (aerosol_type) | kg/mol | Solute molar mass (> 0; a warning is printed above 1 kg/mol, which usually means g/mol) |
+| `solute_density` | (aerosol_type) | kg/m³ | Dry solute density (> 0) |
+
+The three composition fields set a droplet's solute physics everywhere it is used, in both droplet growth and the activation diagnostic: `n_ions` and `molar_mass` set the Raoult (solute) term, `solute_density` sets the dry radius from the solute mass and, in growth, the solution density through volume additivity (ρ_sol = ρ_w + (1 − ρ_w/ρ_s)·m_s/V). Before the composition fix (after CODT 3.2.2), droplet growth ignored these and used NaCl constants for every type; see `docs/known_issues.md`. A nonphysical row (`n_ions` < 1, or `molar_mass` or `solute_density` ≤ 0) is a fatal error.
 | `category` | (bin) | — | Aerosol category index (output label) |
 | `bin_type` | (bin) | — | *Optional.* Composition row each bin is made of. Absent ⇒ all bins are type 1 |
 | `edge_radii` | (edge) | nm | Bin edge radii |
@@ -385,7 +387,7 @@ Unformatted Fortran **stream**, written when `write_collisions = .true.`
 
 `flag` is `1` if the event was a coalescence (droplets merged; `r_after` is the merged radius) and `0` if it was a collision without coalescence (`r_after = 0`).
 
-From CODT 3.2.2 a coalescence can come from a **wake capture**: where the collection efficiency E exceeds 1 (the Hall table reaches 4.0 for near-equal sizes), the collector also captures droplets that pass outside its geometric cross-section. A wake capture is written as an ordinary record with `flag = 1`; there is no field that tells it apart from a geometric coalescence. So the number of records (and `N_collisions`) per crossing follows max(1, E) times the geometric kernel, not the geometric kernel alone. Files from 3.2.1 and earlier truncate E to 1 and contain no wake captures.
+From CODT 3.2.2 a coalescence can come from a **wake capture**: where the collection efficiency E exceeds 1 (the Hall table reaches 4.0 for near-equal sizes), the collector also captures droplets that pass outside its geometric cross-section. A wake capture is written as an ordinary record with `flag = 1`; there is no field that tells it apart from a geometric coalescence. So with `do_coalescence = .true.` the number of records (and `N_collisions`) per crossing follows max(1, E) times the geometric kernel, not the geometric kernel alone; with collisions only (no coalescence, so no E) it is the geometric kernel. Files from 3.2.1 and earlier truncate E to 1 and contain no wake captures.
 
 `keep` is the larger droplet of the pair (for equal radii, the faster-falling one); it is listed first in every record, whether or not the pair coalesced. `position` is the height of the lower droplet of the pair at the event, in [0, `H`]. In parcel mode it is wrapped into [0, `H`) from CODT 3.2.1; files from 3.2.0 and earlier can hold small negative values there (the droplet's fall below 0 within one collision window), so take those modulo `H`.
 

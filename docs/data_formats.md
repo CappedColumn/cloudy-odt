@@ -46,7 +46,7 @@ The aerosol size distribution and solute properties. Required when `do_microphys
 | `molar_mass` | (aerosol_type) | kg/mol | Solute molar mass (> 0; a warning is printed above 1 kg/mol, which usually means g/mol) |
 | `solute_density` | (aerosol_type) | kg/m³ | Dry solute density (> 0) |
 
-The three composition fields set a droplet's solute physics everywhere it is used, in both droplet growth and the activation diagnostic: `n_ions` and `molar_mass` set the Raoult (solute) term, `solute_density` sets the dry radius from the solute mass and, in growth, the solution density through volume additivity (ρ_sol = ρ_w + (1 − ρ_w/ρ_s)·m_s/V). Before the composition fix (after CODT 3.2.2), droplet growth ignored these and used NaCl constants for every type; see `docs/known_issues.md`. A nonphysical row (`n_ions` < 1, or `molar_mass` or `solute_density` ≤ 0) is a fatal error.
+The three composition fields set a droplet's solute physics everywhere it is used, in both droplet growth and the activation diagnostic: `n_ions` and `molar_mass` set the Raoult (solute) term, `solute_density` sets the dry radius from the solute mass and, in growth, the solution density through volume additivity (ρ_sol = ρ_w + (1 − ρ_w/ρ_s)·m_s/V). In CODT 3.2.2 and earlier, droplet growth ignored these and used NaCl constants for every type (fixed in 3.3.0); see `docs/known_issues.md`. Every run's log prints the composition table it used. A nonphysical row (`n_ions` < 1, or `molar_mass` or `solute_density` ≤ 0) is a fatal error.
 | `category` | (bin) | — | Aerosol category index (output label) |
 | `bin_type` | (bin) | — | *Optional.* Composition row each bin is made of. Absent ⇒ all bins are type 1 |
 | `edge_radii` | (edge) | nm | Bin edge radii |

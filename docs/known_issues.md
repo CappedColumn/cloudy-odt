@@ -276,10 +276,12 @@ errors. None applies to the default `'stokes'`.
   `n_ions < 1`, `molar_mass <= 0` or `solute_density <= 0`, and warns for
   `molar_mass > 1 kg/mol` (likely g/mol).
   - **Output changes.** Non-NaCl material changes substantially ((NH4)2SO4
-    Raoult ~1.5x smaller). NaCl runs change slightly: the bundled and reftest
-    aerosol files give NaCl 2163 kg/m3, so c7 moves 0.5381 -> 0.5377 (8e-4),
-    and the molar mass is now the file's double rather than a
-    single-precision literal. Not bit-identical to earlier versions.
+    Raoult ~1.5x smaller). NaCl runs change slightly: the molar mass is now
+    the file's double rather than a single-precision literal, and c7 follows
+    the file's density. The bundled `input/aerosol_input.nc` was set to NaCl
+    2165 kg/m3 in v3.3.0 (the density the former constant encoded; c7 differs
+    from it by 3.2e-8). The reftest aerosol files still give 2163, so there c7
+    moves 0.5381 -> 0.5377 (8e-4). Not bit-identical to earlier versions.
   - **Coalescence of mixed material** — the survivor's `solute_type` now also
     sets the merged droplet's growth Raoult term (before, it set only the
     activation diagnostic and dry radius), so the documented "survivor's

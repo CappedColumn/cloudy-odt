@@ -1495,6 +1495,24 @@ contains
             end if
         end do
 
+        ! Log the composition exactly as droplet growth and activation will use
+        ! it, including the solution-density factor DGM derives from it.
+        write(*,'(a)') ' Aerosol composition table (used by droplet growth and activation):'
+        write(*,'(a)') '   type  role        n_ions    molar_mass [kg/mol]   solute_density [kg/m3]' // &
+                       '   c7 = 1 - rho_w/rho_s   name'
+        do i = 1, n_aerosol_types
+            if (is_seed_type(i)) then
+                type_name = 'seed'
+            else if (any(aerosol_bin_type == i)) then
+                type_name = 'background'
+            else
+                type_name = 'unused'
+            end if
+            write(*,'(i7,2x,a10,i8,4x,es20.13,3x,es22.15,3x,f22.17,3x,a)') i, type_name(1:10), &
+                aerosols(i)%n_ions, aerosols(i)%solute_molar_mass, aerosols(i)%solute_density, &
+                1.0 - rho_l / aerosols(i)%solute_density, trim(aerosols(i)%aerosol_name)
+        end do
+
     end subroutine build_aerosol_table
 
     logical function is_seed_type(itype)

@@ -312,6 +312,18 @@ errors. None applies to the default `'stokes'`.
       dispersion +1.8%; Nact -1.5%, S +1.1%, LWC -0.4% (within noise).
       As expected: the correct Raoult term is ~2/3 of the NaCl one, so haze
       equilibrates smaller and needs more S to activate.
+  - **Code-equivalence proof** (job 17269755, chamber, np-v3, all Gold 6130):
+    old code `abbce87` vs new code `07cab53` with an NaCl aerosol file whose
+    values reproduce the old single-precision constants exactly in double
+    (`solute_density = 2164.999847728025`, so 1 - 1000/rho_s =
+    0.5381062030792236 = old c7; `molar_mass = 0.05844280123710632` = old
+    58.4428e-3): **bit-identical** (all 32 profile and 16 particle variables,
+    collisions.bin). So the file -> `solute_type` -> growth path computes
+    exactly what the internal table did. With a plain 2165 / 0.0584428 file
+    (c7 +3.2e-8, molar mass -1.2e-9 vs the old constants) the runs diverge
+    from t = 8 s and the 900-1800 s window means agree within 1.4%, inside
+    the chamber noise floor. The composition table each run used is printed
+    in its log (`07cab53`).
 
 ## Input/Output
 

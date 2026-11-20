@@ -264,7 +264,7 @@ errors. None applies to the default `'stokes'`.
   is the only call to `set_aerosol_properties` in `src/`.
 - **Found in** — `8d4d6fb` (`v3.1.2`), `main`; found while tracing the growth
   path for the SoA exploration (`SOA_EXPLORATION.md`).
-- **Status** — **fixed** on `main` (the commit that adds this line).
+- **Status** — **fixed in `a3f1a71`**.
   `set_aerosol_properties` takes `n_ions`, `molar_mass` and `solute_density`
   from the droplet's `solute_type` (the aerosol file), the same values the
   activation diagnostic uses; the internal species table is gone. The
@@ -289,6 +289,29 @@ errors. None applies to the default `'stokes'`.
     (independent of DGM's c7 algebra) is a growth equilibrium for three
     compositions to ~1e-13; (NH4)2SO4 and NaCl equilibria differ; densities
     2165/1774 reproduce the former constants.
+  - **A/B reftest** `abbce87` vs `a3f1a71` (jobs 17265266 for the `abbce87`
+    NaCl legs, 17266084/17266085 for the rest; np-v3, skl; the `a3f1a71`
+    legs ran on Gold 6140, the baselines on Gold 6130, same ISA). Single
+    realizations; window means.
+    - *NaCl chamber*: S fields differ from t = 1 s, then the turbulent run
+      is a different realization. 900-1800 s: every quantity within ±2%
+      with mixed signs (S +1.7%, Nact -1.7%, Nun -1.8%, LWC -1.6%, mean r
+      0.0%). A 0.08% c7 change cannot cause 2%, so this is the noise floor
+      of comparing two single chamber runs.
+    - *NaCl parcel*: before the first divergence of Np (an entrainment event
+      at t = 56 s) Nact is identical, LWC within 0.15%, mean S within
+      0.003 percentage points: the systematic effect is negligible. After
+      that the runs differ by where blobs land (see "Parcel reftest droplet
+      count is dominated by where entrainment blobs land"); cloud-phase
+      peaks agree (max Nact 1000 vs 1012, max LWC 0.141 vs 0.144 g/m3, max
+      mean S 0.445% both).
+    - *(NH4)2SO4 chamber* (reftest chamber case with only the composition
+      rows of the aerosol file changed to n_ions 3, 0.1321395 kg/mol,
+      1769 kg/m3): clear signal above that noise floor, 900-1800 s: Nun
+      +30% (14.9 -> 19.4), fraction of droplets below 1 um +18%, size
+      dispersion +1.8%; Nact -1.5%, S +1.1%, LWC -0.4% (within noise).
+      As expected: the correct Raoult term is ~2/3 of the NaCl one, so haze
+      equilibrates smaller and needs more S to activate.
 
 ## Input/Output
 

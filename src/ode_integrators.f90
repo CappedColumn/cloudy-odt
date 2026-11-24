@@ -126,6 +126,9 @@ subroutine rkck45_integrate(rhs, nvar, y, t_start, t_end, h_last, rtol, atol, ie
   integer(i4) :: rhs_err     ! RHS error flag
 
   ierr = 0
+  ! Empty interval: return before h is formed, or h_last would be set to 0
+  ! and the caller's next integration would start with a zero step.
+  if (t_end <= t_start) return
   t = t_start
   h = min(h_last, t_end - t_start)
 
@@ -275,6 +278,10 @@ subroutine ros3_integrate(rhs, rhs_jac, nvar, y, t_start, t_end, h_last, rtol, a
   end if
 
   ierr = 0
+  ! Empty interval: nothing to integrate. Return before h is formed, or the
+  ! loop below would store h = 0 in h_last and the caller's next integration
+  ! would start with a zero step (1/(gamma*h) = Inf).
+  if (t_end <= t_start) return
   t = t_start
   h = min(h_last, t_end - t_start)
   need_jacobian = .true.

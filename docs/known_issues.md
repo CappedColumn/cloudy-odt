@@ -682,7 +682,7 @@ Fortran). None changes collision counts measurably at realistic settings.
   ascent with large aerosol: 499 events spanning `0.0100 -> 76.54` s, strictly
   monotonic (0 backward steps), totals still matching `N_collisions`, volume
   conservation unchanged at 2.2e-15.
-- **Residual error** (before the double-physics fix on `fix/double-physics`) —
+- **Residual error** (3.3.0 and earlier; fixed in 3.3.1) —
   accuracy was capped by the separate "Physics chain ran twice per iteration
   when an eddy was accepted" issue: `delta_time` is not
   recomputed between the backstop and eddy branches (`CODT.f90:73` vs `:88`), so
@@ -1120,8 +1120,8 @@ between each droplet and the thermodynamic history of the air around it.
   disappear with the fix (not re-checked).
 - **Found in** — `afc798f`, branch `feature/lem-empm-port` (code read);
   quantified 2026-11-24 on `74ef16c` (`v3.3.0`).
-- **Status** — **fixed** on branch `fix/double-physics` (the commit that
-  strikes this entry). One physics block runs after the turbulence step when
+- **Status** — **fixed in 3.3.1** (`34f905f`; last affected version
+  3.3.0). One physics block runs after the turbulence step when
   `eddy_accepted .or. delta_time >= diffusion_step`, so the chain runs at most
   once per iteration over `delta_time`. `eddy_accepted` is now reset to
   `.false.` every iteration (it was uninitialized when `do_turbulence` is off).

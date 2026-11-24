@@ -1149,8 +1149,22 @@ between each droplet and the thermodynamic history of the air around it.
     droplet count is dominated by where entrainment blobs land"), so later
     Np/Nact/LWC differences (final Np 885 vs 869) are not attributable.
     Collisions are too few to compare (67 vs 47).
-  - *Chamber* — domain-mean shifts are at the level of random-stream
-    divergence: S max shift 0.21%, T 0.19 C, Np/Nact mean rel. diff 2.5%,
+  - *Parcel, entrainment off* (second A/B, job 17457523; same case with
+    `do_entrainment = .false.`, outputs in `reftest_ab/<hash>/parcel_noent`)
+    — the clean measurement. Same `dt`, so v3.3.0 doubled every step in
+    8-16, 64-128 and 256-512 s. Per time range, domain-mean S (A -> B):
+    8-16 s 0.402 -> 0.478%; 64-128 s **0.114 -> 0.224%**; 256-500 s
+    **0.072 -> 0.141%**; the clean ranges 128-256 s agree (0.178 both).
+    Doubling the growth rate halves the quasi-steady supersaturation, as
+    expected. LWC is barely affected outside activation (top of ascent
+    1.297 vs 1.294 g/m3; condensate is fixed by the thermodynamics), and all
+    1000 aerosol activate in both runs. Collision-coalescence ran too long:
+    collisions 1833 vs 1259 (1.46x), coalescences 219 vs 118 (1.86x), final
+    Np 931 vs 1032. The DSD is broader in v3.3.0 (radius s.d. at the top of
+    the ascent 2.33 vs 1.86 um; 2.09 vs 1.79 um mean over 256-500 s). Peak
+    domain-max S over the run 0.517 vs 0.649%.
+  - *Chamber* (rerun in job 17457523 reproduced job 17456438 exactly) —
+    domain-mean shifts are at the level of random-stream divergence: S max shift 0.21%, T 0.19 C, Np/Nact mean rel. diff 2.5%,
     LWC 4.4%, final mean radius 5.89 vs 5.90 um.
 - **Impact on existing results** — every parcel run before the fix is biased by
   its own `dt`-dependent pattern of doubled time ranges; not comparable with

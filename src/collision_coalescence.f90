@@ -105,12 +105,10 @@ contains
         fall_events_this_step = 0
 
         ! Absolute time at the window start, for stamping collision events.
-        ! Caveat: when the diffusion backstop and an eddy both fire in one
-        ! iteration, delta_time is not recomputed between them (CODT.f90:73 vs
-        ! :88), so both CC calls receive the same ltime and ldt and the second
-        ! call's events are backdated by up to one delta_time. See
-        ! docs/known_issues.md, "Physics chain may run twice per iteration when
-        ! an eddy is accepted". Rare in practice; accepted for now.
+        ! The main loop calls the physics at most once per iteration, so
+        ! consecutive windows tile the run without overlap (see
+        ! docs/known_issues.md, "Physics chain ran twice per iteration when an
+        ! eddy was accepted", for the earlier backdating).
         t_window_start = ltime - ldt
 
         ! Periodic boundary: parcel mode wraps via modulo(z, H); no fallout.

@@ -682,8 +682,9 @@ Fortran). None changes collision counts measurably at realistic settings.
   ascent with large aerosol: 499 events spanning `0.0100 -> 76.54` s, strictly
   monotonic (0 backward steps), totals still matching `N_collisions`, volume
   conservation unchanged at 2.2e-15.
-- **Residual error** — accuracy is capped by the separate "Physics chain may run
-  twice per iteration when an eddy is accepted" issue: `delta_time` is not
+- **Residual error** (before the double-physics fix on `fix/double-physics`) —
+  accuracy was capped by the separate "Physics chain ran twice per iteration
+  when an eddy was accepted" issue: `delta_time` is not
   recomputed between the backstop and eddy branches (`CODT.f90:73` vs `:88`), so
   both CC calls receive the same `ltime`/`ldt` and the second call's events are
   backdated by up to one `delta_time`. On the validation run this showed up as 4
@@ -1062,11 +1063,7 @@ between each droplet and the thermodynamic history of the air around it.
   efficiency; `n_ions` is an integer in the aerosol schema, so a fractional
   effective van't Hoff factor cannot be entered.
 
----
-
-## Unknown
-
-### Physics chain may run twice per iteration when an eddy is accepted
+### ~~Physics chain ran twice per iteration when an eddy was accepted~~
 
 - **Naming hazard (read this first)** — four similar names are involved and are
   easy to conflate. In particular `diffusion_step` and `diffusion_timestep`
@@ -1074,45 +1071,69 @@ between each droplet and the thermodynamic history of the air around it.
 
   | name | scope | meaning |
   |---|---|---|
-  | `dt` | global | the model timestep; `time = time + dt` each iteration (`CODT.f90:69`) |
-  | `delta_time` | global | time since the last physics update, `time - last_time_updated` (`CODT.f90:73`) |
-  | `diffusion_step` | global | the backstop *threshold* compared against `delta_time` (`CODT.f90:82`); set to `dt` by both backends (`LEM.f90:101`, `ODT.f90:85-86`) |
-  | `diffusion_timestep` | LEM local | the diffusive *stability limit* `0.2*dz^2/D` (`LEM.f90:82`); used only to derive `dt`, `maps_per_event`, `steps_between_events` (`LEM.f90:91-99`) |
+  | `dt` | global | the model timestep; `time = time + dt` each iteration (`CODT.f90`) |
+  | `delta_time` | global | time since the last physics update, `time - last_time_updated` |
+  | `diffusion_step` | global | the backstop *threshold* compared against `delta_time`; LEM sets it to `dt` (`LEM.f90`), ODT to `H^2/(nu N^2)` and starts `dt` there (`ODT.f90`) |
+  | `diffusion_timestep` | LEM local | the diffusive *stability limit* `0.2*dz^2/D`; used only to derive `dt`, `maps_per_event`, `steps_between_events` |
 
-  `diffusion_step == diffusion_timestep` only in the
-  `diffusion_timestep >= convection_timestep` branch, where `dt` is set from
-  `diffusion_timestep` (`LEM.f90:92`). In the other branch `dt` comes from
-  `convection_timestep` (`:97`) and the two differ. Note also that
-  `turbulence_step` receives both as dummies named `ldt` and `ldelta_time`
-  (`LEM.f90:141`, `ODT.f90:576-579`).
+- **Symptom** — the main loop had two copies of the physics chain (diffuse,
+  droplets, special effects, radiation, sync): a diffusion backstop
+  (`delta_time >= diffusion_step`) and an eddy branch (`eddy_accepted`).
+  `delta_time` was computed once per iteration. The backstop reset
+  `last_time_updated` but not `delta_time`, so when both fired in one
+  iteration the eddy branch re-ran the whole chain over the **same**
+  `delta_time`. Droplet growth, collision-coalescence, diffusion and radiation
+  then advanced `2*delta_time` while adiabatic forcing and entrainment
+  advanced `dt`.
+- **Why it was erratic** — in LEM with `steps_between_events = 1` an eddy is
+  accepted every iteration and `diffusion_step = dt`, so whether the backstop
+  *also* fired was decided by floating-point rounding of `(time + dt) - time`
+  against `dt`. The fraction of doubled steps therefore depends on `dt` and on
+  the magnitude of `time` (it drifts during a run). A Python replica of the
+  loop logic, which reproduced the Fortran counts exactly (below), gives a
+  physics/elapsed ratio of 1.06-1.83 for `dt` between 1e-3 and 1e-2 s over a
+  1500 s run (2.13e-3 s: 1.22 over 1500 s, 1.33 over 1000 s, 1.44 over 100 s).
+  Ensemble members with different `dt` (domain size, dissipation rate)
+  carried different biases.
+- **Measured** — counters in the main loop (diagnostic worktree), reftest
+  configurations, `release` build on kingspeak:
 
-- **Symptom** — Both backends set `diffusion_step = dt` and the main loop
-  advances `time = time + dt`, so `delta_time` is `dt` on essentially every
-  iteration and the diffusion backstop at `CODT.f90:82` fires every step.
-  `delta_time` is computed once at `CODT.f90:73` and is **not** recomputed after
-  that block, so when an eddy is also accepted the chain at `CODT.f90:96-100`
-  re-runs `diffuse_step`, `advance_droplets`, special effects and radiation with
-  the full `dt` again.
-- **Scope** — In ODT eddy acceptance is stochastic and rare, so this is an
-  occasional extra `dt`. In LEM with `steps_between_events = 1` (the
-  `diffusion_timestep >= convection_timestep` branch, `LEM.f90:91-94` — the
-  branch madison takes) `leddy_accepted` is set unconditionally, so every
-  iteration would double-apply.
-- **Why this may not be a defect** — it may be the intended design: an accepted
-  eddy is a distinct physical event, and re-running the chain after the
-  rearrangement lets droplets and scalars respond to the new field
-  configuration. This is filed here rather than under Coding because nobody has
-  established which reading is correct.
-- **How to settle it** — instrument one short parcel run: count `diffuse_step`
-  calls per iteration and compare integrated diffusion time against elapsed
-  `time`. If integrated physics time is ~2x elapsed time in LEM, it is a defect.
-- **Note** — floating point softens it: `(time + dt) - time` is not exactly `dt`
-  at large `time`, so the backstop occasionally skips and the next iteration
-  carries a larger `delta_time`. Any over-application is therefore irregular
-  rather than exactly 2x.
-- **Found in** — `afc798f`, branch `feature/lem-empm-port`; found by reading the
-  code, not from a run.
-- **Status** — open question, not yet classified.
+  | case | iterations | backstop | eddy chains | both fired | physics / elapsed |
+  |---|---|---|---|---|---|
+  | parcel (LEM), 100 s, `dt` = 2.13e-3 s | 46 979 | 20 795 | 46 979 | 20 795 (44%) | **1.442645** (144.27 s / 100.00 s) |
+  | chamber (ODT), 1800 s, `diffusion_step` = 1.68e-2 s | 197 166 661 | 65 290 | 102 394 | 39 | 1.000359 (+0.65 s) |
+
+  In ODT the eddy acceptance rate is low (~5e-4 per iteration) and adaptive
+  `dt` is ~1e-5 s, so coincidences are rare and chamber results are
+  effectively unaffected. The parcel case is badly affected: supersaturation
+  is depleted by too much condensation per unit cooling, and
+  collision-coalescence runs ~1.2-1.8x too long.
+- **Related consequences** — the doubled call is also the "adjacent-interval
+  swap" noted under `collisions.bin` `time` (the second CC call in an iteration
+  reused the same `ltime`/`ldt`, backdating its events) and the -1/0
+  oscillation in the `collisions.bin` short-records entry. Both should
+  disappear with the fix (not re-checked).
+- **Found in** — `afc798f`, branch `feature/lem-empm-port` (code read);
+  quantified 2026-11-24 on `74ef16c` (`v3.3.0`).
+- **Status** — **fixed** on branch `fix/double-physics` (the commit that
+  strikes this entry). One physics block runs after the turbulence step when
+  `eddy_accepted .or. delta_time >= diffusion_step`, so the chain runs at most
+  once per iteration over `delta_time`. `eddy_accepted` is now reset to
+  `.false.` every iteration (it was uninitialized when `do_turbulence` is off).
+  Re-measured with the same counters: parcel physics/elapsed **1.000000**
+  (100.0013 s / 100.0013 s, wall time 82 -> 58 s); chamber 0.999995 (the
+  0.0085 s remainder is the final partial `diffusion_step` at loop exit).
+  In LEM the chain now always runs *after* the maps; before, it ran before
+  them on backstop iterations. In ODT an accepted eddy now acts on fields up to
+  one `diffusion_step` old, as non-backstop iterations already did.
+- **Impact on existing results** — every parcel run before the fix is biased by
+  its own `dt`- and duration-dependent factor; not comparable with later runs.
+  Chamber runs change only on the ~40 coincident iterations per 1800 s, but are
+  not bit-identical (fewer CC random draws).
+
+---
+
+## Unknown
 
 ### Parcel-mode `reynolds_number` drives `special_effects` sidewall forcing
 
@@ -1149,7 +1170,7 @@ between each droplet and the thermodynamic history of the air around it.
   (159 / 159), so only non-coalescing collisions were short.
 - **Localized to the tail** — the running `nc`-minus-binary difference oscillates
   between -1 and 0 for the whole ascent (that oscillation is the accepted
-  adjacent-interval swap from the "physics chain twice" issue above — totals
+  adjacent-interval swap from the "physics chain twice" issue, since fixed — totals
   preserved), then steps to +3 **only in the last write interval**
   (t = 1960.9 s of a 1960.9 s run). Zero events follow it. Reads as events
   counted into `N_collisions` but never flushed to the stream before

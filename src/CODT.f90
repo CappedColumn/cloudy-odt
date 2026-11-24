@@ -46,9 +46,10 @@ contains
         ! Initialize, then march from time=0 to tmax. Each step:
         !   1. (parcel) apply adiabatic forcing and optional entrainment
         !   2. write output (before physics, so t=0 state is captured)
-        !   3. diffusion backstop: if enough time has elapsed, diffuse then update
-        !      droplets -> special effects -> radiation -> sync fields
-        !   4. turbulence: if an eddy is accepted, run the same physics chain again
+        !   3. turbulence: sample (and possibly apply) an eddy
+        !   4. physics, at most once per step, if an eddy was accepted OR the
+        !      diffusion backstop is due: diffuse then update droplets ->
+        !      special effects -> radiation -> sync fields, over delta_time
         ! The diffuse -> droplets -> ... -> sync ordering is an invariant: droplets
         ! must see updated fields, and dim/nondim fields must be synced afterward
         ! (see CLAUDE.md). On exit, finalize output and write the _DONE marker.
@@ -76,23 +77,20 @@ contains
             call write_profiles(dt)
             if (do_microphysics .and. write_trajectories) call write_trajectory_data(particles, time, dt)
 
-            ! Diffusion backstop: guarantees scalars diffuse at least every
-            ! diffusion_step even when few/no eddies are accepted (delta_time is
-            ! time accumulated since the last physics update).
-            if (delta_time >= diffusion_step) then
-                call diffuse_step(delta_time)
-                if (do_microphysics) call advance_droplets(time, delta_time)
-                if (do_special_effects) call run_special_effects(T, WV, delta_time)
-                if (do_radiation) call compute_radiation(T, delta_time, time)
-                call sync_after_physics()
-                last_time_updated = time
-            end if
-
             ! Turbulence
+            eddy_accepted = .false.
             if (do_turbulence) call turbulence_step(dt, time, delta_time, &
                                                     eddy_accepted, eddy_location, eddy_length)
-            if (eddy_accepted) then
-                if (write_eddies) call write_eddy(eddy_location, eddy_length, time)
+            if (eddy_accepted .and. write_eddies) call write_eddy(eddy_location, eddy_length, time)
+
+            ! Physics: runs at most once per iteration, over delta_time (the time
+            ! accumulated since the last physics update). Triggered by an accepted
+            ! eddy, or by the diffusion backstop, which guarantees scalars diffuse
+            ! at least every diffusion_step even when few/no eddies are accepted.
+            ! One block, not one per trigger: when both fired in the same
+            ! iteration the chain used to run twice over the same delta_time
+            ! (see docs/known_issues.md).
+            if (eddy_accepted .or. delta_time >= diffusion_step) then
                 call diffuse_step(delta_time)
                 if (do_microphysics) call advance_droplets(time, delta_time)
                 if (do_special_effects) call run_special_effects(T, WV, delta_time)

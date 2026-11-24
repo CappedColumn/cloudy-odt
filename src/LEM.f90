@@ -150,9 +150,9 @@ contains
         ! The names change again at the call boundary: lem_turbulence_step takes
         ! dt and delta_time as dummies named ldt and ldelta_time.
         !
-        ! See docs/known_issues.md, "Physics chain may run twice per iteration
-        ! when an eddy is accepted" -- an open question about delta_time being
-        ! computed once per iteration and not recomputed after the backstop.
+        ! See docs/known_issues.md, "Physics chain ran twice per iteration when
+        ! an eddy was accepted" -- fixed: the main loop now runs physics once per
+        ! iteration, after the turbulence step.
         ! -------------------------------------------------------------------
 
         ! Diffusion stability timestep

@@ -1088,13 +1088,18 @@ between each droplet and the thermodynamic history of the air around it.
 - **Why it was erratic** — in LEM with `steps_between_events = 1` an eddy is
   accepted every iteration and `diffusion_step = dt`, so whether the backstop
   *also* fired was decided by floating-point rounding of `(time + dt) - time`
-  against `dt`. The fraction of doubled steps therefore depends on `dt` and on
-  the magnitude of `time` (it drifts during a run). A Python replica of the
-  loop logic, which reproduced the Fortran counts exactly (below), gives a
-  physics/elapsed ratio of 1.06-1.83 for `dt` between 1e-3 and 1e-2 s over a
-  1500 s run (2.13e-3 s: 1.22 over 1500 s, 1.33 over 1000 s, 1.44 over 100 s).
-  Ensemble members with different `dt` (domain size, dissipation rate)
-  carried different biases.
+  against `dt`. The rounding is fixed within each binade of `time`
+  ([2^k, 2^(k+1)), where the spacing of doubles is constant), so the doubling
+  is **all-or-nothing per binade**: either every iteration in that range ran
+  the chain twice or none did. For the reftest `dt` = 2.1286e-3 s the doubled
+  ranges are 8-16 s, 64-128 s and 256-512 s; 0-8, 16-64, 128-256 and >= 512 s
+  are clean. Which binades double depends only on `dt`, so any past run's
+  doubled time ranges can be recomputed from its `dt` without rerunning (a
+  Python replica of the loop reproduces the Fortran counts exactly). Overall
+  physics/elapsed ratio: 1.06-1.83 for `dt` between 1e-3 and 1e-2 s over a
+  1500 s run (2.13e-3 s: 1.22 over 1500 s, 1.44 over 100 s). Ensemble members
+  with different `dt` (domain size, dissipation rate) carried different biases,
+  in different phases of the run.
 - **Measured** — counters in the main loop (diagnostic worktree), reftest
   configurations, `release` build on kingspeak:
 
@@ -1126,8 +1131,32 @@ between each droplet and the thermodynamic history of the air around it.
   In LEM the chain now always runs *after* the maps; before, it ran before
   them on backstop iterations. In ODT an accepted eddy now acts on fields up to
   one `diffusion_step` old, as non-backstop iterations already did.
+- **A/B reftest** — `74ef16c` (v3.3.0) vs `2912f7d` (fix), np-v3, skl
+  (job 17456438; outputs in `devCODT/reftest_ab/{74ef16c,2912f7d}`, staged in
+  `reftest_ab/compare/`). Self-comparison control passed in both modes. The A
+  legs are bit-identical to the v3.3.0 `_REF` files (the A chamber leg ran on
+  a Gold 6140, `_REF` on a Gold 6130, so CPU model within `skl` does not
+  matter).
+  - *Parcel* — identical through t = 8 s; parcel heights and the 15
+    entrainment event times identical. Activation (t ~ 8-16 s) falls in a
+    doubled binade, so in v3.3.0 droplets grew twice as fast there: with the
+    fix the domain-mean supersaturation peak is higher and later (0.555% at
+    t = 20 s vs 0.445% at 10 s; domain max 0.65% vs 0.50%), LWC lags (B/A =
+    0.60 at 10 s, 0.77 at 20 s) and mean radius is smaller (1.53 vs 1.82 um
+    at 10 s). The runs re-converge by t ~ 42 s (16-64 s is a clean binade;
+    LWC B/A = 1.00, mean S within 0.01%). After the first entrainment event
+    (56 s) droplet number is dominated by blob placement (see "Parcel reftest
+    droplet count is dominated by where entrainment blobs land"), so later
+    Np/Nact/LWC differences (final Np 885 vs 869) are not attributable.
+    Collisions are too few to compare (67 vs 47).
+  - *Chamber* — domain-mean shifts are at the level of random-stream
+    divergence: S max shift 0.21%, T 0.19 C, Np/Nact mean rel. diff 2.5%,
+    LWC 4.4%, final mean radius 5.89 vs 5.90 um.
 - **Impact on existing results** — every parcel run before the fix is biased by
-  its own `dt`- and duration-dependent factor; not comparable with later runs.
+  its own `dt`-dependent pattern of doubled time ranges; not comparable with
+  later runs. The effect is largest where condensation is fast relative to
+  forcing (activation, and wherever S is far from quasi-steady) and falls in a
+  doubled binade.
   Chamber runs change only on the ~40 coincident iterations per 1800 s, but are
   not bit-identical (fewer CC random draws).
 
